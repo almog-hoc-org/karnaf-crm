@@ -1,9 +1,9 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts';
 import { sendWhatsAppText } from '../_shared/whatsapp-provider.ts';
-
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+import { getServiceSupabase } from '../_shared/supabase.ts';
+import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
+import { logLeadEvent, updateLeadTimestamps } from '../_shared/lead-service.ts';
+import { decidePlaceholderReply } from '../_shared/placeholder-brain.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -19,7 +19,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Missing leadId or conversationId' }, 400);
   }
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const supabase = getServiceSupabase();
 
   const { data: lead, error: leadError } = await supabase
     .from('leads')
@@ -45,17 +45,19 @@ Deno.serve(async (req) => {
   const lastInbound = recentMessages?.find((m) => m.sender_type === 'lead');
   const inboundText = lastInbound?.content_text || '';
 
-  const replyText = decidePlaceholderReply({
+  const decision = decidePlaceholderReply({
     inboundText,
     fullName: lead.full_name,
     source: lead.source,
+    currentStatus: lead.lead_status,
+    currentHeat: lead.lead_heat,
   });
 
-  const sendResult = replyText && !lead.do_not_contact && !lead.removed_by_request
-    ? await sendWhatsAppText(lead.phone, replyText)
+  const sendResult = decision.replyText && !lead.do_not_contact && !lead.removed_by_request
+    ? await sendWhatsAppText(lead.phone, decision.replyText)
     : { ok: false, error: 'Suppressed or no reply' };
 
-  if (replyText && sendResult.ok) {
+  if (decision.replyText && sendResult.ok) {
     await supabase.from('messages').insert({
       conversation_id: conversationId,
       lead_id: leadId,
@@ -63,55 +65,46 @@ Deno.serve(async (req) => {
       sender_type: 'ai',
       direction: 'outbound',
       message_type: 'text',
-      content_text: replyText,
+      content_text: decision.replyText,
       provider_status: 'sent',
     });
 
-    await supabase.from('lead_events').insert({
-      lead_id: leadId,
-      conversation_id: conversationId,
-      event_type: 'ai_reply_sent',
-      actor_type: 'ai',
-      event_payload: {
-        reply_text: replyText,
-      },
-    });
+    await logLeadEvent(supabase, leadId, 'ai_reply_sent', 'ai', {
+      reply_text: decision.replyText,
+      lead_status_update: decision.leadStatusUpdate,
+      lead_heat_update: decision.leadHeatUpdate,
+      score_delta: decision.scoreDelta,
+    }, conversationId);
 
-    await supabase.from('leads').update({
-      lead_status: lead.lead_status === 'new' ? 'first_contact_sent' : lead.lead_status,
+    const nextScore = Math.max(0, Math.min(100, Number(lead.lead_score || 0) + decision.scoreDelta));
+    await updateLeadTimestamps(supabase, leadId, {
+      lead_status: decision.leadStatusUpdate || lead.lead_status,
+      lead_heat: decision.leadHeatUpdate || lead.lead_heat,
+      lead_score: nextScore,
       last_message_at: new Date().toISOString(),
       last_outbound_at: new Date().toISOString(),
       last_ai_touch_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).eq('id', leadId);
+    });
+
+    if (decision.createQueueType) {
+      await ensurePendingQueueItem(supabase, {
+        leadId,
+        queueType: decision.createQueueType,
+        priorityLevel: decision.escalateToPhoneSales ? 1 : 2,
+        reason: decision.notesForMia || 'Escalation required',
+        queueSummary: decision.replyText,
+        payloadJson: {
+          escalate_to_mia: decision.escalateToMia,
+          escalate_to_phone_sales: decision.escalateToPhoneSales,
+        },
+      });
+    }
   }
 
   return jsonResponse({
     ok: true,
-    replyText,
+    decision,
     sendResult,
-    note: 'Placeholder orchestration only. Replace with structured AI runtime next.',
+    note: 'Still placeholder orchestration. Replace with structured AI runtime next.',
   });
 });
-
-function decidePlaceholderReply(input: {
-  inboundText: string;
-  fullName: string | null;
-  source: string;
-}): string | null {
-  const text = input.inboundText.trim();
-  if (!text) return 'היי, קיבלתי את ההודעה שלך. אעבור איתך מסודר כדי להבין איך הכי נכון לעזור.';
-
-  const lower = text.toLowerCase();
-  const namePrefix = input.fullName ? `${input.fullName}, ` : '';
-
-  if (lower.includes('לא מעוניין') || lower.includes('תסיר') || lower.includes('להסיר')) {
-    return `${namePrefix}הבנתי, עוצר כאן ולא אמשיך לפנות.`;
-  }
-
-  if (lower.includes('מחיר') || lower.includes('כמה עולה')) {
-    return `${namePrefix}בשמחה. לפני שאני זורק לך תשובה יבשה, חשוב לי להבין אם את/ה בכיוון של דירה ראשונה או השקעה ראשונה, כדי לכוון נכון.`;
-  }
-
-  return `${namePrefix}מעולה, קיבלתי. כדי לכוון אותך נכון, מה בעיקר מעניין אותך עכשיו סביב רכישת הדירה?`;
-}
