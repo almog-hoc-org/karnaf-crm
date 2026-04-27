@@ -1,0 +1,14 @@
+{
+  "name": "karnaf-crm-core",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "echo build placeholder",
+    "lint": "echo lint placeholder",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
