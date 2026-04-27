@@ -57,6 +57,8 @@ The repository now contains:
 - app entrypoint in `apps/web/src/main.tsx`
 - starter HTML shell in `apps/web/index.html`
 - package/tsconfig updated for React + Vite groundwork
+- basic starter components in `apps/web/src/components/*`
+- lead-detail fetch wiring from the frontend into the backend scaffold
 
 ## What is still missing
 This is still not a production-ready application.
@@ -73,11 +75,12 @@ The following still need implementation:
 - auth protection around operator/admin action functions
 - richer dashboard aggregation and filtering
 - typed end-to-end mapping between backend rows and frontend view models
+- usable visual design and component system
 
 ## Recommended next coding targets
 1. finalize schema migration and auth/profile model
 2. replace placeholder brain with structured AI runtime
 3. add auth protection and deeper idempotency around webhook/task/action creation
-4. deepen the web shell into dashboard/leads/detail/queue components
+4. deepen the web shell into styled dashboard/leads/detail/queue components and routing
 5. add richer queue/handoff services and Mia action functions
 6. add configuration-backed runtime rules and admin config surfaces
