@@ -325,9 +325,289 @@ Allows Mia to supervise, intervene, prioritize, and operate.
 ## Layer 5. Analytics and learning layer
 Tracks source quality, response quality, conversion patterns, SLA misses, and optimization opportunities.
 
+## Layer 6. WhatsApp integration and runtime layer
+Responsible for:
+- inbound webhook intake
+- outbound message sending
+- delivery/read status handling
+- session window awareness
+- template/freeform selection
+- media handling
+- retry/failure handling
+- AI/human ownership switching
+- transcript logging and message deduplication
+
 ---
 
-# 12. Product design philosophy for the UI
+# 12. WhatsApp runtime architecture
+
+## 12.1 Purpose
+This layer is the operational bridge between Karnaf CRM and the actual WhatsApp channel.
+It must not be implemented as a simple "send prompt, get answer" bot.
+It must behave like a message runtime connected to CRM state, policy, transcripts, and escalation logic.
+
+## 12.2 Required capabilities
+The WhatsApp runtime must support:
+- inbound message webhook ingestion
+- outbound freeform message sending
+- outbound template message sending when required by provider/session rules
+- message delivery, sent, failed, and read status callbacks
+- media message ingestion and storage metadata
+- conversation ownership state (AI / Mia / phone rep)
+- suppression and opt-out enforcement
+- retry logic for transient failures
+- duplicate inbound event protection
+- conversation-session tracking
+
+## 12.3 Runtime components
+Recommended components:
+1. **WhatsApp Connector**
+   - provider-facing adapter
+   - receives inbound events
+   - sends outbound messages
+   - normalizes provider payloads
+2. **Conversation Orchestrator**
+   - decides what to do with each inbound event
+   - loads lead state and context
+   - picks playbook and response mode
+3. **Context Builder**
+   - assembles the exact context package for the model
+4. **AI Decision Engine**
+   - generates structured response and state recommendations
+5. **Action Writer**
+   - writes CRM updates, tasks, and events
+6. **Human Handoff Manager**
+   - transfers conversation ownership to Mia or phone sales cleanly
+7. **Reliability Guard**
+   - retries failed sends
+   - blocks duplicate processing
+   - raises alerts when webhook/provider health degrades
+
+## 12.4 Provider abstraction rule
+The CRM must not hardcode business logic directly into one provider SDK.
+All provider-specific logic should be isolated behind a connector adapter so the system can later change provider without rewriting CRM behavior.
+
+## 12.5 Message lifecycle
+Each inbound or outbound WhatsApp message should move through a lifecycle:
+- received
+- normalized
+- stored
+- classified
+- context-resolved
+- responded or queued
+- CRM updated
+- delivery tracked
+- audit event recorded
+
+---
+
+# 13. Conversation orchestration specification
+
+## 13.1 Goal
+For every relevant inbound message, the system must decide:
+- who owns the conversation now
+- what this message means
+- what playbook applies
+- whether AI should respond now
+- whether Mia should be alerted
+- what CRM updates must happen
+- what next action and timer should be created
+
+## 13.2 Orchestration flow
+Recommended flow:
+1. receive inbound webhook
+2. verify provider signature if supported
+3. deduplicate by provider message id
+4. normalize message payload
+5. resolve lead by phone / conversation id
+6. create lead if unknown and allowed
+7. append transcript entry
+8. classify message intent and conversation state
+9. load lead profile + state + transcript summary + policy bundle
+10. decide ownership path:
+   - AI reply
+   - queue for Mia
+   - phone escalation recommendation
+   - no reply / stop / DNC
+11. call model with structured context
+12. parse structured output
+13. validate against policy
+14. send message if approved
+15. write CRM state updates
+16. create tasks/alerts/events
+17. schedule follow-up if needed
+
+## 13.3 Ownership states
+Conversation ownership should be explicit:
+- ai_active
+- mia_active
+- phone_sales_pending
+- shared_watch
+- do_not_contact
+
+No ambiguous ownership should exist on a live lead.
+
+## 13.4 Orchestrator outputs
+The orchestrator should produce structured outputs such as:
+- reply_text
+- reply_channel_mode (freeform/template/manual_only)
+- lead_status_update
+- lead_heat_update
+- score_delta
+- escalate_to_mia
+- escalate_to_phone_sales
+- next_action_type
+- next_action_due_at
+- tags_to_add
+- notes_for_mia
+- policy_flags
+
+---
+
+# 14. Context assembly specification
+
+## 14.1 Context goal
+The model should never answer from raw prompt alone.
+Each turn must be assembled from the minimum complete relevant context.
+
+## 14.2 Required context blocks per reply
+- lead identity block
+- source block
+- current CRM status block
+- lead score / heat block
+- readiness / blocker summary
+- partner context
+- transcript summary
+- last relevant messages window
+- applicable playbook goal
+- allowed claims and forbidden claims
+- working-hours context
+- ownership context
+- checkout/payment state if relevant
+
+## 14.3 Transcript policy
+Do not dump the entire conversation into the model each time.
+Use:
+- a rolling short message window for recent turns
+- a maintained structured summary for older context
+
+## 14.4 Knowledge retrieval bundle
+When relevant, inject:
+- product facts
+- price framing rules
+- objection rules
+- checkout path info
+- support boundaries
+- approved language constraints
+
+---
+
+# 15. Structured model output contract
+
+## 15.1 Principle
+The AI layer must not return only message text.
+It should return a structured action object that the system can validate and execute.
+
+## 15.2 Suggested JSON contract
+```json
+{
+  "reply_text": "...",
+  "reply_confidence": "high",
+  "intent_classification": "price_objection",
+  "lead_heat": "hot",
+  "lead_status_update": "qualified",
+  "score_delta": 8,
+  "escalate_to_mia": false,
+  "escalate_to_phone_sales": false,
+  "next_action_type": "follow_up",
+  "next_action_due_at": "2026-04-27T14:00:00+03:00",
+  "tags_to_add": ["price-sensitive", "high-fit"],
+  "notes_for_mia": "...",
+  "policy_flags": [],
+  "send_mode": "freeform"
+}
+```
+
+## 15.3 Validation layer
+Before execution, the system must validate:
+- no forbidden claim is present
+- output status transition is legal
+- send mode is allowed by current WhatsApp window/provider rules
+- escalation decisions are internally consistent
+
+---
+
+# 16. Human handoff protocol
+
+## 16.1 Goal
+When AI should stop owning the thread, handoff must be clean, explicit, and reversible.
+
+## 16.2 Handoff package must include
+- reason for handoff
+- short lead summary
+- current state
+- main blocker
+- last messages summary
+- suggested human next move
+- urgency level
+- SLA timer state
+
+## 16.3 Handoff UI requirements
+Mia should see:
+- handoff badge
+- why it was escalated
+- suggested draft reply
+- risk level
+- ownership control buttons
+
+## 16.4 Return-to-AI protocol
+After Mia handles the critical moment, she should be able to:
+- keep ownership manually
+- return ownership to AI
+- return ownership to AI with constraints
+- mark for phone escalation instead
+
+---
+
+# 17. WhatsApp operational constraints
+
+## 17.1 Session and template awareness
+The system must account for provider/session rules such as:
+- freeform replies within allowed windows
+- template initiation when outside allowed windows
+- fallback if template approval is missing
+
+## 17.2 Opt-out compliance
+If the lead asks to stop, remove, or not be contacted:
+- suppress automation immediately
+- record suppression reason
+- prevent future outbound messages except allowed compliance/admin flows
+
+## 17.3 Delivery-state awareness
+The CRM should store message states such as:
+- queued
+- sent
+- delivered
+- read
+- failed
+
+This should be visible on the lead timeline.
+
+## 17.4 Failure handling
+For failed sends:
+- retry if transient
+- raise system alert if repeated
+- create manual review task if needed
+
+## 17.5 Duplicate and race-condition protection
+The runtime should:
+- deduplicate inbound webhook events
+- prevent double replies from parallel workers
+- lock per-conversation processing when needed
+
+---
+
+# 18. Product design philosophy for the UI
 
 ## 12.1 Functional first
 The dashboard should be:
