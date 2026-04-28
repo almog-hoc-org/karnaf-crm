@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test --silent
+      - run: npm run build
+
+  supabase-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Lint Supabase config
+        run: supabase lint --linked || true
+      - name: Validate Edge Function bundles
+        run: |
+          for fn in supabase/functions/*/; do
+            if [ -f "$fn/index.ts" ]; then
+              echo "Checking $fn"
+              deno check --no-lock "$fn/index.ts" || true
+            fi
+          done

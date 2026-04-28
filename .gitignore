@@ -1,5 +1,17 @@
 node_modules/
 .env
 .env.*
+!.env.example
 dist/
 .vercel/
+.vscode/
+.idea/
+.DS_Store
+.tsbuildinfo
+*.log
+supabase/.temp/
+coverage/
+playwright-report/
+test-results/
+
+.vercel
