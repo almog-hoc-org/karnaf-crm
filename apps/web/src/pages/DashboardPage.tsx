@@ -178,9 +178,10 @@ function EmptyState({ message }: { message: string }) {
 }
 
 function PriorityDot({ priority }: { priority: number }) {
+  // work_queue.priority_level is constrained to 1-5; lower number = more urgent.
   const tone =
-    priority >= 80 ? 'bg-rose-500' :
-    priority >= 50 ? 'bg-amber-500' :
+    priority <= 1 ? 'bg-rose-500' :
+    priority <= 2 ? 'bg-amber-500' :
     'bg-slate-300';
   return <span aria-hidden="true" className={`kf-dot ${tone}`} />;
 }

@@ -85,7 +85,7 @@ export function UsersPage() {
                       disabled={update.isPending || u.id === auth.user?.id}
                       onChange={(e) => update.mutate({ userId: u.id, role: e.target.value as ProfileRow['role'] })}
                     >
-                      {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                      {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                     </select>
                   </td>
                   <td>

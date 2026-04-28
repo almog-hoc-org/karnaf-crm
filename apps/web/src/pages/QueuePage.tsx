@@ -156,9 +156,10 @@ function StatusTab({ active, onClick, children }: { active: boolean; onClick: ()
 }
 
 function PriorityPill({ priority }: { priority: number }) {
+  // work_queue.priority_level is constrained to 1-5; lower number = more urgent.
   const tone =
-    priority >= 80 ? 'bg-rose-50 text-rose-700' :
-    priority >= 50 ? 'bg-amber-50 text-amber-700' :
+    priority <= 1 ? 'bg-rose-50 text-rose-700' :
+    priority <= 2 ? 'bg-amber-50 text-amber-700' :
     'bg-slate-100 text-slate-600';
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium tabular-nums ${tone}`}>

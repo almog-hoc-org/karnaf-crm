@@ -37,7 +37,7 @@ const queueFixture: QueueRow[] = [
     id: 'q1',
     lead_id: 'lead-1',
     queue_type: 'hot_lead',
-    priority_level: 90,
+    priority_level: 1,
     status: 'pending',
     reason: 'high score',
     queue_summary: null,
@@ -50,7 +50,7 @@ const queueFixture: QueueRow[] = [
     id: 'q2',
     lead_id: 'lead-2',
     queue_type: 'payment_pending',
-    priority_level: 80,
+    priority_level: 2,
     status: 'pending',
     reason: null,
     queue_summary: null,
@@ -129,7 +129,7 @@ describe('DashboardPage', () => {
     const link = await screen.findByRole('link', { name: /דנה כהן/ });
     expect(link).toHaveAttribute('href', '/leads/lead-1');
     expect(screen.getByRole('link', { name: /יוסי לוי/ })).toHaveAttribute('href', '/leads/lead-2');
-    expect(screen.getByText('עדיפות 90')).toBeInTheDocument();
+    expect(screen.getByText('עדיפות 1')).toBeInTheDocument();
   });
 
   it('renders the empty state for the pending queue when there are no items', async () => {

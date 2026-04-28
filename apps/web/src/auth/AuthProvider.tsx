@@ -13,16 +13,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(({ data }) => {
       if (cancelled) return;
       setSession(data.session);
+      // No persisted session → nothing to load. Releasing `loading` here
+      // (rather than in the role-fetch effect) keeps ProtectedRoute on its
+      // spinner while getSession is still in flight, so deep links like
+      // /leads/<id> aren't bounced through /login on a hard refresh.
+      if (!data.session) setLoading(false);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
+      if (!next) setLoading(false);
     });
     return () => { cancelled = true; sub.subscription.unsubscribe(); };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    if (!session?.user) { setRole(null); setLoading(false); return; }
+    if (!session?.user) { setRole(null); return; }
     setLoading(true);
     supabase
       .from('profiles')
