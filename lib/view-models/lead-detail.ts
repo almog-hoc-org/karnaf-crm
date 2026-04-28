@@ -1,4 +1,4 @@
-import type { LeadRecord, MessageRecord, QueueRecord } from '../types/crm.js';
+import type { LeadRecord, MessageRecord, QueueRecord } from '../types/crm';
 
 export interface LeadDetailViewModel {
   lead: LeadRecord;

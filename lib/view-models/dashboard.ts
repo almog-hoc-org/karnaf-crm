@@ -1,4 +1,4 @@
-import type { LeadRecord, QueueRecord } from '../types/crm.js';
+import type { LeadRecord, QueueRecord } from '../types/crm';
 
 export interface DashboardSummary {
   leadsToday: number;

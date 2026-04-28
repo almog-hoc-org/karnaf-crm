@@ -1,4 +1,4 @@
-import type { QueueRecord } from '../types/crm.js';
+import type { QueueRecord } from '../types/crm';
 
 export interface QueueListViewModel {
   total: number;
@@ -9,8 +9,9 @@ export interface QueueListViewModel {
 export function buildQueueListViewModel(queueItems: QueueRecord[]): QueueListViewModel {
   const grouped: Record<string, QueueRecord[]> = {};
   for (const item of queueItems) {
-    grouped[item.queueType] ||= [];
-    grouped[item.queueType].push(item);
+    const bucket = grouped[item.queueType] ?? [];
+    bucket.push(item);
+    grouped[item.queueType] = bucket;
   }
 
   return {

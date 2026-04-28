@@ -1,4 +1,4 @@
-import type { LeadHeat, LeadStatus } from '../types/crm.js';
+import type { LeadHeat, LeadStatus } from '../types/crm';
 
 export interface OrchestratorContext {
   leadId: string;

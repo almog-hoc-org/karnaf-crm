@@ -1,4 +1,4 @@
-import type { LeadRecord } from '../types/crm.js';
+import type { LeadRecord } from '../types/crm';
 
 export interface LeadsListViewModel {
   total: number;
