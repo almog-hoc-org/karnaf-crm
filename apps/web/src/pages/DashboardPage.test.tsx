@@ -91,7 +91,7 @@ describe('DashboardPage', () => {
   it('shows the loading indicator while the summary is being fetched', () => {
     vi.mocked(fetchDashboardSummary).mockImplementation(() => new Promise(() => {}));
     renderDashboard();
-    expect(screen.getByText('טוען נתוני מצב...')).toBeInTheDocument();
+    expect(screen.getByText('טוען...')).toBeInTheDocument();
   });
 
   it('renders KPI cards with values from the summary', async () => {
