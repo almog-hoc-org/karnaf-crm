@@ -14,8 +14,8 @@ WhatsApp-first AI-operated CRM for selling the digital program **"הדרך לד�
 | [karnaf-crm-full-spec.md](karnaf-crm-full-spec.md) | Original product specification (still authoritative for behaviour) |
 | `apps/web/` | React 19 operator console (Vite root) |
 | `lib/runtime/` | Node-side mirrors of the Deno `_shared` modules — exists so the runtime is unit-testable from Vitest |
-| `supabase/migrations/` | 17 SQL migrations: schema, RLS, state-machine RPCs, scheduled jobs, A/B prompts, media storage |
-| `supabase/functions/` | 19 Edge Functions: 5 signed webhooks, 3 cron workers, 11 JWT-gated operator endpoints |
+| `supabase/migrations/` | 18 SQL migrations: schema, RLS, state-machine RPCs, scheduled jobs, A/B prompts, media storage, cohort analytics |
+| `supabase/functions/` | 18 Edge Functions: 5 signed webhooks, 3 cron workers, 10 JWT-gated operator endpoints |
 | `e2e/`, `integration/` | Opt-in Playwright + supabase-start harnesses |
 
 ## Quickstart (local development)

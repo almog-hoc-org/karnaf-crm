@@ -32,6 +32,8 @@ Migrations under `supabase/migrations/`:
 | 014 | `014_prompt_variants.sql` | `prompt_variants` table (RLS, admin-write) + `pick_prompt_variant(playbook)` weighted selector + `v_prompt_variant_outcomes` view |
 | 015 | `015_media_storage.sql` | Private `whatsapp-media` storage bucket (25 MiB cap, restricted MIME types) + `messages.media_storage_path` column + staff-read policy |
 | 016 | `016_email_and_summary_config.sql` | `crm_config` seeds for `email_inbox` and `summary_runtime` (`heuristic` / `model`) |
+| 017 | `017_prompt_variants.sql` | `prompt_variants` table (RLS, admin-write) + `pick_prompt_variant(playbook)` weighted selector + `v_prompt_variant_outcomes` view |
+| 018 | `018_cohort_analytics.sql` | `v_lead_cohorts` + `v_first_response_times` analytics views for cohort/funnel maturity and first-response SLA |
 
 `supabase/config.toml`, `supabase/seed.sql`, `supabase/functions/README.md` populated.
 
@@ -53,7 +55,7 @@ Migrations under `supabase/migrations/`:
 - `lead-detail` — full lead + conversations + messages + queue + tasks + events.
 - `leads-list` — paginated, filterable, search input escaped against PostgREST `or`.
 - `queue-list` — joined to leads.
-- `analytics-summary` — source performance, lead aging, recent activity, AI vs Mia outcomes, prompt-variant outcomes.
+- `analytics-summary` — source performance, lead aging, recent activity, AI vs Mia outcomes, prompt-variant outcomes, cohort breakdowns, first-response SLA timing.
 - `users-manage` — owner/admin only: list profiles, create users (auth.admin.createUser + profile upsert), update role/active.
 - `prompt-variants` — owner/admin only: list / create / update / delete A/B variants (weight, prompt_overrides, is_active, notes).
 - `admin-actions` — assign_to_mia, return_to_ai, mark_phone_escalation, mark_dnc, mark_lost, mark_won, resolve_queue, log_phone_call.
@@ -85,10 +87,10 @@ Routes are lazy-loaded — each page ships as a separate chunk (~4–10 KB each,
 - `pages/LeadsPage.tsx` — paginated table, filters (status, heat, ownership), search.
 - `pages/LeadDetailPage.tsx` — header + quick actions + transcript bubble timeline + manual reply box + phone-call log form (sales_rep / mia / admin / owner) + queue/tasks/events panels.
 - `pages/QueuePage.tsx` — filtered queue with inline resolve.
-- `pages/AnalyticsPage.tsx` — source performance table, aging buckets, AI-vs-Mia outcomes, recent activity feed.
+- `pages/AnalyticsPage.tsx` — source performance table, aging buckets, AI-vs-Mia outcomes, first-response SLA table, cohort breakdowns, recent activity feed.
 - `pages/UsersPage.tsx` — admin-only user provisioning + role / active flag editing.
 - `pages/PromptVariantsPage.tsx` — admin-only A/B variant management per playbook (weight, active flag, objective override, guidance bullets, notes, delete).
-- `lib/supabase.ts`, `lib/api.ts`, `lib/types.ts`, `lib/format.ts`, `lib/queryClient.ts`, `lib/observability.ts` (Sentry-style POST hook + global error/unhandled-rejection reporters; no-op when `VITE_SENTRY_DSN` unset), `lib/useDebouncedValue.ts`, `lib/useDocumentTitle.ts`, `lib/i18n.ts` (Hebrew + English dictionary seam; `t(key)` reader, `setLocale()` updates `dir`/`lang`).
+- `lib/supabase.ts`, `lib/api.ts`, `lib/types.ts`, `lib/format.ts`, `lib/queryClient.ts`, `lib/observability.ts` (Sentry-style POST hook + global error/unhandled-rejection reporters; no-op when `VITE_SENTRY_DSN` unset), `lib/useDebouncedValue.ts`, `lib/useDocumentTitle.ts`, `lib/i18n.ts` (Hebrew + English dictionary seam; `t(key)` reader, `setLocale()` updates `dir`/`lang`) with broader routing of Login / Dashboard / Leads copy through the dictionary seam.
 - A11y: `Layout` exposes a "skip to main content" link, `role="navigation"` + `aria-label` on nav, `aria-current="page"` on the active link, `<main id="kf-main" tabIndex={-1}>` so screen readers + keyboard users can jump past the chrome. Toast region has `aria-live="polite"`. Icon-only buttons carry `aria-label`s.
 - Routes are lazy-loaded and Vite splits `react-router-dom`, `@tanstack/react-query`, `@supabase/supabase-js` into their own chunks. App shell down to 201 KB raw / 64 KB gzip; no bundle-size warnings.
 
@@ -130,7 +132,7 @@ Routes are lazy-loaded — each page ships as a separate chunk (~4–10 KB each,
 
 Test infrastructure: `vitest.config.ts` runs `lib/**/*.test.ts` under node and `apps/web/src/**/*.test.tsx` under happy-dom via `environmentMatchGlobs`. `apps/web/src/test/setup.ts` wires `@testing-library/jest-dom/vitest` matchers and an `afterEach(cleanup)`.
 
-151 tests passing.
+Test coverage has grown beyond the original 151 baseline, including dedicated component suites for AnalyticsPage, QueuePage, PromptVariantsPage and i18n seam checks.
 
 ## What's deployable today
 - WhatsApp inbound + AI-driven outbound with playbook system, forbidden-claim filter, freeform/template auto-resolution.
@@ -145,6 +147,6 @@ Test infrastructure: `vitest.config.ts` runs `lib/**/*.test.ts` under node and `
 ## Still future work (not blocking deploy)
 - Mobile UI smoke test pass on real devices (no remote way to do this; needs hands).
 - Outbound email composer (current email channel is inbound-only; outbound replies still flow through WhatsApp or a manual provider).
-- Translating the rest of the Hebrew strings via the new `t()` seam (today only the high-traffic Layout copy goes through it).
+- Translating the rest of the Hebrew strings via the `t()` seam (some high-traffic flows now use it, but coverage is still partial).
 - Expand `e2e/` and `integration/` suites past the smoke specs.
 - Wire a real Sentry SDK if the lightweight observability POST hook isn't enough.

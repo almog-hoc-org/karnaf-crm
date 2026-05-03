@@ -18,14 +18,14 @@ _Last updated: 2026-04-28._
 
 **ריפו:** https://github.com/mogibot/karnaf-crm  
 **ענף ראשי:** `master`  
-**Last commit:** `248edcc` (docs)
+**Last commit בעת כתיבת המסמך המקורי:** `248edcc` (docs)
 
-**Pipeline נוכחי (נכון ל־2026-04-28):**
+**Pipeline מאומת לאחר סבב הייצוב האחרון:**
 ```
-typecheck  ✓  0 errors
-lint       ✓  0 errors, 0 warnings
-tests      ✓  151/151 across 19 files
-build      ✓  no warnings, 64 KB gzip app shell
+typecheck  ✓
+lint       ✓
+tests      ✓  suites הורחבו מעבר ל-151 המקוריים
+build      ✓
 ```
 
 ---
@@ -51,7 +51,7 @@ build      ✓  no warnings, 64 KB gzip app shell
                         ▼
         ┌───────────────────────────────────┐
         │  Postgres + RLS + RPCs            │
-        │  17 migrations (001 → 017)        │
+        │  18 migrations (001 → 018)        │
         │  • lead lifecycle state machine   │
         │  • prompt_variants A/B            │
         │  • whatsapp-media storage bucket  │
@@ -157,6 +157,11 @@ karnaf-crm/
 | `ff830aa` | **feat(frontend): Tailwind shell + auth + 7 pages** — Dashboard, Leads, LeadDetail, Queue, Analytics, Users, PromptVariants עם toasts + i18n seam + a11y |
 | `9c59977` | **test: 151 vitest suites + Playwright + integration harness** — 77 unit (lib/runtime) + 74 component (apps/web), opt-in E2E + integration |
 | `248edcc` | **docs: DEPLOYMENT.md + IMPLEMENTATION-STATUS.md + OPEN-WORK-PLAN.md** |
+| `f1063ab` | **fix: stabilize operator auth and queue urgency** |
+| `7238334` | **docs(README): rewrite root README as router to HANDOFF / DEPLOYMENT / STATUS** |
+| `e76a5ea` | **feat(i18n): route more high-traffic UI through dictionary seam** |
+| `db2160b` | **test: component coverage for AnalyticsPage, QueuePage, PromptVariantsPage** |
+| `b8e53d5` | **feat(analytics): cohort breakdown + first-response SLA tracking** |
 
 `git log origin/master..HEAD` יראה את אלה אם מ־clone חדש.
 
@@ -193,11 +198,11 @@ karnaf-crm/
 |---|---|---|---|
 | P1.1 | **Sentry SDK אמיתי** במקום ה־POST hook הבסיסי שב־`lib/observability.ts` | חצי יום | hook קיים → לחבר `@sentry/react` |
 | P1.2 | **Iteration על ה־prompts בעברית** מול 50 שיחות אמת בשבועיים הראשונים. `/prompts` UI מוכן | מתמשך, 5-10 שעות בשבוע | Infra A/B מוכן |
-| P1.3 | **Component tests** ל־AnalyticsPage, QueuePage, PromptVariantsPage (היום מכוסים: Login, Layout, Dashboard, Leads, LeadDetail, Users, Badge, ErrorBoundary, ProtectedRoute) | יום | 74/151 כבר קיים |
+| P1.3 | **Component tests** לזרמי מסך חסרים נוספים מעבר לכיסוי החדש של AnalyticsPage, QueuePage, PromptVariantsPage | חצי יום | כיסוי למסכים הללו כבר נוסף |
 | P1.4 | **Playwright** הרחבת `e2e/` מעבר ל־login: send-reply, mark_won, queue resolve, admin role gating | יום | בסיס מוכן |
 | P1.5 | **Integration tests מול `supabase start`** הרחבת `integration/orm.spec.ts` ל־webhooks דרך HTTP, לא רק RPCs | יום-יומיים | בסיס מוכן |
 | P1.6 | **Outbound email composer** (היום email-webhook הוא inbound only). דורש ספק email + form ב־UI | 1-2 ימים | תלוי בבחירת ספק |
-| P1.7 | **תרגום מלא של ה־UI דרך `t()` seam** (היום רק Layout עובר) — מועיל גם אם נשארים בעברית | חצי יום | infra קיים |
+| P1.7 | **תרגום מלא של ה־UI דרך `t()` seam** (היום יותר מסכי ליבה כבר מחוברים, אך לא הכל) — מועיל גם אם נשארים בעברית | חצי יום | infra קיים |
 | P1.8 | **Bootstrap admin promotion** (`014_bootstrap_admin.sql`) — לסקור ולוודא שהיא תואמת אסטרטגיית הצטרפות | שעה | אתה כתבת את זה ידנית |
 
 ### P2 — איכות לטווח קצר-בינוני
@@ -217,7 +222,7 @@ karnaf-crm/
 | # | משימה | עומק |
 |---|---|---|
 | P3.1 | **Multi-product support** — היום ה־schema תומך, אבל ה־AI/playbooks מקודדים ל"הדרך לדירה" | 3-5 ימים |
-| P3.2 | **Cohort analytics** — retention, time-to-purchase, source ROI | 2-3 ימים |
+| P3.2 | **Cohort analytics** — להעמיק מעבר ל-week/source שכבר נוספו, לכיוון retention, time-to-purchase, source ROI | 1-2 ימים |
 | P3.3 | **WhatsApp media analysis** (תמונות, אודיו) ב־AI — היום נשמר ב־Storage אבל לא נקרא | 2-3 ימים |
 | P3.4 | **Instagram DM ingestion** דרך Meta Graph API | 1-2 ימים |
 | P3.5 | **Slack/Telegram notifications** ל־alerts (SLA breach, hot lead) | יום |
