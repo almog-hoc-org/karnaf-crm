@@ -26,6 +26,13 @@ export interface AiLeadContext {
   priorPhoneCallCount: number;
   lastPhoneCallOutcome: string | null;
   firstInboundSnippet: string | null;
+  topicsTouched: TopicEntry[];
+}
+
+export interface TopicEntry {
+  topic: string;
+  count: number;
+  last_at: string;
 }
 
 export interface AiRecentMessage {

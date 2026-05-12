@@ -9,6 +9,7 @@ import { buildTimeContext } from '../_shared/time-context.ts';
 import { extractQuestions } from '../_shared/ai-validation.ts';
 import { inferPersona } from '../_shared/persona-inference.ts';
 import { classifyInbound } from '../_shared/intent-classifier.ts';
+import { extractTopicsFromText, mergeTopics, type TopicEntry } from '../_shared/topics.ts';
 import { releaseConversationLock, tryConversationLock } from '../_shared/conversation-lock.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
 import { maybeRefreshSummary } from '../_shared/transcript-summary.ts';
@@ -161,6 +162,7 @@ Deno.serve(async (req) => {
         priorPhoneCallCount,
         lastPhoneCallOutcome,
         firstInboundSnippet,
+        topicsTouched: Array.isArray(lead.topics_touched) ? (lead.topics_touched as TopicEntry[]) : [],
       },
       recentMessages: ordered.map((m) => ({
         senderType: String(m.sender_type ?? ''),
@@ -225,6 +227,15 @@ Deno.serve(async (req) => {
       if (out.nextActionType) updates.next_action_type = out.nextActionType;
       if (out.nextActionDueAt) updates.next_action_due_at = out.nextActionDueAt;
       else updates.next_action_due_at = new Date(Date.now() + config.followUpDelays.firstResponseMinutes * 60_000).toISOString();
+
+      const replyTopics = extractTopicsFromText(out.replyText);
+      const inboundTopics = extractTopicsFromText(lastLeadMessage as string | null);
+      const combinedTopics = Array.from(new Set([...inboundTopics, ...replyTopics]));
+      if (combinedTopics.length) {
+        const priorTopics = Array.isArray(lead.topics_touched) ? (lead.topics_touched as TopicEntry[]) : [];
+        updates.topics_touched = mergeTopics(priorTopics, combinedTopics);
+      }
+
       await updateLeadFields(supabase, leadId, updates);
 
       if (out.leadStatusUpdate) {

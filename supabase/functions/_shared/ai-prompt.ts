@@ -3,6 +3,7 @@ import type { Playbook } from './playbooks.ts';
 import type { PromptOverrides } from './prompt-variant.ts';
 import { formatTimeContextForPrompt } from './time-context.ts';
 import { resolveMaxReplyChars } from './reply-length.ts';
+import { summariseTopicsForPrompt, type TopicEntry } from './topics.ts';
 
 export const RESPONSE_SCHEMA_HINT = `Return JSON exactly matching this shape (Hebrew for replyText/notesForMia):
 {
@@ -106,6 +107,16 @@ export function buildAiUserPrompt(ctx: AiDecisionContext): string {
   if (ctx.recentAiQuestions && ctx.recentAiQuestions.length) {
     lines.push(`Recent AI questions already asked (do not re-ask these unless the lead explicitly invites re-asking):`);
     for (const q of ctx.recentAiQuestions) lines.push(`  - ${q}`);
+  }
+
+  const topicsSummary = summariseTopicsForPrompt(
+    ctx.lead.topicsTouched as TopicEntry[] | undefined,
+    ctx.timeContext?.currentTimeIso,
+  );
+  if (topicsSummary) {
+    lines.push(
+      `Topics already covered with this lead (do not repeat unless they ask): ${topicsSummary}`,
+    );
   }
 
   lines.push(`Decide the next CRM action and the next WhatsApp reply. Return JSON only.`);
