@@ -52,6 +52,21 @@ export interface AiTimeContext {
   idleBucket: 'fresh' | 'short' | 'medium' | 'long' | 'cold' | null;
 }
 
+export interface AiPersonaContext {
+  persona: 'analyst' | 'impulsive' | 'skeptical' | 'delegator' | 'unknown';
+  guidance: string[];
+  signals?: {
+    message_count: number;
+    avg_message_length: number;
+    short_count: number;
+    verbose_count: number;
+    question_count: number;
+    skeptic_hits: number;
+    hesitation_hits: number;
+    delegator_hits: number;
+  };
+}
+
 export interface AiDecisionContext {
   lead: AiLeadContext;
   recentMessages: AiRecentMessage[];
@@ -59,6 +74,7 @@ export interface AiDecisionContext {
   freeAdviceCount: number;
   timeContext?: AiTimeContext;
   recentAiQuestions?: string[];
+  personaContext?: AiPersonaContext;
 }
 
 export interface AiDecisionOutput {

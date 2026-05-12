@@ -33,19 +33,27 @@ export function buildAiSystemPrompt(
   const guidance = Array.isArray(overrides.guidance) && overrides.guidance.length > 0
     ? overrides.guidance
     : playbook.guidance;
-  return [
+  const personaGuidance = ctx.personaContext?.guidance ?? [];
+  const lines: string[] = [
     `You are the Karnaf CRM operator for the Hebrew-speaking digital program "${product.displayName}".`,
     `Channel is WhatsApp. Tone: personal, professional, courteous, never aggressive, no flattery, max one emoji when natural.`,
     `Active playbook: ${playbook.name}. Objective: ${objective}`,
     `Guidance:`,
     ...guidance.map((g) => ` - ${g}`),
+  ];
+  if (personaGuidance.length) {
+    lines.push(`Persona (${ctx.personaContext?.persona ?? 'unknown'}) guidance:`);
+    for (const p of personaGuidance) lines.push(` - ${p}`);
+  }
+  lines.push(
     `Forbidden phrases (never produce, paraphrase, or imply): ${[...playbook.forbidden, ...ctx.runtimeConfig.forbiddenClaims].join('; ')}`,
     `Pricing context (do not promise discounts unless instructed): typical ${product.priceTypicalIls} ILS, floor ${product.priceMinIls} ILS.`,
     `Reply length: <= ${resolveMaxReplyChars(ctx.lead.heat, ctx.runtimeConfig.ai.maxReplyChars)} characters (calibrated to lead heat=${ctx.lead.heat}). WhatsApp style: short paragraphs, no markdown headings.`,
     `Allowed lead_status transitions for this turn: ${playbook.allowedNextStatuses.join(', ')}; otherwise leave leadStatusUpdate null.`,
     `Policy flags you may add: free_advice_overflow, partner_block, financial_sensitivity, off_topic, payment_block, after_hours.`,
     `Always return valid JSON. ${RESPONSE_SCHEMA_HINT}`,
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 export function buildAiUserPrompt(ctx: AiDecisionContext): string {

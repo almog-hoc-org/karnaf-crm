@@ -7,6 +7,7 @@ import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { runAiDecision } from '../_shared/ai-decision-service.ts';
 import { buildTimeContext } from '../_shared/time-context.ts';
 import { extractQuestions } from '../_shared/ai-validation.ts';
+import { inferPersona } from '../_shared/persona-inference.ts';
 import { releaseConversationLock, tryConversationLock } from '../_shared/conversation-lock.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
 import { maybeRefreshSummary } from '../_shared/transcript-summary.ts';
@@ -120,6 +121,18 @@ Deno.serve(async (req) => {
       .maybeSingle();
     const firstInboundSnippet = snippet((firstInboundRow?.content_text as string | null) ?? null, 200);
 
+    const { data: allLeadMessages } = await supabase
+      .from('messages')
+      .select('content_text')
+      .eq('conversation_id', conversationId)
+      .eq('sender_type', 'lead')
+      .order('created_at', { ascending: true })
+      .limit(40);
+    const personaResult = inferPersona({
+      leadMessages: (allLeadMessages ?? []).map((r) => String(r.content_text ?? '')).filter(Boolean),
+      source: lead.source ?? null,
+    });
+
     const decision = await runAiDecision(supabase, {
       lead: {
         id: String(lead.id),
@@ -154,6 +167,11 @@ Deno.serve(async (req) => {
       freeAdviceCount,
       timeContext,
       recentAiQuestions,
+      personaContext: {
+        persona: personaResult.persona,
+        guidance: personaResult.guidance,
+        signals: personaResult.signals,
+      },
     }, correlationId);
 
     const out = decision.output;
