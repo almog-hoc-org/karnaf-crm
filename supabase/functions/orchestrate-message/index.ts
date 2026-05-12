@@ -10,6 +10,7 @@ import { extractQuestions } from '../_shared/ai-validation.ts';
 import { inferPersona } from '../_shared/persona-inference.ts';
 import { classifyInbound } from '../_shared/intent-classifier.ts';
 import { extractTopicsFromText, mergeTopics, type TopicEntry } from '../_shared/topics.ts';
+import { loadProductClaims } from '../_shared/claim-service.ts';
 import { releaseConversationLock, tryConversationLock } from '../_shared/conversation-lock.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
 import { maybeRefreshSummary } from '../_shared/transcript-summary.ts';
@@ -138,6 +139,8 @@ Deno.serve(async (req) => {
     const lastLeadMessage = ordered.filter((m) => m.sender_type === 'lead').slice(-1)[0]?.content_text ?? null;
     const intentSignal = classifyInbound(lastLeadMessage as string | null);
 
+    const authorisedClaims = await loadProductClaims(supabase, config.product.code);
+
     const decision = await runAiDecision(supabase, {
       lead: {
         id: String(lead.id),
@@ -184,6 +187,7 @@ Deno.serve(async (req) => {
         confidence: intentSignal.confidence,
         matchedKeywords: intentSignal.matchedKeywords,
       },
+      authorisedClaims,
     }, correlationId);
 
     const out = decision.output;

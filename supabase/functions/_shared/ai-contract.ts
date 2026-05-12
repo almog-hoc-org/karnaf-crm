@@ -81,6 +81,12 @@ export interface AiIntentContext {
   matchedKeywords?: string[];
 }
 
+export interface AiAuthorisedClaim {
+  claim_type: string;
+  hebrew_text: string;
+  weight: number;
+}
+
 export interface AiDecisionContext {
   lead: AiLeadContext;
   recentMessages: AiRecentMessage[];
@@ -90,6 +96,7 @@ export interface AiDecisionContext {
   recentAiQuestions?: string[];
   personaContext?: AiPersonaContext;
   intentContext?: AiIntentContext;
+  authorisedClaims?: AiAuthorisedClaim[];
 }
 
 export interface AiDecisionOutput {

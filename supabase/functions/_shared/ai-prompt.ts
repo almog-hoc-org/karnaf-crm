@@ -4,6 +4,7 @@ import type { PromptOverrides } from './prompt-variant.ts';
 import { formatTimeContextForPrompt } from './time-context.ts';
 import { resolveMaxReplyChars } from './reply-length.ts';
 import { summariseTopicsForPrompt, type TopicEntry } from './topics.ts';
+import { formatClaimsForPrompt } from './claim-service.ts';
 
 export const RESPONSE_SCHEMA_HINT = `Return JSON exactly matching this shape (Hebrew for replyText/notesForMia):
 {
@@ -45,6 +46,11 @@ export function buildAiSystemPrompt(
   if (personaGuidance.length) {
     lines.push(`Persona (${ctx.personaContext?.persona ?? 'unknown'}) guidance:`);
     for (const p of personaGuidance) lines.push(` - ${p}`);
+  }
+  const claimLines = formatClaimsForPrompt(ctx.authorisedClaims ?? []);
+  if (claimLines.length) {
+    lines.push(`Authorised product claims (these are the ONLY product specifics you may reference; do not invent new features, prices, or commitments):`);
+    for (const c of claimLines) lines.push(c);
   }
   lines.push(
     `Forbidden phrases (never produce, paraphrase, or imply): ${[...playbook.forbidden, ...ctx.runtimeConfig.forbiddenClaims].join('; ')}`,
