@@ -10,16 +10,22 @@ export interface AiLeadContext {
   fullName: string | null;
   phone: string | null;
   source: string;
+  sourceDetail: string | null;
+  sourceCampaign: string | null;
   status: string;
   heat: string;
   score: number;
   ownershipMode: string;
   paymentStatus: string | null;
+  partnerInvolved: boolean | null;
   doNotContact: boolean;
   removedByRequest: boolean;
   conversationSummary: string | null;
   lastInboundAt: string | null;
   lastOutboundAt: string | null;
+  priorPhoneCallCount: number;
+  lastPhoneCallOutcome: string | null;
+  firstInboundSnippet: string | null;
 }
 
 export interface AiRecentMessage {
@@ -36,11 +42,23 @@ export interface AiRuntimeConfig {
   ai: { model: string; promptVersion: string; maxReplyChars: number };
 }
 
+export interface AiTimeContext {
+  currentTimeIso: string;
+  dayOfWeek: string;
+  isBusinessHours: boolean;
+  isAfterHours: boolean;
+  isWeekend: boolean;
+  minutesSinceLastInbound: number | null;
+  idleBucket: 'fresh' | 'short' | 'medium' | 'long' | 'cold' | null;
+}
+
 export interface AiDecisionContext {
   lead: AiLeadContext;
   recentMessages: AiRecentMessage[];
   runtimeConfig: AiRuntimeConfig;
   freeAdviceCount: number;
+  timeContext?: AiTimeContext;
+  recentAiQuestions?: string[];
 }
 
 export interface AiDecisionOutput {

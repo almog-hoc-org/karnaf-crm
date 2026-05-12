@@ -15,3 +15,6 @@ playwright-report/
 test-results/
 
 .vercel
+.claude/
+.playwright-mcp/
+login-prod.png

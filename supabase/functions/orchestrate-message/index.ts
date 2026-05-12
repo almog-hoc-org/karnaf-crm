@@ -5,6 +5,8 @@ import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared/lead-service.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { runAiDecision } from '../_shared/ai-decision-service.ts';
+import { buildTimeContext } from '../_shared/time-context.ts';
+import { extractQuestions } from '../_shared/ai-validation.ts';
 import { releaseConversationLock, tryConversationLock } from '../_shared/conversation-lock.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
 import { maybeRefreshSummary } from '../_shared/transcript-summary.ts';
@@ -83,22 +85,65 @@ Deno.serve(async (req) => {
     const ordered = (recentMessages ?? []).slice().reverse();
     const freeAdviceCount = ordered.filter((m) => m.sender_type === 'lead' && (m.content_text ?? '').length > 80).length;
 
+    const timeContext = buildTimeContext({
+      now: new Date(),
+      lastInboundAt: lead.last_inbound_at ?? null,
+      activeHours: config.activeHours,
+    });
+
+    const recentAiQuestions = Array.from(
+      new Set(
+        ordered
+          .filter((m) => m.sender_type === 'ai')
+          .flatMap((m) => extractQuestions(String(m.content_text ?? ''))),
+      ),
+    ).slice(-6);
+
+    const { data: phoneCalls } = await supabase
+      .from('lead_tasks')
+      .select('completed_at, payload_json')
+      .eq('lead_id', leadId)
+      .eq('task_type', 'phone_call_logged')
+      .order('completed_at', { ascending: false })
+      .limit(20);
+    const priorPhoneCallCount = phoneCalls?.length ?? 0;
+    const lastPhoneCallOutcome =
+      (phoneCalls?.[0]?.payload_json as { outcome?: string } | null)?.outcome ?? null;
+
+    const { data: firstInboundRow } = await supabase
+      .from('messages')
+      .select('content_text')
+      .eq('conversation_id', conversationId)
+      .eq('sender_type', 'lead')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    const firstInboundSnippet = snippet((firstInboundRow?.content_text as string | null) ?? null, 200);
+
     const decision = await runAiDecision(supabase, {
       lead: {
         id: String(lead.id),
         fullName: lead.full_name,
         phone: lead.phone,
         source: lead.source,
+        sourceDetail: lead.source_detail ?? null,
+        sourceCampaign: lead.source_campaign ?? null,
         status: lead.lead_status,
         heat: lead.lead_heat,
         score: Number(lead.lead_score ?? 0),
         ownershipMode: lead.ownership_mode,
         paymentStatus: lead.payment_status,
+        partnerInvolved: lead.partner_involved === null || lead.partner_involved === undefined
+          ? null
+          : !!lead.partner_involved,
         doNotContact: !!lead.do_not_contact,
         removedByRequest: !!lead.removed_by_request,
         conversationSummary: lead.conversation_summary,
         lastInboundAt: lead.last_inbound_at,
         lastOutboundAt: lead.last_outbound_at,
+        priorPhoneCallCount,
+        lastPhoneCallOutcome,
+        firstInboundSnippet,
       },
       recentMessages: ordered.map((m) => ({
         senderType: String(m.sender_type ?? ''),
@@ -107,6 +152,8 @@ Deno.serve(async (req) => {
       })),
       runtimeConfig: config,
       freeAdviceCount,
+      timeContext,
+      recentAiQuestions,
     }, correlationId);
 
     const out = decision.output;
@@ -230,3 +277,11 @@ Deno.serve(async (req) => {
     await releaseConversationLock(supabase, conversationId);
   }
 });
+
+function snippet(text: string | null, maxChars: number): string | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= maxChars) return trimmed;
+  return `${trimmed.slice(0, maxChars - 1)}…`;
+}

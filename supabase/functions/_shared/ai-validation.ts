@@ -27,6 +27,8 @@ export interface ValidationInput {
   maxReplyChars: number;
   isDoNotContact: boolean;
   isRemovedByRequest: boolean;
+  recentAiQuestions?: string[];
+  questionRepetitionThreshold?: number;
 }
 
 export interface ValidationResult {
@@ -94,6 +96,20 @@ export function validateAiDecision(input: ValidationInput): ValidationResult {
     }
   }
 
+  // Coherence: reject replies that re-ask a question already asked recently.
+  if (out.replyText && input.recentAiQuestions && input.recentAiQuestions.length) {
+    const repeat = findRepeatedQuestion(
+      out.replyText,
+      input.recentAiQuestions,
+      input.questionRepetitionThreshold ?? 0.7,
+    );
+    if (repeat) {
+      flags.push(`question_repeated:${repeat.score.toFixed(2)}`);
+      out.replyText = null;
+      out.sendMode = 'no_send';
+    }
+  }
+
   // Escalation consistency: phone escalation must produce a phone queue.
   if (out.escalateToPhoneSales) {
     out.createQueueType = 'phone_escalation';
@@ -123,4 +139,76 @@ function sanitizeReply(reply: string | null, maxChars: number): string | null {
   if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.includes('"replyText"')) return null;
   if (trimmed.length > maxChars) trimmed = trimmed.slice(0, maxChars);
   return trimmed;
+}
+
+const QUESTION_LEAD_WORDS = new Set([
+  'האם', 'כמה', 'מתי', 'איפה', 'למה', 'מה', 'איך', 'מי', 'איזה', 'איזו', 'מאיפה', 'לאן',
+  'what', 'when', 'how', 'why', 'where', 'who', 'which', 'whose', 'whom',
+]);
+
+const TOKEN_STOPWORDS = new Set([
+  'את', 'של', 'על', 'אל', 'אם', 'כי', 'או', 'גם', 'רק', 'הוא', 'היא', 'הם', 'הן', 'אני', 'אתה', 'אתם',
+  'יש', 'אין', 'לא', 'כן', 'זה', 'זו', 'זאת', 'הזה', 'הזו', 'אבל', 'אז',
+  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'to', 'of', 'in', 'on', 'at',
+  'and', 'or', 'but', 'if', 'so', 'for', 'with', 'as', 'by', 'this', 'that', 'these', 'those', 'it',
+  'you', 'he', 'she', 'we', 'they',
+]);
+
+export function extractQuestions(text: string): string[] {
+  if (!text) return [];
+  const sentences = text
+    .split(/(?<=[.!?־׃])\s+|\n+/u)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out: string[] = [];
+  for (const s of sentences) {
+    if (s.includes('?')) {
+      out.push(s);
+      continue;
+    }
+    const firstToken = s.split(/\s+/u)[0]?.toLowerCase();
+    if (firstToken && QUESTION_LEAD_WORDS.has(firstToken)) out.push(s);
+  }
+  return out;
+}
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[\p{P}\p{S}]+/gu, ' ')
+    .split(/\s+/u)
+    .filter((t) => t.length > 1 && !TOKEN_STOPWORDS.has(t));
+}
+
+export function jaccardSimilarity(a: string[], b: string[]): number {
+  if (!a.length || !b.length) return 0;
+  const setA = new Set(a);
+  const setB = new Set(b);
+  let intersect = 0;
+  for (const t of setA) if (setB.has(t)) intersect += 1;
+  const unionSize = setA.size + setB.size - intersect;
+  return unionSize === 0 ? 0 : intersect / unionSize;
+}
+
+export function findRepeatedQuestion(
+  replyText: string,
+  recentQuestions: string[],
+  threshold = 0.7,
+): { match: string; score: number } | null {
+  const candidates = extractQuestions(replyText);
+  if (!candidates.length || !recentQuestions.length) return null;
+  let best: { match: string; score: number } | null = null;
+  for (const candidate of candidates) {
+    const candidateTokens = tokenize(candidate);
+    if (candidateTokens.length < 2) continue;
+    for (const prior of recentQuestions) {
+      const priorTokens = tokenize(prior);
+      if (priorTokens.length < 2) continue;
+      const score = jaccardSimilarity(candidateTokens, priorTokens);
+      if (score >= threshold && (!best || score > best.score)) {
+        best = { match: prior, score };
+      }
+    }
+  }
+  return best;
 }

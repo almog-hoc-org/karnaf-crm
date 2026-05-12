@@ -5,6 +5,7 @@ import { selectPlaybook } from './playbooks.ts';
 import { validateAiDecision } from './ai-validation.ts';
 import { isOpen, recordFailure, recordSuccess } from './circuit-breaker.ts';
 import { pickPromptVariant, type PromptVariant } from './prompt-variant.ts';
+import { resolveMaxReplyChars } from './reply-length.ts';
 import { env } from './env.ts';
 import { log } from './logger.ts';
 
@@ -47,13 +48,16 @@ export async function runAiDecision(
   const promptVersion = variant?.version ?? context.runtimeConfig.ai.promptVersion;
   const overrides = variant?.prompt_overrides ?? {};
 
+  const maxReplyChars = resolveMaxReplyChars(context.lead.heat, context.runtimeConfig.ai.maxReplyChars);
+
   const validateInput = {
     currentStatus: context.lead.status,
     forbiddenClaims: context.runtimeConfig.forbiddenClaims,
     playbook,
-    maxReplyChars: context.runtimeConfig.ai.maxReplyChars,
+    maxReplyChars,
     isDoNotContact: context.lead.doNotContact,
     isRemovedByRequest: context.lead.removedByRequest,
+    recentAiQuestions: context.recentAiQuestions ?? [],
   } as const;
 
   const blockWith = (status: string, raw: unknown) => {
