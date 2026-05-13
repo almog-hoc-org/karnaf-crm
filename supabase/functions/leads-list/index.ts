@@ -30,6 +30,7 @@ Deno.serve(async (req) => {
   const heat = url.searchParams.get('heat');
   const ownershipMode = url.searchParams.get('ownershipMode');
   const search = url.searchParams.get('search');
+  const searchIn = (url.searchParams.get('searchIn') ?? 'lead') as 'lead' | 'messages';
   const createdFrom = url.searchParams.get('createdFrom');
   const createdTo = url.searchParams.get('createdTo');
   const inboundFrom = url.searchParams.get('inboundFrom');
@@ -53,7 +54,23 @@ Deno.serve(async (req) => {
   if (isValidDate(inboundFrom)) query = query.gte('last_inbound_at', inboundFrom as string);
   if (search) {
     const safe = escapeForOr(search);
-    if (safe) query = query.or(`full_name.ilike.%${safe}%,phone.ilike.%${safe}%,email.ilike.%${safe}%`);
+    if (safe) {
+      if (searchIn === 'messages') {
+        const { data: hits } = await supabase
+          .from('messages')
+          .select('lead_id')
+          .ilike('content_text', `%${safe}%`)
+          .not('lead_id', 'is', null)
+          .limit(500);
+        const leadIds = Array.from(new Set((hits ?? []).map((r) => r.lead_id).filter(Boolean) as string[]));
+        if (leadIds.length === 0) {
+          return jsonResponse(req, { ok: true, leads: [], total: 0, limit, offset });
+        }
+        query = query.in('id', leadIds);
+      } else {
+        query = query.or(`full_name.ilike.%${safe}%,phone.ilike.%${safe}%,email.ilike.%${safe}%`);
+      }
+    }
   }
 
   const { data, error, count } = await query;

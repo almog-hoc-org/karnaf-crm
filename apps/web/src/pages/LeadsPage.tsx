@@ -62,6 +62,7 @@ export function LeadsPage() {
   const [inboundFrom, setInboundFrom] = useState(searchParams.get('inboundFrom') ?? '');
   const [offset, setOffset] = useState(0);
   const [savedViews, setSavedViews] = useState<SavedView[]>(() => loadSavedViews());
+  const [searchIn, setSearchIn] = useState<'lead' | 'messages'>('lead');
   useDocumentTitle(t('leads_title'));
 
   const debouncedSearch = useDebouncedValue(search, 200);
@@ -85,6 +86,7 @@ export function LeadsPage() {
 
   const params = {
     search: debouncedSearch.trim() || undefined,
+    searchIn,
     status: status || undefined,
     heat: heat || undefined,
     ownershipMode: ownership || undefined,
@@ -158,10 +160,28 @@ export function LeadsPage() {
             </span>
             <input
               className="kf-input pe-9"
-              placeholder={t('search_placeholder')}
+              placeholder={searchIn === 'messages' ? 'חיפוש בתוכן ההודעות...' : t('search_placeholder')}
               value={search}
               onChange={(e) => { setSearch(e.target.value); setOffset(0); }}
             />
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-xs">
+            <button
+              type="button"
+              className={`rounded-full px-2 py-0.5 ${searchIn === 'lead' ? 'bg-brand-100 text-brand-700' : 'text-slate-500'}`}
+              onClick={() => { setSearchIn('lead'); setOffset(0); }}
+              aria-pressed={searchIn === 'lead'}
+            >
+              שם / טלפון / מייל
+            </button>
+            <button
+              type="button"
+              className={`rounded-full px-2 py-0.5 ${searchIn === 'messages' ? 'bg-brand-100 text-brand-700' : 'text-slate-500'}`}
+              onClick={() => { setSearchIn('messages'); setOffset(0); }}
+              aria-pressed={searchIn === 'messages'}
+            >
+              תוכן הודעות
+            </button>
           </div>
         </div>
         <select className="kf-input" value={status} onChange={(e) => { setStatus(e.target.value); setOffset(0); }}>
