@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { fetchQueueList, postQueueResolve } from '@/lib/api';
 import { QUEUE_LABELS, formatRelative } from '@/lib/format';
 import { HeatBadge, OwnershipBadge } from '@/components/Badge';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import { t } from '@/lib/i18n';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
@@ -41,13 +42,16 @@ export function QueuePage() {
   });
 
   const resolve = useMutation({
-    mutationFn: (queueItemId: string) => postQueueResolve({ queueItemId }),
+    mutationFn: (input: { queueItemId: string; note?: string | null }) =>
+      postQueueResolve({ queueItemId: input.queueItemId, resolutionNote: input.note ?? null }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['queue'] });
       toast.success(t('queue_item_closed'));
     },
     onError: (err) => toast.error((err as Error).message),
   });
+  const [pendingClose, setPendingClose] = useState<{ id: string; label: string } | null>(null);
+  const [closeNote, setCloseNote] = useState('');
 
   const total = q.data?.length ?? 0;
 
@@ -126,7 +130,10 @@ export function QueuePage() {
                     {status === 'pending' || status === 'claimed' ? (
                       <button
                         type="button" className="kf-btn text-xs"
-                        onClick={() => resolve.mutate(row.id)}
+                        onClick={() => {
+                          setPendingClose({ id: row.id, label: QUEUE_LABELS[row.queue_type] ?? row.queue_type });
+                          setCloseNote('');
+                        }}
                         disabled={resolve.isPending}
                       >{t('queue_close')}</button>
                     ) : (
@@ -152,6 +159,32 @@ export function QueuePage() {
           </tbody>
         </table>
       </div>
+
+      <ConfirmDialog
+        open={!!pendingClose}
+        title={`סגירת פריט תור — ${pendingClose?.label ?? ''}`}
+        description="ניתן להוסיף סיבת סגירה לצרכי תיעוד (אופציונלי)."
+        confirmLabel={t('queue_close')}
+        busy={resolve.isPending}
+        onCancel={() => setPendingClose(null)}
+        onConfirm={() => {
+          if (!pendingClose) return;
+          const note = closeNote.trim();
+          resolve.mutate({ queueItemId: pendingClose.id, note: note.length ? note : null });
+          setPendingClose(null);
+        }}
+      >
+        <label className="block text-sm">
+          <span className="text-slate-600">סיבת סגירה</span>
+          <textarea
+            className="kf-input mt-1 min-h-[64px]"
+            placeholder="לדוגמה: ליד חזר ונענה, פוטר אוטומטית..."
+            value={closeNote}
+            onChange={(e) => setCloseNote(e.target.value.slice(0, 500))}
+            maxLength={500}
+          />
+        </label>
+      </ConfirmDialog>
     </div>
   );
 }

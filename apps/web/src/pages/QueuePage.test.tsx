@@ -94,13 +94,22 @@ describe('QueuePage', () => {
     );
   });
 
-  it('resolves a pending item via the close button', async () => {
+  it('resolves a pending item via the close button after confirmation', async () => {
     renderQueue();
     await waitFor(() => expect(screen.getByText('Israel Israeli')).toBeInTheDocument());
 
-    const buttons = screen.getAllByRole('button', { name: 'סגירה' });
-    fireEvent.click(buttons[0]!);
-    await waitFor(() => expect(vi.mocked(postQueueResolve)).toHaveBeenCalledWith({ queueItemId: 'q-1' }));
+    const rowButtons = screen.getAllByRole('button', { name: 'סגירה' });
+    fireEvent.click(rowButtons[0]!);
+
+    // Dialog opens; the confirm button is the second one named "סגירה".
+    const dialog = await screen.findByRole('alertdialog');
+    const confirm = await waitFor(() =>
+      screen.getAllByRole('button', { name: 'סגירה' }).find((el) => dialog.contains(el))!,
+    );
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(vi.mocked(postQueueResolve)).toHaveBeenCalledWith({ queueItemId: 'q-1', resolutionNote: null }),
+    );
   });
 
   it('renders an empty state when there are no items', async () => {

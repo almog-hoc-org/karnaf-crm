@@ -206,12 +206,17 @@ describe('LeadDetailPage', () => {
     expect(screen.getByRole('button', { name: 'שליחה' })).toBeDisabled();
   });
 
-  it('resolves a pending queue item with the resolution note', async () => {
+  it('resolves a pending queue item via the close confirmation dialog', async () => {
     renderDetail();
     fireEvent.click(await screen.findByRole('button', { name: 'סגירה' }));
+    const dialog = await screen.findByRole('alertdialog');
+    const confirm = await waitFor(() =>
+      screen.getAllByRole('button', { name: 'סגירה' }).find((el) => dialog.contains(el))!,
+    );
+    fireEvent.click(confirm);
     await waitFor(() => {
       expect(postQueueResolve).toHaveBeenCalledWith({
-        queueItemId: 'q1', resolutionNote: 'resolved_by_user',
+        queueItemId: 'q1', resolutionNote: null,
       });
     });
   });

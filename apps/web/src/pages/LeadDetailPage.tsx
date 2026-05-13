@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
+import clsx from 'clsx';
 import {
   fetchLeadDetail, postAdminAction, postSendReply, postQueueResolve,
   type AdminAction, type CallOutcome, type LeadMetaUpdates,
@@ -81,6 +82,8 @@ export function LeadDetailPage() {
     | { action: AdminAction; note?: string; label: string; description: string; destructive: boolean }
     | null
   >(null);
+  const [pendingQueueClose, setPendingQueueClose] = useState<{ id: string; label: string } | null>(null);
+  const [queueCloseNote, setQueueCloseNote] = useState('');
 
   const updateMeta = useMutation({
     mutationFn: (updates: LeadMetaUpdates) =>
@@ -217,24 +220,28 @@ export function LeadDetailPage() {
                 k="מטרה"
                 v={lead.goal_summary}
                 editable={canEditMeta}
+                saving={updateMeta.isPending && 'goal_summary' in (updateMeta.variables ?? {})}
                 onSave={(next) => updateMeta.mutate({ goal_summary: next })}
               />
               <EditableRow
                 k="כאב מרכזי"
                 v={lead.pain_point_summary}
                 editable={canEditMeta}
+                saving={updateMeta.isPending && 'pain_point_summary' in (updateMeta.variables ?? {})}
                 onSave={(next) => updateMeta.mutate({ pain_point_summary: next })}
               />
               <EditableRow
                 k="חסם עיקרי"
                 v={lead.main_blocker}
                 editable={canEditMeta}
+                saving={updateMeta.isPending && 'main_blocker' in (updateMeta.variables ?? {})}
                 onSave={(next) => updateMeta.mutate({ main_blocker: next })}
               />
               <EditableRow
                 k="פעולה הבאה"
                 v={lead.next_action_type}
                 editable={canEditMeta}
+                saving={updateMeta.isPending && 'next_action_type' in (updateMeta.variables ?? {})}
                 onSave={(next) => updateMeta.mutate({ next_action_type: next })}
               />
               <Row k="עד" v={lead.next_action_due_at ? formatDateTime(lead.next_action_due_at) : null} />
@@ -259,7 +266,10 @@ export function LeadDetailPage() {
                       <button
                         type="button"
                         className="kf-btn mt-2 text-xs"
-                        onClick={() => resolveQueue.mutate({ queueItemId: q.id, note: 'resolved_by_user' })}
+                        onClick={() => {
+                          setPendingQueueClose({ id: q.id, label: QUEUE_LABELS[q.queue_type] ?? q.queue_type });
+                          setQueueCloseNote('');
+                        }}
                       >
                         סגירה
                       </button>
@@ -323,6 +333,32 @@ export function LeadDetailPage() {
           setPendingAction(null);
         }}
       />
+
+      <ConfirmDialog
+        open={!!pendingQueueClose}
+        title={`סגירת פריט תור — ${pendingQueueClose?.label ?? ''}`}
+        description="ניתן להוסיף סיבת סגירה לצרכי תיעוד (אופציונלי)."
+        confirmLabel="סגירה"
+        busy={resolveQueue.isPending}
+        onCancel={() => setPendingQueueClose(null)}
+        onConfirm={() => {
+          if (!pendingQueueClose) return;
+          const note = queueCloseNote.trim();
+          resolveQueue.mutate({ queueItemId: pendingQueueClose.id, note: note.length ? note : undefined });
+          setPendingQueueClose(null);
+        }}
+      >
+        <label className="block text-sm">
+          <span className="text-slate-600">סיבת סגירה</span>
+          <textarea
+            className="kf-input mt-1 min-h-[64px]"
+            placeholder="לדוגמה: ליד חזר ונענה, פוטר אוטומטית..."
+            value={queueCloseNote}
+            onChange={(e) => setQueueCloseNote(e.target.value.slice(0, 500))}
+            maxLength={500}
+          />
+        </label>
+      </ConfirmDialog>
     </div>
   );
 }
@@ -346,11 +382,12 @@ function Row({ k, v }: { k: string; v: string | null | undefined }) {
 }
 
 function EditableRow({
-  k, v, editable, onSave,
+  k, v, editable, saving = false, onSave,
 }: {
   k: string;
   v: string | null | undefined;
   editable: boolean;
+  saving?: boolean;
   onSave: (next: string | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -360,21 +397,36 @@ function EditableRow({
     if (!editing) setDraft(v ?? '');
   }, [v, editing]);
 
+  // While a save is in-flight, exit edit mode so the row goes back to display
+  // with a spinner overlay; on success the parent invalidates the query.
+  useEffect(() => {
+    if (saving) setEditing(false);
+  }, [saving]);
+
   if (!editable) return <Row k={k} v={v} />;
 
   if (!editing) {
     return (
-      <div className="grid grid-cols-3 items-center gap-2">
+      <div className={clsx('grid grid-cols-3 items-center gap-2', saving && 'opacity-60')}>
         <dt className="col-span-1 text-slate-500">{k}</dt>
         <dd className="col-span-2 flex items-center gap-2 text-slate-800">
           <span className="min-w-0 flex-1 truncate">{v || '—'}</span>
-          <button
-            type="button"
-            className="text-xs text-brand-700 hover:underline"
-            onClick={() => setEditing(true)}
-          >
-            עריכה
-          </button>
+          {saving ? (
+            <span className="inline-flex items-center gap-1 text-xs text-slate-500" aria-live="polite">
+              <svg viewBox="0 0 20 20" className="h-3 w-3 animate-spin" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M10 2a8 8 0 1 1-8 8" strokeLinecap="round" />
+              </svg>
+              שומר...
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="text-xs text-brand-700 hover:underline"
+              onClick={() => setEditing(true)}
+            >
+              עריכה
+            </button>
+          )}
         </dd>
       </div>
     );
@@ -395,7 +447,6 @@ function EditableRow({
             if (e.key === 'Enter') {
               const next = draft.trim();
               onSave(next.length ? next : null);
-              setEditing(false);
             }
           }}
         />
@@ -405,7 +456,6 @@ function EditableRow({
           onClick={() => {
             const next = draft.trim();
             onSave(next.length ? next : null);
-            setEditing(false);
           }}
         >
           שמירה
@@ -487,11 +537,16 @@ function Transcript({ messages }: { messages: MessageRow[] }) {
                   <span className="font-medium text-slate-700">{senderLabel(m.sender_type)}</span>
                   <span>·</span>
                   <span title={m.created_at}>{formatRelative(m.created_at)}</span>
-                  {m.provider_status ? <span className="kf-badge kf-badge-mute">{m.provider_status}</span> : null}
+                  <ProviderStatusBadge status={m.provider_status} error={m.provider_error} />
                 </div>
                 <div className="mt-1 whitespace-pre-wrap text-sm">
                   {m.content_text || (m.message_type === 'media' ? '[מדיה]' : '—')}
                 </div>
+                {m.provider_status === 'failed' && m.provider_error ? (
+                  <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-800">
+                    שגיאת ספק: {m.provider_error}
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -526,9 +581,36 @@ function senderLabel(t: MessageRow['sender_type']): string {
 
 function messageBubbleClass(m: MessageRow): string {
   const base = 'rounded-2xl p-3 max-w-[85%] shadow-sm';
-  if (m.direction === 'inbound') return `${base} bg-slate-100 mr-auto`;
-  if (m.sender_type === 'ai') return `${base} bg-brand-50 ms-auto`;
-  return `${base} bg-amber-50 ms-auto`;
+  const failedRing = m.provider_status === 'failed' ? ' ring-1 ring-rose-300' : '';
+  if (m.direction === 'inbound') return `${base} bg-slate-100 mr-auto${failedRing}`;
+  if (m.sender_type === 'ai') return `${base} bg-brand-50 ms-auto${failedRing}`;
+  return `${base} bg-amber-50 ms-auto${failedRing}`;
+}
+
+const PROVIDER_STATUS_LABELS: Record<NonNullable<MessageRow['provider_status']>, string> = {
+  queued: 'בתור',
+  sent: 'נשלח',
+  delivered: 'התקבל',
+  read: 'נקרא',
+  failed: 'נכשל',
+};
+
+function ProviderStatusBadge({
+  status, error,
+}: { status: MessageRow['provider_status']; error: string | null }) {
+  if (!status) return null;
+  if (status === 'failed') {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700"
+        title={error || 'נכשל בשליחה'}
+      >
+        <span aria-hidden="true">⚠</span>
+        {PROVIDER_STATUS_LABELS[status]}
+      </span>
+    );
+  }
+  return <span className="kf-badge kf-badge-mute">{PROVIDER_STATUS_LABELS[status]}</span>;
 }
 
 function waLink(phone: string): string {

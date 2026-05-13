@@ -5,9 +5,11 @@ export interface ConfirmDialogProps {
   open: boolean;
   title: string;
   description?: ReactNode;
+  children?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   destructive?: boolean;
+  busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -16,9 +18,11 @@ export function ConfirmDialog({
   open,
   title,
   description,
+  children,
   confirmLabel,
   cancelLabel,
   destructive = false,
+  busy = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -62,9 +66,10 @@ export function ConfirmDialog({
             {title}
           </h2>
           {description ? <div className="mt-2 text-sm text-slate-600">{description}</div> : null}
+          {children ? <div className="mt-3">{children}</div> : null}
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
-          <button type="button" className="kf-btn" onClick={onCancel}>
+          <button type="button" className="kf-btn" onClick={onCancel} disabled={busy}>
             {cancelLabel ?? t('cancel')}
           </button>
           <button
@@ -72,8 +77,9 @@ export function ConfirmDialog({
             ref={confirmRef}
             className={destructive ? 'kf-btn kf-btn-danger' : 'kf-btn kf-btn-primary'}
             onClick={onConfirm}
+            disabled={busy}
           >
-            {confirmLabel ?? t('confirm')}
+            {busy ? '...' : (confirmLabel ?? t('confirm'))}
           </button>
         </div>
       </div>
