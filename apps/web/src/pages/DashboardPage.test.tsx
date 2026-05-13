@@ -4,6 +4,18 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { DashboardSummary, QueueRow } from '@/lib/types';
 import { DashboardPage } from './DashboardPage';
+import { AuthContext, type AuthState } from '@/auth/auth-context';
+
+const authStub: AuthState = {
+  session: null,
+  user: { id: 'u1', email: 'mia@test.local' } as AuthState['user'],
+  role: 'mia',
+  loading: false,
+  signIn: vi.fn(),
+  signInWithGoogle: vi.fn(),
+  signUp: vi.fn(),
+  signOut: vi.fn(),
+};
 
 vi.mock('@/lib/api', () => ({
   fetchDashboardSummary: vi.fn(),
@@ -67,14 +79,16 @@ function makeClient() {
 
 function renderDashboard() {
   return render(
-    <QueryClientProvider client={makeClient()}>
-      <MemoryRouter initialEntries={['/']}>
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/leads/:leadId" element={<div>lead detail</div>} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <AuthContext.Provider value={authStub}>
+      <QueryClientProvider client={makeClient()}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/leads/:leadId" element={<div>lead detail</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </AuthContext.Provider>,
   );
 }
 

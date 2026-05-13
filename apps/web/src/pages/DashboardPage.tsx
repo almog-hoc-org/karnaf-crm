@@ -5,8 +5,11 @@ import { QUEUE_LABELS } from '@/lib/format';
 import { Link } from 'react-router-dom';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
+import { useAuth } from '@/auth/auth-context';
+import { WelcomeCard } from '@/components/WelcomeCard';
 
 export function DashboardPage() {
+  const auth = useAuth();
   const summaryQ = useQuery({ queryKey: ['dashboard-summary'], queryFn: fetchDashboardSummary });
   const queueQ = useQuery({ queryKey: ['queue', 'pending'], queryFn: () => fetchQueueList({ status: 'pending' }) });
   useDocumentTitle(t('dashboard_title'));
@@ -18,6 +21,7 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      <WelcomeCard role={auth.role} userEmail={auth.user?.email ?? null} />
       <header className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{t('dashboard_title')}</h1>
         <button
