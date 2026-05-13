@@ -42,6 +42,10 @@ body {
 .kf-table tbody tr { @apply border-t border-slate-100 transition hover:bg-slate-50/70; }
 .kf-table td { @apply p-3 align-middle; }
 
+/* SLA risk highlights for queue + tasks rows. */
+.kf-row-overdue { @apply bg-rose-50/70 hover:bg-rose-100/70; }
+.kf-row-warning { @apply bg-amber-50/70 hover:bg-amber-100/70; }
+
 /* Horizontal-scroll wrapper for tables that must keep their grid on mobile. */
 .kf-table-scroll { @apply -mx-4 overflow-x-auto sm:mx-0; }
 .kf-table-scroll > table { @apply min-w-[40rem]; }

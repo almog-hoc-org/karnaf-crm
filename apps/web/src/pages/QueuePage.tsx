@@ -8,6 +8,8 @@ import { useToast } from '@/components/Toast';
 import { t } from '@/lib/i18n';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 
+import { computeSlaState, slaRowClass } from '@/lib/queue-sla';
+
 const QUEUE_TYPES = [
   '', 'first_response_due', 'hot_lead', 'sla_risk', 'human_handoff',
   'payment_pending', 'phone_escalation', 'nurture_due', 'dormant_review',
@@ -88,9 +90,21 @@ export function QueuePage() {
             {q.isLoading ? (
               <tr><td colSpan={8} className="p-6 text-center text-slate-500">{t('loading')}</td></tr>
             ) : q.data && q.data.length > 0 ? (
-              q.data.map((row) => (
-                <tr key={row.id}>
-                  <td data-primary><strong>{QUEUE_LABELS[row.queue_type] ?? row.queue_type}</strong></td>
+              q.data.map((row) => {
+                const sla = computeSlaState(row.queue_type, row.created_at);
+                const slaTitle = sla.targetMinutes !== null
+                  ? `SLA יעד ${sla.targetMinutes} דק׳ · גיל ${sla.ageMinutes ?? '?'} דק׳`
+                  : '';
+                return (
+                <tr key={row.id} className={slaRowClass(sla.state)} title={slaTitle}>
+                  <td data-primary>
+                    <strong>{QUEUE_LABELS[row.queue_type] ?? row.queue_type}</strong>
+                    {sla.state === 'overdue' ? (
+                      <span className="ms-2 inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">SLA</span>
+                    ) : sla.state === 'warning' ? (
+                      <span className="ms-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">בקרוב SLA</span>
+                    ) : null}
+                  </td>
                   <td data-label="ליד">
                     <span className="block">
                       <Link to={`/leads/${row.lead_id}`} className="font-medium text-brand-700 hover:underline">
@@ -120,7 +134,8 @@ export function QueuePage() {
                     )}
                   </td>
                 </tr>
-              ))
+                );
+              })
             ) : (
               <tr>
                 <td colSpan={8} className="p-12 text-center">
