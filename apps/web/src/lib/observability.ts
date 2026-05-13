@@ -1,67 +1,64 @@
-// Lightweight observability hook. The browser side reports unhandled
-// errors and unhandled promise rejections to whatever Sentry-style POST
-// endpoint VITE_SENTRY_DSN points at. With the DSN unset every helper is
-// a no-op, so the build doesn't pull `@sentry/browser` and there is no
-// runtime cost in dev/local environments.
+// Sentry-backed observability for the operator console.
+//
+// When VITE_SENTRY_DSN is unset (local dev), every helper is a no-op so the
+// browser doesn't pay any runtime cost and the build still works without
+// Sentry credentials. When the DSN is present, Sentry is initialised with
+// a sane default tracing + browser-replay sample rate; the project owner
+// can tune the rates server-side via Sentry's UI rather than rebuilding.
 
-interface ReportPayload {
-  level: 'error' | 'warning' | 'info';
-  message: string;
-  release?: string;
-  environment?: string;
-  context?: Record<string, unknown>;
-  timestamp: string;
-}
+import * as Sentry from '@sentry/react';
 
-const dsn = import.meta.env.VITE_SENTRY_DSN;
-const release = import.meta.env.VITE_RELEASE;
-const environment = import.meta.env.VITE_ENV ?? 'production';
+const dsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
+const release = import.meta.env.VITE_RELEASE as string | undefined;
+const environment = (import.meta.env.VITE_ENV as string | undefined) ?? 'production';
 
 export const observabilityEnabled = typeof dsn === 'string' && dsn.length > 0;
 
-function send(payload: ReportPayload) {
-  if (!observabilityEnabled || !dsn) return;
-  // Use sendBeacon when available so the request survives page unload.
+let initialised = false;
+
+function ensureInit() {
+  if (initialised || !observabilityEnabled) return;
+  initialised = true;
   try {
-    const body = JSON.stringify(payload);
-    if (navigator.sendBeacon) {
-      const blob = new Blob([body], { type: 'application/json' });
-      navigator.sendBeacon(dsn, blob);
-      return;
-    }
-    void fetch(dsn, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      keepalive: true,
+    Sentry.init({
+      dsn,
+      release,
+      environment,
+      tracesSampleRate: 0.1,
+      replaysSessionSampleRate: 0.0,
+      replaysOnErrorSampleRate: 1.0,
+      integrations: [Sentry.browserTracingIntegration(), Sentry.replayIntegration()],
     });
   } catch {
-    // Reporter must never throw into the host app.
+    // never throw into the host app
   }
 }
 
-function pack(level: ReportPayload['level'], message: string, context?: Record<string, unknown>): ReportPayload {
-  return {
-    level,
-    message,
-    release,
-    environment,
-    context,
-    timestamp: new Date().toISOString(),
-  };
-}
-
 export function reportError(error: unknown, context?: Record<string, unknown>) {
-  const message = error instanceof Error ? error.message : String(error);
-  send(pack('error', message, { ...context, stack: error instanceof Error ? error.stack : undefined }));
+  ensureInit();
+  if (!observabilityEnabled) return;
+  try {
+    Sentry.captureException(error, context ? { extra: context } : undefined);
+  } catch {
+    /* ignore */
+  }
 }
 
 export function reportWarning(message: string, context?: Record<string, unknown>) {
-  send(pack('warning', message, context));
+  ensureInit();
+  if (!observabilityEnabled) return;
+  try {
+    Sentry.captureMessage(message, { level: 'warning', extra: context });
+  } catch {
+    /* ignore */
+  }
 }
 
 export function installGlobalReporters() {
+  ensureInit();
   if (!observabilityEnabled) return;
+  // Sentry already wires global error + unhandledrejection; keeping the
+  // explicit listeners around so behaviour matches the previous helper:
   window.addEventListener('error', (event) => {
     reportError(event.error ?? event.message, {
       filename: event.filename,
@@ -72,4 +69,17 @@ export function installGlobalReporters() {
   window.addEventListener('unhandledrejection', (event) => {
     reportError(event.reason, { kind: 'unhandledrejection' });
   });
+}
+
+export function setUserContext(user: { id: string | null; email: string | null; role: string | null }) {
+  if (!observabilityEnabled) return;
+  try {
+    Sentry.setUser({
+      id: user.id ?? undefined,
+      email: user.email ?? undefined,
+      role: user.role ?? undefined,
+    });
+  } catch {
+    /* ignore */
+  }
 }
