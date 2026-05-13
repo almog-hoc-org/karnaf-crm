@@ -166,20 +166,29 @@ export function AnalyticsPage() {
                 </tr>
               </thead>
               <tbody>
-                {cohorts.map((c, i) => (
-                  <tr key={`${c.cohort_week}::${c.source}::${i}`}>
-                    <td className="tabular-nums">{formatWeek(c.cohort_week)}</td>
-                    <td className="font-medium">{c.source}</td>
-                    <td className="tabular-nums">{c.leads_total}</td>
-                    <td className="tabular-nums">{c.responded}</td>
-                    <td className="tabular-nums">{c.qualified}</td>
-                    <td className="tabular-nums">{c.checkout_pushed}</td>
-                    <td className="tabular-nums text-emerald-700">{c.won}</td>
-                    <td className="tabular-nums text-slate-500">{c.lost}</td>
-                    <td className="tabular-nums">{c.win_rate_pct}%</td>
-                    <td className="tabular-nums">{c.avg_minutes_to_win > 0 ? Math.round(c.avg_minutes_to_win / 60 / 24) : '—'}</td>
-                  </tr>
-                ))}
+                {cohorts.map((c, i) => {
+                  const weekStart = new Date(c.cohort_week);
+                  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+                  const fromIso = weekStart.toISOString().slice(0, 10);
+                  const toIso = new Date(weekEnd.getTime() - 1).toISOString().slice(0, 10);
+                  const drilldown = `/leads?createdFrom=${fromIso}&createdTo=${toIso}`;
+                  return (
+                    <tr key={`${c.cohort_week}::${c.source}::${i}`}>
+                      <td className="tabular-nums">
+                        <Link to={drilldown} className="text-brand-700 hover:underline">{formatWeek(c.cohort_week)}</Link>
+                      </td>
+                      <td className="font-medium">{c.source}</td>
+                      <td className="tabular-nums">{c.leads_total}</td>
+                      <td className="tabular-nums">{c.responded}</td>
+                      <td className="tabular-nums">{c.qualified}</td>
+                      <td className="tabular-nums">{c.checkout_pushed}</td>
+                      <td className="tabular-nums text-emerald-700">{c.won}</td>
+                      <td className="tabular-nums text-slate-500">{c.lost}</td>
+                      <td className="tabular-nums">{c.win_rate_pct}%</td>
+                      <td className="tabular-nums">{c.avg_minutes_to_win > 0 ? Math.round(c.avg_minutes_to_win / 60 / 24) : '—'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
