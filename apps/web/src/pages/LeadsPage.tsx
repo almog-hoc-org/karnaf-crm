@@ -18,13 +18,50 @@ const OWNERS: OwnershipMode[] = ['ai_active', 'mia_active', 'phone_sales_pending
 
 const PAGE_SIZE = 50;
 
+interface SavedView {
+  id: string;
+  name: string;
+  search: string;
+  status: string;
+  heat: string;
+  ownership: string;
+  createdFrom: string;
+  createdTo: string;
+  inboundFrom: string;
+}
+
+const SAVED_VIEWS_KEY = 'karnaf:leads:savedViews';
+
+function loadSavedViews(): SavedView[] {
+  try {
+    const raw = typeof window !== 'undefined' ? window.localStorage.getItem(SAVED_VIEWS_KEY) : null;
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedViews(views: SavedView[]) {
+  try {
+    if (typeof window !== 'undefined') window.localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(views));
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
 export function LeadsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState(searchParams.get('status') ?? '');
   const [heat, setHeat] = useState(searchParams.get('heat') ?? '');
   const [ownership, setOwnership] = useState(searchParams.get('ownership') ?? '');
+  const [createdFrom, setCreatedFrom] = useState(searchParams.get('createdFrom') ?? '');
+  const [createdTo, setCreatedTo] = useState(searchParams.get('createdTo') ?? '');
+  const [inboundFrom, setInboundFrom] = useState(searchParams.get('inboundFrom') ?? '');
   const [offset, setOffset] = useState(0);
+  const [savedViews, setSavedViews] = useState<SavedView[]>(() => loadSavedViews());
   useDocumentTitle(t('leads_title'));
 
   const debouncedSearch = useDebouncedValue(search, 200);
@@ -35,17 +72,57 @@ export function LeadsPage() {
     if (status) next.set('status', status);
     if (heat) next.set('heat', heat);
     if (ownership) next.set('ownership', ownership);
+    if (createdFrom) next.set('createdFrom', createdFrom);
+    if (createdTo) next.set('createdTo', createdTo);
+    if (inboundFrom) next.set('inboundFrom', inboundFrom);
     setSearchParams(next, { replace: true });
-  }, [status, heat, ownership, setSearchParams]);
+  }, [status, heat, ownership, createdFrom, createdTo, inboundFrom, setSearchParams]);
+
+  // dates from UI come as yyyy-mm-dd; expand to UTC range so we match the
+  // entire day for createdTo, and start-of-day for createdFrom / inboundFrom.
+  const expandStart = (s: string) => (s ? `${s}T00:00:00.000Z` : undefined);
+  const expandEnd = (s: string) => (s ? `${s}T23:59:59.999Z` : undefined);
 
   const params = {
     search: debouncedSearch.trim() || undefined,
     status: status || undefined,
     heat: heat || undefined,
     ownershipMode: ownership || undefined,
+    createdFrom: expandStart(createdFrom),
+    createdTo: expandEnd(createdTo),
+    inboundFrom: expandStart(inboundFrom),
     limit: PAGE_SIZE,
     offset,
   };
+
+  function applyView(view: SavedView) {
+    setSearch(view.search);
+    setStatus(view.status);
+    setHeat(view.heat);
+    setOwnership(view.ownership);
+    setCreatedFrom(view.createdFrom);
+    setCreatedTo(view.createdTo);
+    setInboundFrom(view.inboundFrom);
+    setOffset(0);
+  }
+
+  function saveCurrentView() {
+    const name = window.prompt('שם לתצוגה השמורה?')?.trim();
+    if (!name) return;
+    const view: SavedView = {
+      id: crypto.randomUUID(),
+      name, search, status, heat, ownership, createdFrom, createdTo, inboundFrom,
+    };
+    const next = [...savedViews.filter((v) => v.name !== name), view];
+    setSavedViews(next);
+    persistSavedViews(next);
+  }
+
+  function deleteView(id: string) {
+    const next = savedViews.filter((v) => v.id !== id);
+    setSavedViews(next);
+    persistSavedViews(next);
+  }
 
   const q = useQuery({
     queryKey: ['leads', params],
@@ -56,10 +133,12 @@ export function LeadsPage() {
   const total = q.data?.total ?? null;
   const start = total != null ? offset + 1 : null;
   const end = total != null ? Math.min(offset + (q.data?.leads.length ?? 0), total) : null;
-  const hasFilters = !!(search || status || heat || ownership);
+  const hasFilters = !!(search || status || heat || ownership || createdFrom || createdTo || inboundFrom);
 
   function clearFilters() {
-    setSearch(''); setStatus(''); setHeat(''); setOwnership(''); setOffset(0);
+    setSearch(''); setStatus(''); setHeat(''); setOwnership('');
+    setCreatedFrom(''); setCreatedTo(''); setInboundFrom('');
+    setOffset(0);
   }
 
   return (
@@ -97,13 +176,61 @@ export function LeadsPage() {
           <option value="">{t('filter_all_ownership')}</option>
           {OWNERS.map((o) => <option key={o} value={o}>{OWNERSHIP_LABELS[o]}</option>)}
         </select>
-        {hasFilters ? (
-          <div className="sm:col-span-2 md:col-span-5">
-            <button type="button" className="kf-btn kf-btn-ghost text-xs" onClick={clearFilters}>
-              {t('filter_clear')}
-            </button>
-          </div>
-        ) : null}
+        <div className="sm:col-span-2 md:col-span-5">
+          <details className="rounded-lg border border-slate-200 bg-slate-50/40 p-2 text-sm">
+            <summary className="cursor-pointer text-xs font-medium text-slate-600">סינון לפי תאריכים ותצוגות שמורות</summary>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <label className="text-xs text-slate-600">
+                נוצר מ:
+                <input
+                  type="date"
+                  className="kf-input mt-1"
+                  value={createdFrom}
+                  onChange={(e) => { setCreatedFrom(e.target.value); setOffset(0); }}
+                />
+              </label>
+              <label className="text-xs text-slate-600">
+                נוצר עד:
+                <input
+                  type="date"
+                  className="kf-input mt-1"
+                  value={createdTo}
+                  onChange={(e) => { setCreatedTo(e.target.value); setOffset(0); }}
+                />
+              </label>
+              <label className="text-xs text-slate-600">
+                הודעה אחרונה מ:
+                <input
+                  type="date"
+                  className="kf-input mt-1"
+                  value={inboundFrom}
+                  onChange={(e) => { setInboundFrom(e.target.value); setOffset(0); }}
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2">
+              <span className="text-xs text-slate-500">תצוגות שמורות:</span>
+              {savedViews.length === 0 ? (
+                <span className="text-xs text-slate-400">אין עדיין</span>
+              ) : (
+                savedViews.map((v) => (
+                  <span key={v.id} className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-xs ring-1 ring-slate-200">
+                    <button type="button" className="text-brand-700 hover:underline" onClick={() => applyView(v)}>{v.name}</button>
+                    <button type="button" aria-label={`מחק תצוגה ${v.name}`} className="text-slate-400 hover:text-rose-600" onClick={() => deleteView(v.id)}>×</button>
+                  </span>
+                ))
+              )}
+              <button type="button" className="kf-btn kf-btn-ghost text-xs ms-auto" onClick={saveCurrentView} disabled={!hasFilters}>
+                שמירת תצוגה
+              </button>
+              {hasFilters ? (
+                <button type="button" className="kf-btn kf-btn-ghost text-xs" onClick={clearFilters}>
+                  {t('filter_clear')}
+                </button>
+              ) : null}
+            </div>
+          </details>
+        </div>
       </div>
 
       <div className="kf-card overflow-hidden md:overflow-visible">

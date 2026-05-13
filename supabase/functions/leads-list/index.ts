@@ -30,8 +30,13 @@ Deno.serve(async (req) => {
   const heat = url.searchParams.get('heat');
   const ownershipMode = url.searchParams.get('ownershipMode');
   const search = url.searchParams.get('search');
+  const createdFrom = url.searchParams.get('createdFrom');
+  const createdTo = url.searchParams.get('createdTo');
+  const inboundFrom = url.searchParams.get('inboundFrom');
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 200);
   const offset = Math.max(0, Number(url.searchParams.get('offset') ?? 0));
+
+  const isValidDate = (s: string | null): boolean => !!s && Number.isFinite(Date.parse(s));
 
   const supabase = getServiceSupabase();
   let query = supabase
@@ -43,6 +48,9 @@ Deno.serve(async (req) => {
   if (status) query = query.eq('lead_status', status);
   if (heat) query = query.eq('lead_heat', heat);
   if (ownershipMode) query = query.eq('ownership_mode', ownershipMode);
+  if (isValidDate(createdFrom)) query = query.gte('created_at', createdFrom as string);
+  if (isValidDate(createdTo)) query = query.lte('created_at', createdTo as string);
+  if (isValidDate(inboundFrom)) query = query.gte('last_inbound_at', inboundFrom as string);
   if (search) {
     const safe = escapeForOr(search);
     if (safe) query = query.or(`full_name.ilike.%${safe}%,phone.ilike.%${safe}%,email.ilike.%${safe}%`);

@@ -60,6 +60,7 @@ export async function fetchDashboardSummary() {
 
 export interface LeadsListParams {
   status?: string; heat?: string; ownershipMode?: string; search?: string;
+  createdFrom?: string; createdTo?: string; inboundFrom?: string;
   limit?: number; offset?: number;
 }
 export async function fetchLeadsList(params: LeadsListParams = {}) {
