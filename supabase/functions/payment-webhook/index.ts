@@ -4,7 +4,7 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { transitionLeadStatus, logLeadEvent } from '../_shared/lead-service.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { verifyHmacHeader } from '../_shared/webhook-signature.ts';
-import { env } from '../_shared/env.ts';
+import { env, optional } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 
@@ -17,9 +17,17 @@ Deno.serve(async (req) => {
 
   const correlationId = correlationFromRequest(req);
   const rawBody = await req.text();
+  // Fail-closed: PAYMENT_WEBHOOK_SECRET must be set in production. A missing
+  // secret used to skip verification entirely (fail-open) — which would let
+  // an attacker submit forged payment completions. Set WEBHOOK_ALLOW_UNSIGNED
+  // =true only in local dev to bypass.
   const secret = env.paymentWebhookSecret();
-
-  if (secret) {
+  if (!secret) {
+    if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
+      log.error('payment_webhook_misconfigured', { fn: 'payment-webhook', correlationId });
+      return jsonResponse(req, { error: 'Webhook not configured' }, 503);
+    }
+  } else {
     const valid =
       (await verifyHmacHeader(req, rawBody, secret, 'x-karnaf-signature')) ||
       (await verifyHmacHeader(req, rawBody, secret, 'x-signature')) ||
@@ -127,6 +135,25 @@ Deno.serve(async (req) => {
       product_code: productCode ?? null,
       correlation_id: correlationId,
     });
+
+    // Fire-and-forget: provision the student in the Portal Supabase project.
+    // Gated by PORTAL_PROVISION_ENABLED so the bridge stays cold until manual
+    // smoke-tests pass. provision-student is itself idempotent (skips if
+    // portal_invite_code already set), so a webhook retry won't double-issue.
+    if (env.portalProvisionEnabled()) {
+      const provisionUrl = `${env.supabaseUrl()}/functions/v1/provision-student`;
+      fetch(provisionUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.serviceRoleKey()}`,
+          'Content-Type': 'application/json',
+          'x-correlation-id': correlationId,
+        },
+        body: JSON.stringify({ leadId: matchedLeadId }),
+      }).catch((err) => log.error('provision_dispatch_failed', {
+        fn: 'payment-webhook', correlationId, leadId: matchedLeadId, err: String(err),
+      }));
+    }
   } else if (paymentStatus === 'pending' || paymentStatus === 'started') {
     await transitionLeadStatus(supabase, matchedLeadId, 'payment_pending', 'provider', 'payment_signal');
     await ensurePendingQueueItem(supabase, {

@@ -29,8 +29,16 @@ Deno.serve(async (req) => {
 
   const correlationId = correlationFromRequest(req);
   const rawBody = await req.text();
+  // Fail-closed: production must have EMAIL_WEBHOOK_SECRET set. A missing
+  // secret used to skip verification entirely (fail-open). Set
+  // WEBHOOK_ALLOW_UNSIGNED=true only in local dev to bypass.
   const secret = optional('EMAIL_WEBHOOK_SECRET');
-  if (secret) {
+  if (!secret) {
+    if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
+      log.error('email_webhook_misconfigured', { fn: 'email-webhook', correlationId });
+      return jsonResponse(req, { error: 'Webhook not configured' }, 503);
+    }
+  } else {
     const valid = await verifyHmacHeader(req, rawBody, secret, 'x-karnaf-signature');
     if (!valid) {
       log.warn('email_signature_invalid', { fn: 'email-webhook', correlationId });

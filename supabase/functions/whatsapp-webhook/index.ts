@@ -5,7 +5,7 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { ensureConversation, logLeadEvent, upsertLeadByPhone } from '../_shared/lead-service.ts';
 import { messageAlreadyLogged } from '../_shared/idempotency.ts';
 import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
-import { env, safeEqual } from '../_shared/env.ts';
+import { env, optional, safeEqual } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { archiveWhatsAppMedia } from '../_shared/media-fetch.ts';
@@ -33,12 +33,17 @@ Deno.serve(async (req) => {
 
   const rawBody = await req.text();
 
-  // Meta sends X-Hub-Signature-256; WATI uses bearer auth on its webhook
-  // config. If we have a Meta app secret configured, require the signature
-  // header on every POST — silently accepting unsigned bodies would let any
-  // attacker who finds the URL inject inbound messages.
+  // Fail-closed: WHATSAPP_APP_SECRET must be set in production. Previously
+  // an unset secret silently accepted unsigned bodies — anyone with the URL
+  // could inject inbound messages. WEBHOOK_ALLOW_UNSIGNED=true is the
+  // explicit dev-only opt-out.
   const metaSecret = env.whatsappAppSecret();
-  if (metaSecret) {
+  if (!metaSecret) {
+    if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
+      log.error('whatsapp_webhook_misconfigured', { fn: 'whatsapp-webhook', correlationId });
+      return jsonResponse(req, { error: 'Webhook not configured' }, 503);
+    }
+  } else {
     const sigHeader = req.headers.get('x-hub-signature-256');
     if (!sigHeader) {
       log.warn('whatsapp_signature_missing', { fn: 'whatsapp-webhook', correlationId });

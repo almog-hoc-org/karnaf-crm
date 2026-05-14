@@ -4,7 +4,7 @@ import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { logLeadEvent, upsertLead } from '../_shared/lead-service.ts';
 import { normalizeIsraeliPhone } from '../_shared/phone.ts';
 import { verifyHmacHeader } from '../_shared/webhook-signature.ts';
-import { env } from '../_shared/env.ts';
+import { env, optional } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
@@ -21,8 +21,15 @@ Deno.serve(async (req) => {
 
   const correlationId = correlationFromRequest(req);
   const rawBody = await req.text();
+  // Fail-closed: production must have INTAKE_WEBHOOK_SECRET set. Dev/local
+  // can opt out via WEBHOOK_ALLOW_UNSIGNED=true.
   const secret = env.intakeWebhookSecret();
-  if (secret) {
+  if (!secret) {
+    if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
+      log.error('intake_webhook_misconfigured', { fn: 'leads-intake', correlationId });
+      return jsonResponse(req, { error: 'Webhook not configured' }, 503);
+    }
+  } else {
     const valid = await verifyHmacHeader(req, rawBody, secret, 'x-karnaf-signature');
     if (!valid) {
       log.warn('intake_signature_invalid', { fn: 'leads-intake', correlationId });
