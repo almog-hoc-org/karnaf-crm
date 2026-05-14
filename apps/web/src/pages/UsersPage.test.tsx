@@ -10,9 +10,16 @@ vi.mock('@/lib/api', () => ({
   fetchUsersList: vi.fn(),
   postCreateUser: vi.fn(),
   postUpdateUser: vi.fn(),
+  // UsersPage also imports these; without them the page crashes during
+  // initial render (admin invite + reset-password buttons reference both).
+  postResetUserPassword: vi.fn(),
+  postInviteUser: vi.fn(),
 }));
 
-import { fetchUsersList, postCreateUser, postUpdateUser } from '@/lib/api';
+import {
+  fetchUsersList, postCreateUser, postUpdateUser,
+  postResetUserPassword, postInviteUser,
+} from '@/lib/api';
 
 function makeProfile(over: Partial<ProfileRow> = {}): ProfileRow {
   return {
@@ -50,9 +57,9 @@ function renderUsers(role: Role | null = 'admin', userId = 'admin-1') {
   return render(
     <QueryClientProvider client={makeClient()}>
       <AuthContext.Provider value={makeAuth(role, userId)}>
-        <MemoryRouter initialEntries={['/users']}>
+        <MemoryRouter initialEntries={['/admin/users']}>
           <Routes>
-            <Route path="/users" element={<UsersPage />} />
+            <Route path="/admin/users" element={<UsersPage />} />
             <Route path="/" element={<div>home outlet</div>} />
           </Routes>
         </MemoryRouter>
@@ -68,6 +75,17 @@ beforeEach(() => {
   ]);
   vi.mocked(postCreateUser).mockResolvedValue({ ok: true, profile: makeProfile() });
   vi.mocked(postUpdateUser).mockResolvedValue({ ok: true, profile: makeProfile() });
+  vi.mocked(postResetUserPassword).mockResolvedValue({
+    ok: true,
+    recoveryLink: 'https://karnaf-crm.vercel.app/auth/reset?token=t1',
+    email: 'mia@karnaf.io',
+  });
+  vi.mocked(postInviteUser).mockResolvedValue({
+    ok: true,
+    inviteLink: 'https://karnaf-crm.vercel.app/auth/invite?token=i1',
+    email: 'mia@karnaf.io',
+    profile: makeProfile(),
+  });
 });
 
 afterEach(() => {
@@ -86,22 +104,29 @@ describe('UsersPage', () => {
     expect(screen.getByText('home outlet')).toBeInTheDocument();
   });
 
-  it('renders the user list and the create form for admins', async () => {
+  it('renders the user list and the invite form for admins', async () => {
     renderUsers('admin');
     expect(await screen.findByRole('heading', { name: 'ניהול משתמשים' })).toBeInTheDocument();
     expect(await screen.findByText('mia@karnaf.io', undefined, { timeout: 4000 })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'הוספת משתמש' })).toBeInTheDocument();
+    // Default mode is "invite" — button label reflects that. Create mode is
+    // still available behind the radio toggle (covered by the next test).
+    expect(screen.getByRole('button', { name: 'שלח הזמנה' })).toBeInTheDocument();
   });
 
   it('submits the create form with the entered values', async () => {
     renderUsers('admin');
     await screen.findByRole('heading', { name: 'ניהול משתמשים' });
-    const submitBtn = screen.getByRole('button', { name: 'הוספת משתמש' });
+    // Flip the radio from invite → create so the password input appears
+    // and the submit button switches to "הוספת משתמש".
+    const createRadio = screen.getByRole('radio', { name: /צור עם סיסמה ידנית/ });
+    fireEvent.click(createRadio);
+    const submitBtn = await screen.findByRole('button', { name: 'הוספת משתמש' });
     const form = submitBtn.closest('form')!;
-    const inputs = form.querySelectorAll('input');
-    const emailInput = inputs[0]!;
-    const passwordInput = inputs[1]!;
-    const fullNameInput = inputs[2]!;
+    const inputs = form.querySelectorAll('input[type="email"], input[type="password"], input[type="text"], input:not([type])');
+    // inputs after the two radios: email, password, fullName.
+    const emailInput = form.querySelector('input[type="email"]') as HTMLInputElement;
+    const passwordInput = form.querySelector('input[type="password"]') as HTMLInputElement;
+    const fullNameInput = inputs[inputs.length - 1] as HTMLInputElement;
     const roleSelect = form.querySelector('select')!;
     fireEvent.change(emailInput, { target: { value: 'new@karnaf.io' } });
     fireEvent.change(passwordInput, { target: { value: 'verySecret123!' } });
@@ -118,6 +143,11 @@ describe('UsersPage', () => {
       });
     });
   });
+
+  // Note: a "submits the invite form" parallel test exists in the e2e
+  // suite (e2e/admin-invite.spec.ts) where HTML5 form validation behaves
+  // closer to a real browser. The unit-test counterpart is brittle because
+  // jsdom + radio-toggled conditional renders don't reliably fire submit.
 
   it('updates a user role via the role select', async () => {
     renderUsers('admin');

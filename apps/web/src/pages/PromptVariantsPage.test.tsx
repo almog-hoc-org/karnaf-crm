@@ -11,10 +11,14 @@ vi.mock('@/lib/api', () => ({
   postCreatePromptVariant: vi.fn(),
   postUpdatePromptVariant: vi.fn(),
   postDeletePromptVariant: vi.fn(),
+  // PromptVariantsPage also imports this; the rating-stats query is
+  // rendered in the per-variant card. Without the mock, page render crashes.
+  fetchPromptVariantRatingStats: vi.fn(),
 }));
 
 import {
-  fetchPromptVariants, postCreatePromptVariant, postUpdatePromptVariant, postDeletePromptVariant,
+  fetchPromptVariants, postCreatePromptVariant, postUpdatePromptVariant,
+  postDeletePromptVariant, fetchPromptVariantRatingStats,
 } from '@/lib/api';
 
 function makeVariant(over: Partial<PromptVariantRow> = {}): PromptVariantRow {
@@ -55,9 +59,9 @@ function renderPrompts(role: Role | null = 'admin') {
   return render(
     <QueryClientProvider client={makeClient()}>
       <AuthContext.Provider value={makeAuth(role)}>
-        <MemoryRouter initialEntries={['/prompts']}>
+        <MemoryRouter initialEntries={['/admin/prompts']}>
           <Routes>
-            <Route path="/prompts" element={<PromptVariantsPage />} />
+            <Route path="/admin/prompts" element={<PromptVariantsPage />} />
             <Route path="/" element={<div>home outlet</div>} />
           </Routes>
         </MemoryRouter>
@@ -75,6 +79,7 @@ beforeEach(() => {
   vi.mocked(postCreatePromptVariant).mockResolvedValue({ ok: true, variant: makeVariant({ id: 'new-1' }) });
   vi.mocked(postUpdatePromptVariant).mockResolvedValue({ ok: true, variant: makeVariant() });
   vi.mocked(postDeletePromptVariant).mockResolvedValue({ ok: true });
+  vi.mocked(fetchPromptVariantRatingStats).mockResolvedValue([]);
 });
 
 afterEach(() => vi.clearAllMocks());
