@@ -79,3 +79,15 @@ verify_jwt = true
 
 [functions.email-webhook]
 verify_jwt = false
+
+[functions.healthz]
+verify_jwt = false
+
+[functions.webhook-replay]
+verify_jwt = true
+
+[functions.pii-export]
+verify_jwt = true
+
+[functions.pii-delete]
+verify_jwt = true
