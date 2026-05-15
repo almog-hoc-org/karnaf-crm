@@ -13,6 +13,7 @@ import type { MessageRow } from '@/lib/types';
 import { useAuth } from '@/auth/auth-context';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
+import { useRealtimeInvalidate } from '@/lib/useRealtimeInvalidate';
 
 export function LeadDetailPage() {
   const { leadId = '' } = useParams<{ leadId: string }>();
@@ -23,9 +24,28 @@ export function LeadDetailPage() {
     queryKey: ['lead-detail', leadId],
     queryFn: () => fetchLeadDetail(leadId),
     enabled: !!leadId,
+    // ⚠️ Live-update bug (2026-05-15): without polling, the lead detail
+    // loaded ONCE on mount and never refreshed, so inbound WhatsApp messages
+    // didn't appear until the operator clicked something else. 5s poll is
+    // the floor; realtime invalidation below short-circuits it when a
+    // change actually fires. refetchIntervalInBackground stays false so
+    // hidden tabs don't burn quota.
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   });
 
   useDocumentTitle(detailQ.data?.lead.full_name || 'ליד');
+
+  // Live updates: subscribe to Postgres changes scoped to THIS lead so the
+  // transcript / ownership / queue refreshes within ~1s of the inbound
+  // landing in the DB. The filter keeps us from invalidating on every
+  // other lead's messages in the same publication. Migration 029 adds the
+  // required tables to `supabase_realtime`.
+  const leadDetailKey: Array<readonly unknown[]> = [['lead-detail', leadId]];
+  useRealtimeInvalidate('messages', leadDetailKey, { filter: `lead_id=eq.${leadId}` });
+  useRealtimeInvalidate('leads', leadDetailKey, { filter: `id=eq.${leadId}` });
+  useRealtimeInvalidate('work_queue', leadDetailKey, { filter: `lead_id=eq.${leadId}` });
+  useRealtimeInvalidate('conversation_claims', leadDetailKey);
 
   const action = useMutation({
     mutationFn: (input: { action: AdminAction; note?: string; label: string }) =>
