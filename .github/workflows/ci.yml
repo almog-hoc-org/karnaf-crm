@@ -35,6 +35,11 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
+      # supabase/setup-cli doesn't install deno; we need it for the
+      # Edge Function syntax check below. Pin a recent stable version.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
       # `supabase lint` was dropped — the top-level `lint` command isn't
       # available in the supabase CLI version installed by setup-cli@v1
       # (it became `supabase db lint`, which requires a linked project +
