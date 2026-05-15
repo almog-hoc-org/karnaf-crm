@@ -83,7 +83,9 @@ Deno.serve(async (req) => {
   if (typeof body.inboxId === 'string' && body.inboxId.length > 0) {
     const r = await replayOne(supabase, body.inboxId, correlationId);
     log.info('webhook_replayed', { fn: 'webhook-replay', correlationId, by: staff.userId, inboxId: body.inboxId, ok: r.ok });
-    return jsonResponse(req, { ok: r.ok, ...r });
+    // Order matters: spread first so `r`'s own ok flag doesn't shadow
+    // the explicit one. Without this, TS flags the duplicate.
+    return jsonResponse(req, { ...r });
   }
 
   if (body.filter === 'failed_recent') {
