@@ -50,6 +50,11 @@ Deno.serve(async (req) => {
       return jsonResponse(req, { ok: true, skipped: 'suppressed' });
     }
 
+    log.info('orchestrate_ownership_seen', {
+      fn: 'orchestrate', correlationId, leadId,
+      ownership_mode: lead.ownership_mode, lead_status: lead.lead_status,
+    });
+
     // Channel-gating: the AI orchestrator currently only owns the WhatsApp
     // channel. Other channels (email, IG DM scraped manually, etc.) get
     // queued for Mia rather than dispatched.

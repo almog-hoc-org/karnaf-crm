@@ -52,6 +52,18 @@ export function buildAiSystemPrompt(
     lines.push(`Authorised product claims (these are the ONLY product specifics you may reference; do not invent new features, prices, or commitments):`);
     for (const c of claimLines) lines.push(c);
   }
+  const lastSender = ctx.recentMessages.slice(-1)[0]?.senderType ?? null;
+  const ownership = ctx.lead.ownershipMode;
+  if (ownership === 'ai_active' && lastSender === 'lead') {
+    lines.push(
+      `Ownership=ai_active and the latest message is from the lead. You ARE the active responder. You MUST produce a meaningful Hebrew replyText addressing the lead's latest message (sendMode=freeform). Do not output replyText=null; do not assume a human is handling this turn. Prior messages may include human-agent replies — that handoff has been released and control is back with you.`,
+    );
+  } else if (ownership !== 'ai_active') {
+    lines.push(
+      `Ownership=${ownership}. A human handles this lead; you may set replyText=null (sendMode=no_send) and only update metadata (status/heat/score) when clearly warranted.`,
+    );
+  }
+
   lines.push(
     `Forbidden phrases (never produce, paraphrase, or imply): ${[...playbook.forbidden, ...ctx.runtimeConfig.forbiddenClaims].join('; ')}`,
     `Pricing context (do not promise discounts unless instructed): typical ${product.priceTypicalIls} ILS, floor ${product.priceMinIls} ILS.`,

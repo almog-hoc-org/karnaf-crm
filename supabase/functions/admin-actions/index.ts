@@ -12,9 +12,12 @@ type ActionName =
   | 'mark_dnc'
   | 'mark_lost'
   | 'mark_won'
+  | 'reopen_lead'
   | 'resolve_queue'
   | 'log_phone_call'
   | 'update_lead_meta';
+
+const REOPEN_TARGETS = new Set(['responded', 'qualified', 'nurture', 'human_handoff']);
 
 // Per-action role allowlist. Sales reps can only log their own calls and
 // resolve queue items; lifecycle transitions (won/lost/dnc/handoff) and
@@ -26,6 +29,7 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   mark_dnc: ['owner', 'admin', 'mia'],
   mark_lost: ['owner', 'admin', 'mia'],
   mark_won: ['owner', 'admin', 'mia'],
+  reopen_lead: ['owner', 'admin'],
   resolve_queue: ['owner', 'admin', 'mia', 'sales_rep'],
   log_phone_call: ['owner', 'admin', 'mia', 'sales_rep'],
   update_lead_meta: ['owner', 'admin', 'mia'],
@@ -37,6 +41,7 @@ interface ActionPayload {
   conversationId?: string | null;
   queueItemId?: string;
   note?: string | null;
+  targetStatus?: string;
   callOutcome?: 'connected' | 'no_answer' | 'voicemail' | 'declined' | 'callback_requested';
   callDurationMinutes?: number;
   metaUpdates?: {
@@ -83,7 +88,7 @@ Deno.serve(async (req) => {
   }
 
   const body = await req.json().catch(() => ({})) as ActionPayload;
-  const { action, leadId, conversationId, queueItemId, note, callOutcome, callDurationMinutes } = body;
+  const { action, leadId, conversationId, queueItemId, note, targetStatus, callOutcome, callDurationMinutes } = body;
 
   if (!action) return jsonResponse(req, { error: 'Missing action' }, 400);
 
@@ -127,6 +132,15 @@ Deno.serve(async (req) => {
     }
     case 'return_to_ai': {
       await updateLeadFields(supabase, leadId, { ownership_mode: 'ai_active' });
+      // If we left the lead parked in human_handoff during Mia's takeover,
+      // move it back to a status the AI playbook router actually handles —
+      // otherwise the orchestrator falls into qualification with stale
+      // context and may decide to stay silent.
+      const { data: currentLead } = await supabase
+        .from('leads').select('lead_status').eq('id', leadId).maybeSingle();
+      if (currentLead?.lead_status === 'human_handoff') {
+        await transitionLeadStatus(supabase, leadId, 'responded', staff.role, 'manual_return_to_ai');
+      }
       await logLeadEvent(supabase, leadId, 'manual_return_to_ai', staff.role, meta, conversationId ?? undefined, staff.userId);
       break;
     }
@@ -162,6 +176,24 @@ Deno.serve(async (req) => {
       await updateLeadFields(supabase, leadId, { won_at: ts });
       await transitionLeadStatus(supabase, leadId, 'won', staff.role, 'manual_mark_won');
       await logLeadEvent(supabase, leadId, 'manual_mark_won', staff.role, meta, conversationId ?? undefined, staff.userId);
+      break;
+    }
+    case 'reopen_lead': {
+      if (!targetStatus || !REOPEN_TARGETS.has(targetStatus)) {
+        return jsonResponse(req, { error: 'Invalid targetStatus for reopen_lead' }, 400);
+      }
+      const { error: reopenErr } = await supabase.rpc('reopen_lead', {
+        p_lead_id: leadId,
+        p_target_status: targetStatus,
+        p_actor_role: staff.role,
+        p_reason: note ?? null,
+        p_actor_user_id: staff.userId,
+      });
+      if (reopenErr) {
+        log.warn('reopen_lead_failed', { fn: 'admin-actions', correlationId, leadId, err: reopenErr.message });
+        return jsonResponse(req, { error: reopenErr.message }, 400);
+      }
+      // RPC inserts its own lead_events rows (lead_reopened + lead_status_changed).
       break;
     }
     case 'update_lead_meta': {

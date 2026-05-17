@@ -32,6 +32,12 @@ export function StatusBadge({ status }: { status: LeadStatus | null | undefined 
 
 export function OwnershipBadge({ ownership }: { ownership: OwnershipMode | null | undefined }) {
   if (!ownership) return <span className="kf-badge kf-badge-mute">—</span>;
-  const tone = ownership === 'mia_active' || ownership === 'phone_sales_pending' ? 'kf-badge-warm' : 'kf-badge-cool';
+  const tone =
+    ownership === 'ai_active' ? 'kf-badge-ai' :
+    ownership === 'mia_active' ? 'kf-badge-mia' :
+    ownership === 'phone_sales_pending' ? 'kf-badge-phone' :
+    ownership === 'shared_watch' ? 'kf-badge-watch' :
+    ownership === 'suppressed' ? 'kf-badge-mute' :
+    'kf-badge-watch';
   return <span className={clsx('kf-badge', tone)}>{OWNERSHIP_LABELS[ownership] ?? ownership}</span>;
 }

@@ -49,6 +49,7 @@ export interface LeadDetail extends LeadRow {
   lost_reason: string | null;
   human_owner_id: string | null;
   requested_phone_call: boolean;
+  last_human_touch_at: string | null;
 }
 
 export interface MessageRow {

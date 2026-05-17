@@ -72,21 +72,21 @@ describe('StatusBadge', () => {
 });
 
 describe('OwnershipBadge', () => {
-  it('uses the warm tone when Mia or phone sales is in play', () => {
+  it('uses dedicated ownership tones for Mia and phone-sales', () => {
     const { container, rerender } = render(<OwnershipBadge ownership="mia_active" />);
-    expect(container.firstChild).toHaveClass('kf-badge-warm');
+    expect(container.firstChild).toHaveClass('kf-badge-mia');
     expect(screen.getByText('מיה')).toBeInTheDocument();
 
     rerender(<OwnershipBadge ownership="phone_sales_pending" />);
-    expect(container.firstChild).toHaveClass('kf-badge-warm');
+    expect(container.firstChild).toHaveClass('kf-badge-phone');
   });
 
-  it('uses the cool tone for ai_active and other modes', () => {
+  it('uses the AI tone for ai_active and the muted tone for suppressed', () => {
     const { container, rerender } = render(<OwnershipBadge ownership="ai_active" />);
-    expect(container.firstChild).toHaveClass('kf-badge-cool');
+    expect(container.firstChild).toHaveClass('kf-badge-ai');
 
     rerender(<OwnershipBadge ownership="suppressed" />);
-    expect(container.firstChild).toHaveClass('kf-badge-cool');
+    expect(container.firstChild).toHaveClass('kf-badge-mute');
   });
 
   it('falls back to a muted dash when ownership is missing', () => {

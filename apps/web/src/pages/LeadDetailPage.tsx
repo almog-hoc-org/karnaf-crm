@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import clsx from 'clsx';
 import {
   fetchLeadDetail, postAdminAction, postSendReply, postQueueResolve,
-  type AdminAction, type CallOutcome, type LeadMetaUpdates,
+  type AdminAction, type CallOutcome, type LeadMetaUpdates, type ReopenTarget,
 } from '@/lib/api';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -85,6 +85,26 @@ export function LeadDetailPage() {
   >(null);
   const [pendingQueueClose, setPendingQueueClose] = useState<{ id: string; label: string } | null>(null);
   const [queueCloseNote, setQueueCloseNote] = useState('');
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const [reopenTarget, setReopenTarget] = useState<ReopenTarget>('responded');
+  const [reopenNote, setReopenNote] = useState('');
+
+  const reopen = useMutation({
+    mutationFn: (input: { targetStatus: ReopenTarget; note: string | null }) =>
+      postAdminAction({
+        action: 'reopen_lead',
+        leadId,
+        targetStatus: input.targetStatus,
+        note: input.note,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lead-detail', leadId] });
+      toast.success('הליד נפתח מחדש');
+      setReopenOpen(false);
+      setReopenNote('');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
 
   const updateMeta = useMutation({
     mutationFn: (updates: LeadMetaUpdates) =>
@@ -108,16 +128,13 @@ export function LeadDetailPage() {
       <Link to="/leads" className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline">← חזרה לרשימה</Link>
 
       <header className="kf-card p-4 sm:p-5">
+        {/* Identity zone: who is this lead. */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{lead.full_name || 'ליד ללא שם'}</h1>
-          <StatusBadge status={lead.lead_status} />
-          <HeatBadge heat={lead.lead_heat} />
-          <OwnershipBadge ownership={lead.ownership_mode} />
-          <span className="kf-badge kf-badge-mute">ציון {lead.lead_score}</span>
           {lead.do_not_contact ? <span className="kf-badge bg-rose-100 text-rose-700">DNC</span> : null}
           {lead.removed_by_request ? <span className="kf-badge bg-rose-100 text-rose-700">הוסר לבקשתו</span> : null}
         </div>
-        <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
+        <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
           <ContactRow label="טלפון" value={lead.phone} kind="phone" />
           <ContactRow label="אימייל" value={lead.email} kind="email" />
           <DataRow label="מקור" value={lead.source} />
@@ -125,6 +142,20 @@ export function LeadDetailPage() {
           <DataRow label="נכנס לאחרונה" value={formatRelative(lead.last_inbound_at)} />
           <DataRow label="יצא לאחרונה" value={formatRelative(lead.last_outbound_at)} />
         </dl>
+
+        <hr className="my-3 border-slate-100" />
+
+        {/* State zone: status / who handles / heat / next action. */}
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <StatusBadge status={lead.lead_status} />
+          <OwnershipBadge ownership={lead.ownership_mode} />
+          <HeatBadge heat={lead.lead_heat} />
+          <span className="kf-badge kf-badge-mute">ציון {lead.lead_score}</span>
+          <NextActionBadge
+            actionType={lead.next_action_type}
+            dueAt={lead.next_action_due_at}
+          />
+        </div>
 
         {/* Lifecycle/ownership transitions are restricted server-side to
             owner / admin / mia; hide them for sales_rep so the UI matches. */}
@@ -167,6 +198,16 @@ export function LeadDetailPage() {
               >
                 סימון כאבוד
               </button>
+              {(lead.lead_status === 'won' || lead.lead_status === 'lost') &&
+              (auth.role === 'owner' || auth.role === 'admin') ? (
+                <button
+                  type="button"
+                  className="kf-btn"
+                  onClick={() => setReopenOpen(true)}
+                >
+                  פתיחה מחדש
+                </button>
+              ) : null}
             </ActionGroup>
             <ActionGroup label="הסרה">
               <button
@@ -204,6 +245,10 @@ export function LeadDetailPage() {
               </a>
             ) : null}
           </div>
+          <HandlerBanner
+            ownership={lead.ownership_mode}
+            lastHumanTouchAt={lead.last_human_touch_at}
+          />
           <Transcript messages={messages} />
           <ReplyBox
             disabled={!conversationId || lead.do_not_contact || lead.removed_by_request}
@@ -360,6 +405,45 @@ export function LeadDetailPage() {
           />
         </label>
       </ConfirmDialog>
+
+      <ConfirmDialog
+        open={reopenOpen}
+        title="פתיחת ליד מחדש"
+        description="הליד יחזור לסטטוס פעיל. won_at/lost_at יתאפסו; תשלומים שכבר נרשמו יישארו לתיעוד."
+        confirmLabel="פתיחה מחדש"
+        busy={reopen.isPending}
+        onCancel={() => setReopenOpen(false)}
+        onConfirm={() => {
+          const note = reopenNote.trim();
+          reopen.mutate({ targetStatus: reopenTarget, note: note.length ? note : null });
+        }}
+      >
+        <div className="space-y-3">
+          <label className="block text-sm">
+            <span className="text-slate-600">סטטוס יעד</span>
+            <select
+              className="kf-input mt-1"
+              value={reopenTarget}
+              onChange={(e) => setReopenTarget(e.target.value as ReopenTarget)}
+            >
+              <option value="responded">הגיב</option>
+              <option value="qualified">מוסמך</option>
+              <option value="nurture">בליווי</option>
+              <option value="human_handoff">העברה לאנושי</option>
+            </select>
+          </label>
+          <label className="block text-sm">
+            <span className="text-slate-600">סיבה (אופציונלי)</span>
+            <textarea
+              className="kf-input mt-1 min-h-[64px]"
+              placeholder="לדוגמה: סווג בטעות, הלקוח חזר, אי-הבנה..."
+              value={reopenNote}
+              onChange={(e) => setReopenNote(e.target.value.slice(0, 500))}
+              maxLength={500}
+            />
+          </label>
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }
@@ -369,6 +453,66 @@ function ActionGroup({ label, children }: { label: string; children: React.React
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/50 p-1.5">
       <span className="w-full px-2 text-xs text-slate-500 sm:w-auto">{label}</span>
       {children}
+    </div>
+  );
+}
+
+function NextActionBadge({
+  actionType, dueAt,
+}: { actionType: string | null; dueAt: string | null }) {
+  if (!actionType && !dueAt) return null;
+  const dueMs = dueAt ? Date.parse(dueAt) : NaN;
+  const overdue = Number.isFinite(dueMs) && dueMs < Date.now();
+  const tone = overdue
+    ? 'bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-200'
+    : 'bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200';
+  return (
+    <span
+      className={clsx('kf-badge', tone)}
+      title={dueAt ? new Date(dueAt).toLocaleString('he-IL') : undefined}
+      aria-live={overdue ? 'polite' : undefined}
+    >
+      {overdue ? '⚠️ ' : '⏭ '}
+      {actionType ? `הבא: ${actionType}` : 'הבא'}
+      {dueAt ? ` · ${formatRelative(dueAt)}` : ''}
+      {overdue ? ' · באיחור' : ''}
+    </span>
+  );
+}
+
+function HandlerBanner({
+  ownership, lastHumanTouchAt,
+}: {
+  ownership: import('@/lib/types').OwnershipMode;
+  lastHumanTouchAt: string | null;
+}) {
+  const cfg = (() => {
+    switch (ownership) {
+      case 'ai_active':
+        return { tone: 'bg-violet-50 text-violet-800 ring-violet-200', icon: '🤖', label: 'AI מטפל בליד', detail: 'הבוט עונה אוטומטית להודעות נכנסות.' };
+      case 'mia_active':
+        return { tone: 'bg-amber-50 text-amber-800 ring-amber-200', icon: '👤', label: 'מיה מטפלת', detail: lastHumanTouchAt ? `מגע אנושי אחרון ${formatRelative(lastHumanTouchAt)}` : 'הליד הועבר לטיפול ידני.' };
+      case 'phone_sales_pending':
+        return { tone: 'bg-orange-50 text-orange-800 ring-orange-200', icon: '📞', label: 'ממתין לשיחת טלפון', detail: 'הליד סומן להתקשרות יזומה.' };
+      case 'shared_watch':
+        return { tone: 'bg-slate-100 text-slate-700 ring-slate-200', icon: '👁️', label: 'במעקב משותף', detail: 'אין מטפל פעיל; הצוות עוקב.' };
+      case 'suppressed':
+        return { tone: 'bg-rose-50 text-rose-800 ring-rose-200', icon: '🚫', label: 'ליד מנותק', detail: 'לא נשלחות הודעות אוטומטיות.' };
+      default:
+        return { tone: 'bg-slate-100 text-slate-700 ring-slate-200', icon: '•', label: ownership, detail: '' };
+    }
+  })();
+  return (
+    <div
+      className={clsx(
+        'sticky top-0 z-10 mt-3 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium ring-1 ring-inset',
+        cfg.tone,
+      )}
+      aria-live="polite"
+    >
+      <span aria-hidden="true" className="text-base leading-none">{cfg.icon}</span>
+      <span>{cfg.label}</span>
+      {cfg.detail ? <span className="text-xs font-normal opacity-80">· {cfg.detail}</span> : null}
     </div>
   );
 }

@@ -92,8 +92,10 @@ export async function fetchQueueList(params: { queueType?: string; status?: stri
 
 export type AdminAction =
   | 'assign_to_mia' | 'return_to_ai' | 'mark_phone_escalation'
-  | 'mark_dnc' | 'mark_lost' | 'mark_won' | 'resolve_queue' | 'log_phone_call'
-  | 'update_lead_meta';
+  | 'mark_dnc' | 'mark_lost' | 'mark_won' | 'reopen_lead'
+  | 'resolve_queue' | 'log_phone_call' | 'update_lead_meta';
+
+export type ReopenTarget = 'responded' | 'qualified' | 'nurture' | 'human_handoff';
 
 export type CallOutcome = 'connected' | 'no_answer' | 'voicemail' | 'declined' | 'callback_requested';
 
@@ -110,6 +112,7 @@ export async function postAdminAction(payload: {
   conversationId?: string | null;
   queueItemId?: string;
   note?: string | null;
+  targetStatus?: ReopenTarget;
   callOutcome?: CallOutcome;
   callDurationMinutes?: number;
   metaUpdates?: LeadMetaUpdates;

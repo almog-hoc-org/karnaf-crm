@@ -34,6 +34,12 @@ body {
 .kf-badge-cold { @apply bg-slate-100 text-slate-600; }
 .kf-badge-success { @apply bg-emerald-50 text-emerald-700; }
 .kf-badge-mute { @apply bg-slate-100 text-slate-600; }
+/* Ownership palette — distinct from status (cool/warm) so the eye can
+   separate "what stage" from "who is handling" at a glance. */
+.kf-badge-ai { @apply bg-violet-50 text-violet-700; }
+.kf-badge-mia { @apply bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200; }
+.kf-badge-phone { @apply bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200; }
+.kf-badge-watch { @apply bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200; }
 
 /* Tables */
 .kf-table { @apply w-full text-sm; }
