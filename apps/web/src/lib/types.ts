@@ -130,6 +130,25 @@ export interface DashboardSummary {
     won_count: number; lost_count: number; dormant_count: number;
   };
   queueCounts: Record<string, number>;
+  // Per-source intake counters for the last 24h / 7d. Always present; may be {}.
+  sourceHealth?: Record<string, { h24: number; d7: number }>;
+}
+
+export type AttentionKind = 'queue' | 'mia_reply' | 'overdue_action';
+
+export interface AttentionRow {
+  kind: AttentionKind;
+  ref_id: string;
+  lead_id: string;
+  lead_name: string | null;
+  lead_phone: string | null;
+  lead_status: LeadStatus;
+  lead_heat: LeadHeat | null;
+  ownership_mode: OwnershipMode;
+  priority_level: number;
+  reason: string | null;
+  due_at: string | null;
+  created_at: string | null;
 }
 
 export interface ApiOk { ok: true; }

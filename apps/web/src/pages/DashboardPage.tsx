@@ -100,7 +100,48 @@ export function DashboardPage() {
           ))}
         </div>
       </section>
+
+      <SourceHealthSection sourceHealth={s.sourceHealth} />
     </div>
+  );
+}
+
+function SourceHealthSection({
+  sourceHealth,
+}: { sourceHealth: DashboardSummary['sourceHealth'] }) {
+  const entries = Object.entries(sourceHealth ?? {})
+    .map(([source, v]) => ({ source, h24: v.h24, d7: v.d7 }))
+    .sort((a, b) => b.d7 - a.d7 || b.h24 - a.h24);
+  return (
+    <section className="kf-card p-4 sm:p-5">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">בריאות מקורות לידים</h2>
+        <Link to="/admin/sources" className="text-xs text-brand-700 hover:underline">ניהול מקורות</Link>
+      </div>
+      {entries.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-500">לא נכנסו לידים בטווח האחרון.</p>
+      ) : (
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {entries.map(({ source, h24, d7 }) => (
+            <Link
+              key={source}
+              to={`/leads?search=&searchIn=lead`}
+              className="group flex items-baseline justify-between rounded-lg bg-slate-50 p-3 ring-1 ring-transparent transition hover:bg-white hover:ring-slate-200"
+              title={source}
+            >
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-slate-700">{source}</div>
+                <div className="text-[11px] text-slate-500">24 שעות אחרונות / 7 ימים אחרונים</div>
+              </div>
+              <div className="text-end tabular-nums">
+                <div className="text-2xl font-semibold text-slate-900">{h24}</div>
+                <div className="text-xs text-slate-500">{d7} שבוע</div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -166,18 +207,6 @@ function FunnelBars({ funnel }: { funnel: DashboardSummary['funnel'] }) {
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="mt-3 flex items-center gap-3 rounded-lg border border-dashed border-slate-200 p-4 text-sm text-slate-500">
-      <svg viewBox="0 0 20 20" className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.7">
-        <path strokeLinecap="round" d="M4 7l1.4-2.4A2 2 0 0 1 7.1 4h5.8a2 2 0 0 1 1.7 1l1.4 2H4Z" />
-        <path d="M4 7v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7" />
-      </svg>
-      {message}
     </div>
   );
 }

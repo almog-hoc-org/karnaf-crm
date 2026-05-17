@@ -13,6 +13,7 @@ const HE = {
   // Navigation
   nav_dashboard: 'מסך מצב',
   nav_leads: 'לידים',
+  nav_inbox: 'דורש תשומת לב',
   nav_queue: 'תורי עבודה',
   nav_analytics: 'אנליטיקה',
   nav_users: 'משתמשים',
@@ -173,6 +174,7 @@ const EN: Partial<Record<keyof typeof HE, string>> = {
   skip_to_main: 'Skip to main content',
   nav_dashboard: 'Dashboard',
   nav_leads: 'Leads',
+  nav_inbox: 'Needs attention',
   nav_queue: 'Queues',
   nav_analytics: 'Analytics',
   nav_users: 'Users',

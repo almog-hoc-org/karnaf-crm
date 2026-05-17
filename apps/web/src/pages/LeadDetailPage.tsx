@@ -8,6 +8,7 @@ import {
 } from '@/lib/api';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { EmptyState } from '@/components/EmptyState';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
 import { t } from '@/lib/i18n';
 import { QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
@@ -665,7 +666,15 @@ const dayFormatter = new Intl.DateTimeFormat('he-IL', { weekday: 'long', day: '2
 
 function Transcript({ messages }: { messages: MessageRow[] }) {
   const grouped = useMemo(() => groupByDay(messages), [messages]);
-  if (messages.length === 0) return <p className="mt-2 text-sm text-slate-500">אין הודעות.</p>;
+  if (messages.length === 0) {
+    return (
+      <EmptyState
+        icon="💬"
+        title="אין עדיין הודעות בשיחה"
+        hint="כשהלקוח ישלח הודעה ראשונה, היא תופיע כאן."
+      />
+    );
+  }
   return (
     <ol className="mt-3 max-h-[60vh] space-y-3 overflow-auto pr-1 sm:max-h-[28rem]">
       {grouped.map(({ day, items }) => (

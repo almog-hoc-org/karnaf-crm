@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import type {
-  ConversationRow, DashboardSummary, EventRow, LeadDetail, LeadRow,
+  AttentionRow, ConversationRow, DashboardSummary, EventRow, LeadDetail, LeadRow,
   MessageRow, QueueRow, TaskRow,
 } from './types';
 
@@ -86,6 +86,11 @@ export async function fetchLeadDetail(leadId: string) {
 export async function fetchQueueList(params: { queueType?: string; status?: string } = {}) {
   const r = await getJson<{ ok: true; queueItems: QueueRow[] }>('/queue-list', params);
   return r.queueItems;
+}
+
+export async function fetchAttentionInbox(limit?: number) {
+  const r = await getJson<{ ok: true; items: AttentionRow[] }>('/attention-inbox', limit ? { limit } : undefined);
+  return r.items;
 }
 
 // === Writes ===============================================================
