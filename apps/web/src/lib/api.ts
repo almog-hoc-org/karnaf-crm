@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 import type {
-  AttentionRow, ConversationRow, DashboardSummary, EventRow, LeadDetail, LeadRow,
-  MessageRow, QueueRow, TaskRow,
+  AttentionRow, ConversationRow, DashboardSummary, EventRow, LeadDetail, LeadFit,
+  LeadHeat, LeadRow, MessageRow, QueueRow, ReadinessLevel, TaskRow,
 } from './types';
 
 const baseUrl = import.meta.env.VITE_FUNCTIONS_BASE_URL || '/functions/v1';
@@ -71,6 +71,13 @@ export async function fetchLeadsList(params: LeadsListParams = {}) {
   return { leads: r.leads, total: r.total, limit: r.limit, offset: r.offset };
 }
 
+export interface HumanOwnerProfile {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  role: string | null;
+}
+
 export async function fetchLeadDetail(leadId: string) {
   return getJson<{
     ok: true;
@@ -80,6 +87,7 @@ export async function fetchLeadDetail(leadId: string) {
     queueItems: QueueRow[];
     tasks: TaskRow[];
     events: EventRow[];
+    humanOwnerProfile: HumanOwnerProfile | null;
   }>('/lead-detail', { leadId });
 }
 
@@ -109,6 +117,16 @@ export interface LeadMetaUpdates {
   pain_point_summary?: string | null;
   main_blocker?: string | null;
   next_action_type?: string | null;
+  // Operator-editable identity/context — added 2026-05-15 for Mia's day-to-day
+  // edits. Phone is intentionally excluded (it's the routing key).
+  full_name?: string | null;
+  email?: string | null;
+  city?: string | null;
+  decision_context?: string | null;
+  lost_reason?: string | null;
+  lead_heat?: LeadHeat | null;
+  lead_fit?: LeadFit | null;
+  readiness_level?: ReadinessLevel | null;
 }
 
 export async function postAdminAction(payload: {

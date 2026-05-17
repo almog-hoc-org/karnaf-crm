@@ -82,6 +82,12 @@ export async function runAiDecision(
     return blockWith('circuit_open', null);
   }
 
+  // 20s hard timeout — without it a hung OpenAI call would block the
+  // conversation lock holding orchestrate-message invocation indefinitely,
+  // exhausting the Deno connection pool. Aborts surface as `openai_timeout`
+  // so the circuit breaker opens after `threshold` consecutive timeouts.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -98,6 +104,7 @@ export async function runAiDecision(
           { role: 'user', content: buildAiUserPrompt(context) },
         ],
       }),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -136,7 +143,12 @@ export async function runAiDecision(
     return { output: validated.output, executionStatus: status, rawOutput: parsed, promptVersion };
   } catch (err) {
     recordFailure(BREAKER_KEY, breakerCfg);
+    if ((err as Error)?.name === 'AbortError') {
+      return blockWith('openai_timeout', 'timeout_after_20000ms');
+    }
     return blockWith('openai_exception', String(err));
+  } finally {
+    clearTimeout(timer);
   }
 }
 

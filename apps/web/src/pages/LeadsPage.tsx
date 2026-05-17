@@ -134,6 +134,12 @@ export function LeadsPage() {
     queryKey: ['leads', params],
     queryFn: () => fetchLeadsList(params),
     placeholderData: (prev) => prev,
+    // ⚠️ Operator-reported "I don't see new leads coming in" — without
+    // polling the list froze on mount. 30s is a comfortable cadence that
+    // catches new intakes between focused interactions. Pauses in
+    // background tabs to avoid burning Vercel/Supabase quota.
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 
   const auth = useAuth();

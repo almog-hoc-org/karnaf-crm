@@ -4,7 +4,7 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { transitionLeadStatus, logLeadEvent } from '../_shared/lead-service.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { verifyHmacHeader } from '../_shared/webhook-signature.ts';
-import { env } from '../_shared/env.ts';
+import { env, optional } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 
@@ -17,9 +17,17 @@ Deno.serve(async (req) => {
 
   const correlationId = correlationFromRequest(req);
   const rawBody = await req.text();
+  // Fail-closed: PAYMENT_WEBHOOK_SECRET must be set in production. A missing
+  // secret used to skip verification entirely — which would let an attacker
+  // submit forged payment-completion events. WEBHOOK_ALLOW_UNSIGNED=true is
+  // the explicit dev-only opt-out.
   const secret = env.paymentWebhookSecret();
-
-  if (secret) {
+  if (!secret) {
+    if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
+      log.error('payment_webhook_misconfigured', { fn: 'payment-webhook', correlationId });
+      return jsonResponse(req, { error: 'Webhook not configured' }, 503);
+    }
+  } else {
     const valid =
       (await verifyHmacHeader(req, rawBody, secret, 'x-karnaf-signature')) ||
       (await verifyHmacHeader(req, rawBody, secret, 'x-signature')) ||

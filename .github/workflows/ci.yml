@@ -22,6 +22,11 @@ jobs:
       - run: npm run lint
       - run: npm test --silent
       - run: npm run build
+      # Dependency vulnerability scan — warn-only at this phase, switch to
+      # blocking after the next pass. `--omit=dev` because dev-only deps
+      # don't ship to production and would otherwise noise the signal.
+      - name: npm audit (warn-only)
+        run: npm audit --audit-level=high --omit=dev || true
 
   supabase-validate:
     runs-on: ubuntu-latest
@@ -30,13 +35,26 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-      - name: Lint Supabase config
-        run: supabase lint --linked || true
+      # supabase/setup-cli doesn't install deno; we need it for the
+      # Edge Function syntax check below. Pin a recent stable version.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      # `supabase lint` was dropped — the top-level `lint` command isn't
+      # available in the supabase CLI version installed by setup-cli@v1
+      # (it became `supabase db lint`, which requires a linked project +
+      # running DB). The meaningful SQL gate runs at deploy time via
+      # `supabase db push` (which rejects malformed migrations). The Edge
+      # Function syntax check below is the real CI gate.
+      #
+      # `deno check` must fail the build. A syntax error in any Edge
+      # Function used to silently slip through because of `|| true`.
       - name: Validate Edge Function bundles
         run: |
+          set -e
           for fn in supabase/functions/*/; do
             if [ -f "$fn/index.ts" ]; then
               echo "Checking $fn"
-              deno check --no-lock "$fn/index.ts" || true
+              deno check --no-lock "$fn/index.ts"
             fi
           done

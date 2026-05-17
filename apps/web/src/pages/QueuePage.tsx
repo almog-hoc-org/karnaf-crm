@@ -39,6 +39,11 @@ export function QueuePage() {
   const q = useQuery({
     queryKey: ['queue', { type, status }],
     queryFn: () => fetchQueueList({ queueType: type || undefined, status }),
+    // Mia parks her day on /queue — without polling she'd miss new
+    // queue items emitted by sla-worker (10min tick). 30s catches
+    // those within roughly the same TTL as the bell on her phone.
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 
   const resolve = useMutation({

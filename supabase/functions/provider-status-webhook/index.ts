@@ -1,7 +1,7 @@
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
-import { env } from '../_shared/env.ts';
+import { env, optional } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 
@@ -13,8 +13,22 @@ Deno.serve(async (req) => {
   const correlationId = correlationFromRequest(req);
   const rawBody = await req.text();
 
-  if (env.whatsappAppSecret() && req.headers.get('x-hub-signature-256')) {
-    const valid = await verifyMetaSignature(req, rawBody, env.whatsappAppSecret());
+  // Fail-closed: WHATSAPP_APP_SECRET must be set AND the signature header
+  // must be present. Previously the check was skipped silently if either
+  // was missing — an attacker omitting the header could bypass entirely.
+  // WEBHOOK_ALLOW_UNSIGNED=true is the explicit dev-only opt-out.
+  const appSecret = env.whatsappAppSecret();
+  if (!appSecret) {
+    if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
+      log.error('status_webhook_misconfigured', { fn: 'provider-status-webhook', correlationId });
+      return jsonResponse(req, { error: 'Webhook not configured' }, 503);
+    }
+  } else {
+    if (!req.headers.get('x-hub-signature-256')) {
+      log.warn('status_signature_missing', { fn: 'provider-status-webhook', correlationId });
+      return jsonResponse(req, { error: 'Missing signature header' }, 401);
+    }
+    const valid = await verifyMetaSignature(req, rawBody, appSecret);
     if (!valid) {
       log.warn('status_signature_invalid', { fn: 'provider-status-webhook', correlationId });
       return jsonResponse(req, { error: 'Invalid signature' }, 401);

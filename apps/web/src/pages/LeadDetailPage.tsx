@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import clsx from 'clsx';
 import {
   fetchLeadDetail, postAdminAction, postSendReply, postQueueResolve,
   type AdminAction, type CallOutcome, type LeadMetaUpdates, type ReopenTarget,
+  type HumanOwnerProfile,
 } from '@/lib/api';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -12,10 +13,11 @@ import { EmptyState } from '@/components/EmptyState';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
 import { t } from '@/lib/i18n';
 import { QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
-import type { MessageRow } from '@/lib/types';
+import type { LeadFit, LeadHeat, MessageRow, ReadinessLevel } from '@/lib/types';
 import { useAuth } from '@/auth/auth-context';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
+import { useRealtimeInvalidate } from '@/lib/useRealtimeInvalidate';
 
 export function LeadDetailPage() {
   const { leadId = '' } = useParams<{ leadId: string }>();
@@ -26,9 +28,28 @@ export function LeadDetailPage() {
     queryKey: ['lead-detail', leadId],
     queryFn: () => fetchLeadDetail(leadId),
     enabled: !!leadId,
+    // ⚠️ Live-update bug (2026-05-15): without polling, the lead detail
+    // loaded ONCE on mount and never refreshed, so inbound WhatsApp messages
+    // didn't appear until the operator clicked something else. 5s poll is
+    // the floor; realtime invalidation below short-circuits it when a
+    // change actually fires. refetchIntervalInBackground stays false so
+    // hidden tabs don't burn quota.
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   });
 
   useDocumentTitle(detailQ.data?.lead.full_name || 'ליד');
+
+  // Live updates: subscribe to Postgres changes scoped to THIS lead so the
+  // transcript / ownership / queue refreshes within ~1s of the inbound
+  // landing in the DB. The filter keeps us from invalidating on every
+  // other lead's messages in the same publication. Migration 029 adds the
+  // required tables to `supabase_realtime`.
+  const leadDetailKey: Array<readonly unknown[]> = [['lead-detail', leadId]];
+  useRealtimeInvalidate('messages', leadDetailKey, { filter: `lead_id=eq.${leadId}` });
+  useRealtimeInvalidate('leads', leadDetailKey, { filter: `id=eq.${leadId}` });
+  useRealtimeInvalidate('work_queue', leadDetailKey, { filter: `lead_id=eq.${leadId}` });
+  useRealtimeInvalidate('conversation_claims', leadDetailKey);
 
   const action = useMutation({
     mutationFn: (input: { action: AdminAction; note?: string; label: string }) =>
@@ -122,7 +143,7 @@ export function LeadDetailPage() {
   if (detailQ.error) return <p className="text-rose-600">{t('error_prefix')}: {(detailQ.error as Error).message}</p>;
   if (!detailQ.data) return null;
 
-  const { lead, messages, queueItems, tasks, events } = detailQ.data;
+  const { lead, messages, queueItems, tasks, events, humanOwnerProfile } = detailQ.data;
 
   return (
     <div className="space-y-4">
@@ -135,6 +156,7 @@ export function LeadDetailPage() {
           {lead.do_not_contact ? <span className="kf-badge bg-rose-100 text-rose-700">DNC</span> : null}
           {lead.removed_by_request ? <span className="kf-badge bg-rose-100 text-rose-700">הוסר לבקשתו</span> : null}
         </div>
+        {/* AI playbook subtitle: where in the script the bot currently is. */}
         {lead.ai_playbook_stage ? (
           <p className="mt-1 text-xs text-slate-500">
             <span className="opacity-70">שלב AI:</span>{' '}
@@ -142,7 +164,12 @@ export function LeadDetailPage() {
             {lead.ai_playbook_stage_at ? <span> · עודכן {formatRelative(lead.ai_playbook_stage_at)}</span> : null}
           </p>
         ) : null}
-        <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
+
+        {/* Single-line "who owns this right now" indicator (AI or named human),
+            kept above the metadata grid so it's always visible at a glance. */}
+        <CurrentOwnerLine ownershipMode={lead.ownership_mode} humanOwner={humanOwnerProfile} />
+
+        <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
           <ContactRow label="טלפון" value={lead.phone} kind="phone" />
           <ContactRow label="אימייל" value={lead.email} kind="email" />
           <DataRow label="מקור" value={lead.source} />
@@ -231,6 +258,25 @@ export function LeadDetailPage() {
                 DNC
               </button>
             </ActionGroup>
+            {/* Reopen — visible only for terminal/dead-end states. won_at stays
+                intact (analytics keeps the conversion); lost_at + DNC clear so
+                AI can resume the conversation. */}
+            {lead.lead_status === 'won' || lead.lead_status === 'lost' || lead.do_not_contact ? (
+              <ActionGroup label="פתיחה מחדש">
+                <button
+                  type="button"
+                  className="kf-btn kf-btn-primary"
+                  onClick={() => setPendingAction({
+                    action: 'reopen_lead',
+                    label: 'הליד נפתח מחדש',
+                    description: 'הליד יחזור למצב פעיל, ה-AI יקבל את ההיסטוריה ויחליט אם וכיצד להגיב. סטטוס "נסגר" יישאר בדוחות הקנייה.',
+                    destructive: false,
+                  })}
+                >
+                  פתח שיחה מחדש
+                </button>
+              </ActionGroup>
+            ) : null}
           </div>
         ) : null}
         {action.error ? <p className="mt-2 text-sm text-rose-600">{(action.error as Error).message}</p> : null}
@@ -267,6 +313,75 @@ export function LeadDetailPage() {
         </div>
 
         <aside className="space-y-4">
+          {/* Operator-editable identity card. Phone is intentionally read-only
+              (it's the routing key for inbound webhooks; rewriting it would
+              orphan the conversation history). */}
+          <div className="kf-card p-4">
+            <h2 className="font-semibold">פרטי קשר</h2>
+            <dl className="mt-2 space-y-1 text-sm">
+              <EditableRow
+                k="שם מלא"
+                v={lead.full_name}
+                editable={canEditMeta}
+                onSave={(next) => updateMeta.mutate({ full_name: next })}
+              />
+              <EditableRow
+                k="אימייל"
+                v={lead.email}
+                editable={canEditMeta}
+                onSave={(next) => updateMeta.mutate({ email: next })}
+              />
+              <EditableRow
+                k="עיר"
+                v={lead.city}
+                editable={canEditMeta}
+                onSave={(next) => updateMeta.mutate({ city: next })}
+              />
+              <Row k="טלפון" v={lead.phone} />
+            </dl>
+          </div>
+
+          <div className="kf-card p-4">
+            <h2 className="font-semibold">סיווג ליד</h2>
+            <dl className="mt-2 space-y-1 text-sm">
+              <EditableEnumRow
+                k="חום"
+                v={lead.lead_heat}
+                editable={canEditMeta}
+                options={[
+                  { value: 'hot', label: 'חם' },
+                  { value: 'warm', label: 'פושר' },
+                  { value: 'cool', label: 'צונן' },
+                  { value: 'cold', label: 'קר' },
+                ]}
+                onSave={(next) => updateMeta.mutate({ lead_heat: next as LeadHeat | null })}
+              />
+              <EditableEnumRow
+                k="התאמה"
+                v={lead.lead_fit}
+                editable={canEditMeta}
+                options={[
+                  { value: 'high', label: 'גבוהה' },
+                  { value: 'medium', label: 'בינונית' },
+                  { value: 'low', label: 'נמוכה' },
+                ]}
+                onSave={(next) => updateMeta.mutate({ lead_fit: next as LeadFit | null })}
+              />
+              <EditableEnumRow
+                k="בשלות"
+                v={lead.readiness_level}
+                editable={canEditMeta}
+                options={[
+                  { value: 'paying', label: 'משלם' },
+                  { value: 'decided', label: 'החליט' },
+                  { value: 'considering', label: 'שוקל' },
+                  { value: 'exploring', label: 'מתעניין' },
+                ]}
+                onSave={(next) => updateMeta.mutate({ readiness_level: next as ReadinessLevel | null })}
+              />
+            </dl>
+          </div>
+
           <div className="kf-card p-4">
             <h2 className="font-semibold">הקשר ליד</h2>
             <dl className="mt-2 space-y-1 text-sm">
@@ -292,6 +407,12 @@ export function LeadDetailPage() {
                 onSave={(next) => updateMeta.mutate({ main_blocker: next })}
               />
               <EditableRow
+                k="הקשר החלטה"
+                v={lead.decision_context}
+                editable={canEditMeta}
+                onSave={(next) => updateMeta.mutate({ decision_context: next })}
+              />
+              <EditableRow
                 k="פעולה הבאה"
                 v={lead.next_action_type}
                 editable={canEditMeta}
@@ -300,6 +421,14 @@ export function LeadDetailPage() {
               />
               <Row k="עד" v={lead.next_action_due_at ? formatDateTime(lead.next_action_due_at) : null} />
               <Row k="סטטוס תשלום" v={lead.payment_status} />
+              {lead.lead_status === 'lost' || lead.lost_reason ? (
+                <EditableRow
+                  k="סיבת אובדן"
+                  v={lead.lost_reason}
+                  editable={canEditMeta}
+                  onSave={(next) => updateMeta.mutate({ lost_reason: next })}
+                />
+              ) : null}
             </dl>
           </div>
 
@@ -625,6 +754,42 @@ function EditableRow({
   );
 }
 
+function EditableEnumRow({
+  k, v, editable, options, onSave,
+}: {
+  k: string;
+  v: string | null | undefined;
+  editable: boolean;
+  options: Array<{ value: string; label: string }>;
+  onSave: (next: string | null) => void;
+}) {
+  const display = options.find((o) => o.value === v)?.label ?? v ?? '—';
+  if (!editable) return <Row k={k} v={display} />;
+  return (
+    <div className="grid grid-cols-3 items-center gap-2">
+      <dt className="col-span-1 text-slate-500">{k}</dt>
+      <dd className="col-span-2 flex items-center gap-2 text-slate-800">
+        {/* Native select wins here over a custom popover — Mia uses this on
+            mobile a lot, and native pickers behave correctly with the OS
+            keyboard + screen reader without extra a11y wiring. */}
+        <select
+          value={v ?? ''}
+          className="kf-input text-sm"
+          onChange={(e) => {
+            const next = e.target.value;
+            onSave(next.length ? next : null);
+          }}
+        >
+          <option value="">— ללא —</option>
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </dd>
+    </div>
+  );
+}
+
 function DataRow({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div className="flex items-baseline gap-2">
@@ -685,6 +850,14 @@ const PLAYBOOK_LABELS: Record<string, string> = {
 
 function Transcript({ messages }: { messages: MessageRow[] }) {
   const grouped = useMemo(() => groupByDay(messages), [messages]);
+  const bottomRef = useRef<HTMLLIElement | null>(null);
+  // Stick the conversation viewport to the most recent message — operators
+  // expect WhatsApp-style behavior where new inbound + their own outbound
+  // both park them at the bottom. Triggers on mount and whenever messages
+  // grow (realtime invalidation re-renders this with a new array length).
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
+  }, [messages.length]);
   if (messages.length === 0) {
     return (
       <EmptyState
@@ -725,6 +898,7 @@ function Transcript({ messages }: { messages: MessageRow[] }) {
           </ul>
         </li>
       ))}
+      <li ref={bottomRef} aria-hidden="true" className="h-px" />
     </ol>
   );
 }
@@ -874,5 +1048,55 @@ function ReplyBox({ disabled, onSend, sending, errorMessage }: {
       </div>
       {errorMessage ? <p className="text-sm text-rose-600">{errorMessage}</p> : null}
     </form>
+  );
+}
+
+// ── Current owner line (P2 — operator clarity) ───────────────────────────
+// Singular source of truth on the question "who is responsible RIGHT NOW
+// for this lead?". Combines ownership_mode + the human profile (when
+// applicable) into one Hebrew line, color-coded by who owns it.
+//
+// Why this matters: Mia reported that after an AI→human handoff, the
+// next step was unclear ("did anyone catch this?"). Surfacing the
+// owner prominently — including when AI is the active owner — closes
+// the visibility gap that was costing leads.
+function CurrentOwnerLine({
+  ownershipMode,
+  humanOwner,
+}: {
+  ownershipMode: string;
+  humanOwner: HumanOwnerProfile | null;
+}) {
+  const ai = ownershipMode === 'ai_active';
+  const phone = ownershipMode === 'phone_sales_pending';
+  const human = ownershipMode === 'mia_active' || (!!humanOwner && !ai && !phone);
+
+  let label: string;
+  let detail: string | null = null;
+  let bg: string;
+
+  if (ai) {
+    label = '🤖 הליד באחריות ה-AI';
+    detail = 'נציג אוטומטי עונה על הודעות נכנסות לפי playbook + variant פעיל';
+    bg = 'bg-sky-50 text-sky-900 border-sky-200';
+  } else if (phone) {
+    label = '📞 ממתין לשיחת טלפון יזומה';
+    detail = 'נציג אנושי הסמין שצריך לחייג; ה-AI לא יענה עד שיוחזר אליו';
+    bg = 'bg-amber-50 text-amber-900 border-amber-200';
+  } else if (human) {
+    const name = humanOwner?.full_name || humanOwner?.email || 'נציג אנושי';
+    label = `👤 מטפל: ${name}`;
+    detail = 'ה-AI מושעה. כשהנציג מסיים — צריך "החזרה ל-AI" כדי לשחזר מענה אוטומטי';
+    bg = 'bg-emerald-50 text-emerald-900 border-emerald-200';
+  } else {
+    label = `מצב בעלות: ${ownershipMode}`;
+    bg = 'bg-slate-50 text-slate-700 border-slate-200';
+  }
+
+  return (
+    <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${bg}`}>
+      <div className="font-medium">{label}</div>
+      {detail ? <div className="text-xs opacity-80">{detail}</div> : null}
+    </div>
   );
 }

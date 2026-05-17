@@ -4,6 +4,7 @@ import { ensurePendingQueueItem, resolveQueueItem } from '../_shared/queue-servi
 import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared/lead-service.ts';
 import { AuthError, requireStaff, type StaffRole } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
+import { env } from '../_shared/env.ts';
 
 type ActionName =
   | 'assign_to_mia'
@@ -29,6 +30,9 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   mark_dnc: ['owner', 'admin', 'mia'],
   mark_lost: ['owner', 'admin', 'mia'],
   mark_won: ['owner', 'admin', 'mia'],
+  // Reopening a closed (won/lost) lead is an audited override. Per product
+  // call, restricted to owner/admin — Mia escalates to them rather than
+  // ping-ponging closed states on her own.
   reopen_lead: ['owner', 'admin'],
   resolve_queue: ['owner', 'admin', 'mia', 'sales_rep'],
   log_phone_call: ['owner', 'admin', 'mia', 'sales_rep'],
@@ -52,19 +56,36 @@ interface ActionPayload {
   };
 }
 
-const META_ALLOWED_FIELDS = new Set(['goal_summary', 'pain_point_summary', 'main_blocker', 'next_action_type']);
+// Operator-editable lead fields. Two tiers:
+//  - free-text fields (capped at META_MAX_LENGTH chars, trimmed, blank → null)
+//  - enum fields (rejected if value not in the per-field allowlist)
+// Phone is intentionally NOT here — it's the lead identity for routing,
+// changing it would orphan inbound webhooks; needs a dedicated migration flow.
+const META_TEXT_FIELDS = new Set([
+  'goal_summary', 'pain_point_summary', 'main_blocker', 'next_action_type',
+  'full_name', 'email', 'city', 'decision_context', 'lost_reason',
+]);
+const META_ENUM_FIELDS: Record<string, Set<string>> = {
+  lead_heat: new Set(['cold', 'cool', 'warm', 'hot']),
+  lead_fit: new Set(['low', 'medium', 'high']),
+  readiness_level: new Set(['exploring', 'considering', 'decided', 'paying']),
+};
 const META_MAX_LENGTH = 280;
 
 function sanitiseMetaUpdates(input: ActionPayload['metaUpdates']): Record<string, string | null> | null {
   if (!input || typeof input !== 'object') return null;
   const out: Record<string, string | null> = {};
   for (const [k, v] of Object.entries(input)) {
-    if (!META_ALLOWED_FIELDS.has(k)) continue;
-    if (v === null) {
-      out[k] = null;
-    } else if (typeof v === 'string') {
-      const trimmed = v.trim().slice(0, META_MAX_LENGTH);
-      out[k] = trimmed.length === 0 ? null : trimmed;
+    if (META_TEXT_FIELDS.has(k)) {
+      if (v === null) {
+        out[k] = null;
+      } else if (typeof v === 'string') {
+        const trimmed = v.trim().slice(0, META_MAX_LENGTH);
+        out[k] = trimmed.length === 0 ? null : trimmed;
+      }
+    } else if (k in META_ENUM_FIELDS) {
+      if (v === null) out[k] = null;
+      else if (typeof v === 'string' && META_ENUM_FIELDS[k].has(v)) out[k] = v;
     }
   }
   return Object.keys(out).length ? out : null;
@@ -131,17 +152,55 @@ Deno.serve(async (req) => {
       break;
     }
     case 'return_to_ai': {
-      await updateLeadFields(supabase, leadId, { ownership_mode: 'ai_active' });
-      // If we left the lead parked in human_handoff during Mia's takeover,
-      // move it back to a status the AI playbook router actually handles —
-      // otherwise the orchestrator falls into qualification with stale
-      // context and may decide to stay silent.
+      // Belt-and-suspenders fix for the "AI stays silent after handback" bug:
+      //  (a) flip ownership back to AI and clear the human owner indicator.
+      //  (b) if Mia's takeover parked the lead in human_handoff, walk it back
+      //      to 'responded' — otherwise the playbook router falls into the
+      //      qualification branch with stale context and may stay silent.
+      //  (c) fire orchestrate-message so the AI evaluates the current
+      //      transcript instead of waiting for the next inbound. The
+      //      orchestrator handles its own lock + ownership recheck.
+      await updateLeadFields(supabase, leadId, {
+        ownership_mode: 'ai_active',
+        human_owner_id: null,
+      });
       const { data: currentLead } = await supabase
         .from('leads').select('lead_status').eq('id', leadId).maybeSingle();
       if (currentLead?.lead_status === 'human_handoff') {
         await transitionLeadStatus(supabase, leadId, 'responded', staff.role, 'manual_return_to_ai');
       }
       await logLeadEvent(supabase, leadId, 'manual_return_to_ai', staff.role, meta, conversationId ?? undefined, staff.userId);
+      // Find the active conversation if the caller didn't supply one — we
+      // need to fire orchestrate with a conversationId.
+      let cid = conversationId ?? null;
+      if (!cid) {
+        const { data: conv } = await supabase
+          .from('conversations')
+          .select('id')
+          .eq('lead_id', leadId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        cid = conv?.id ?? null;
+      }
+      if (cid) {
+        const orchestrateUrl = `${env.supabaseUrl()}/functions/v1/orchestrate-message`;
+        // Fire-and-forget — the orchestrator handles its own locking +
+        // ownership recheck. A 404/timeout here doesn't block the operator's
+        // action.
+        fetch(orchestrateUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${env.serviceRoleKey()}`,
+            'Content-Type': 'application/json',
+            'x-correlation-id': correlationId,
+            'x-trigger': 'manual_return_to_ai',
+          },
+          body: JSON.stringify({ leadId, conversationId: cid }),
+        }).catch((err) => log.error('orchestrate_dispatch_after_return_failed', {
+          fn: 'admin-actions', correlationId, leadId, err: String(err),
+        }));
+      }
       break;
     }
     case 'mark_phone_escalation': {
@@ -179,6 +238,12 @@ Deno.serve(async (req) => {
       break;
     }
     case 'reopen_lead': {
+      // The RPC is the source of truth: it role-gates (owner/admin only),
+      // clears the right timestamps based on the prior state (won_at on a
+      // won lead, lost_at + lost_reason on a lost lead), preserves payments
+      // for accounting truth, and inserts audited lead_reopened +
+      // lead_status_changed events. It also enforces the state machine for
+      // the chosen target.
       if (!targetStatus || !REOPEN_TARGETS.has(targetStatus)) {
         return jsonResponse(req, { error: 'Invalid targetStatus for reopen_lead' }, 400);
       }
@@ -193,7 +258,39 @@ Deno.serve(async (req) => {
         log.warn('reopen_lead_failed', { fn: 'admin-actions', correlationId, leadId, err: reopenErr.message });
         return jsonResponse(req, { error: reopenErr.message }, 400);
       }
-      // RPC inserts its own lead_events rows (lead_reopened + lead_status_changed).
+      // Reopen also resets DNC/removed_by_request flags + ownership so the
+      // AI can take the next turn. The RPC focuses on the audited status
+      // change; these side-effects stay here.
+      await updateLeadFields(supabase, leadId, {
+        ownership_mode: 'ai_active',
+        human_owner_id: null,
+        do_not_contact: false,
+        removed_by_request: false,
+      });
+      // Fire orchestrate so the AI engages on the current transcript without
+      // waiting for the next inbound. Mirrors return_to_ai's pattern.
+      let cid = conversationId ?? null;
+      if (!cid) {
+        const { data: conv } = await supabase
+          .from('conversations').select('id').eq('lead_id', leadId)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        cid = conv?.id ?? null;
+      }
+      if (cid) {
+        const orchestrateUrl = `${env.supabaseUrl()}/functions/v1/orchestrate-message`;
+        fetch(orchestrateUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${env.serviceRoleKey()}`,
+            'Content-Type': 'application/json',
+            'x-correlation-id': correlationId,
+            'x-trigger': 'manual_reopen_lead',
+          },
+          body: JSON.stringify({ leadId, conversationId: cid }),
+        }).catch((err) => log.error('orchestrate_dispatch_after_reopen_failed', {
+          fn: 'admin-actions', correlationId, leadId, err: String(err),
+        }));
+      }
       break;
     }
     case 'update_lead_meta': {

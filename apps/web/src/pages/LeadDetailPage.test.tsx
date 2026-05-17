@@ -49,6 +49,10 @@ const lead: LeadDetail = {
   won_at: null,
   lost_at: null,
   lost_reason: null,
+  decision_context: null,
+  city: null,
+  lead_fit: null,
+  readiness_level: null,
   human_owner_id: null,
   requested_phone_call: false,
   last_human_touch_at: null,
@@ -133,6 +137,7 @@ function renderDetail(role: Role | null = 'admin') {
 beforeEach(() => {
   vi.mocked(fetchLeadDetail).mockResolvedValue({
     ok: true, lead, conversations: [conversation], messages, queueItems, tasks, events,
+    humanOwnerProfile: null,
   });
   vi.mocked(postAdminAction).mockResolvedValue({ ok: true, action: 'noop' });
   vi.mocked(postSendReply).mockResolvedValue({ ok: true, mode: 'freeform' });
@@ -202,6 +207,7 @@ describe('LeadDetailPage', () => {
       ok: true,
       lead: { ...lead, do_not_contact: true },
       conversations: [conversation], messages, queueItems, tasks, events,
+      humanOwnerProfile: null,
     });
     renderDetail();
     const textarea = await screen.findByPlaceholderText('לא ניתן לשלוח (ליד מושתק או חסרה שיחה).');

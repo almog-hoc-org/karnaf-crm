@@ -32,10 +32,14 @@ export interface LeadRow {
   created_at: string;
 }
 
+export type LeadFit = 'low' | 'medium' | 'high';
+export type ReadinessLevel = 'exploring' | 'considering' | 'decided' | 'paying';
+
 export interface LeadDetail extends LeadRow {
   source_detail: string | null;
   source_campaign: string | null;
   webinar_name: string | null;
+  city: string | null;
   conversation_summary: string | null;
   pain_point_summary: string | null;
   goal_summary: string | null;
@@ -47,6 +51,9 @@ export interface LeadDetail extends LeadRow {
   won_at: string | null;
   lost_at: string | null;
   lost_reason: string | null;
+  decision_context: string | null;
+  lead_fit: LeadFit | null;
+  readiness_level: ReadinessLevel | null;
   human_owner_id: string | null;
   requested_phone_call: boolean;
   last_human_touch_at: string | null;

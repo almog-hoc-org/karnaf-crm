@@ -43,6 +43,20 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { error: `${secondary.label}: ${secondary.err!.message}` }, 500);
   }
 
+  // Resolve the human owner profile (if any) so the operator UI can show
+  // "מטפל: דנה כהן" rather than a UUID. Skips silently if no human is
+  // assigned — that's the AI's lead.
+  let humanOwnerProfile: { id: string; full_name: string | null; email: string | null; role: string | null } | null = null;
+  const humanOwnerId = (leadRes.data as { human_owner_id?: string | null }).human_owner_id;
+  if (humanOwnerId) {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, full_name, email, role')
+      .eq('id', humanOwnerId)
+      .maybeSingle();
+    humanOwnerProfile = data ?? null;
+  }
+
   return jsonResponse(req, {
     ok: true,
     lead: leadRes.data,
@@ -51,5 +65,6 @@ Deno.serve(async (req) => {
     queueItems: queueRes.data ?? [],
     tasks: tasksRes.data ?? [],
     events: eventsRes.data ?? [],
+    humanOwnerProfile,
   });
 });

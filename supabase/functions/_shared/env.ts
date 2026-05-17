@@ -34,6 +34,11 @@ export const env = {
   outboundDispatchSecret: () => optional('OUTBOUND_DISPATCH_SECRET'),
   openaiApiKey: () => optional('OPENAI_API_KEY'),
   openaiModel: () => optional('OPENAI_MODEL', 'gpt-4o-mini'),
+  /** Telegram bot token used by `_shared/notify-telegram.ts` for SLA /
+   *  cron alerts. Silently no-ops when missing — operator opts in. */
+  telegramBotToken: () => optional('TELEGRAM_BOT_TOKEN'),
+  /** Chat id (positive for DM, negative for group). */
+  telegramAlertChatId: () => optional('TELEGRAM_ALERT_CHAT_ID'),
 };
 
 export function safeEqual(a: string, b: string): boolean {
