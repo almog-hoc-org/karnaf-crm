@@ -8,6 +8,7 @@ import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
 import { env, optional, safeEqual } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
+import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { archiveWhatsAppMedia } from '../_shared/media-fetch.ts';
 
 Deno.serve(async (req) => {
@@ -151,6 +152,20 @@ Deno.serve(async (req) => {
   if (dispatchErr && !String(dispatchErr.message || '').includes('duplicate key value')) {
     log.error('dispatch_enqueue_failed', {
       fn: 'whatsapp-webhook', correlationId, leadId: lead.id, err: String(dispatchErr),
+    });
+    await ensurePendingQueueItem(supabase, {
+      leadId: lead.id,
+      queueType: 'failed_automation',
+      priorityLevel: 1,
+      reason: 'WhatsApp dispatch queue insert failed before the AI reply could be scheduled',
+      queueSummary: String(dispatchErr),
+      payloadJson: {
+        correlationId,
+        provider: normalized.provider,
+        providerMessageId: normalized.providerMessageId,
+        sourceEventId: eventRow?.id ?? null,
+      },
+      createdByActorType: 'system',
     });
   }
 
