@@ -23,7 +23,7 @@ async function checkDb(): Promise<Check> {
   const started = performance.now();
   try {
     const supabase = getServiceSupabase();
-    const { error } = await supabase.from('crm_config').select('key').limit(1);
+    const { error } = await supabase.from('crm_config').select('config_key').limit(1);
     return {
       ok: !error,
       latencyMs: Math.round(performance.now() - started),
