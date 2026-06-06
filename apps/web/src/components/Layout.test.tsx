@@ -46,12 +46,19 @@ function renderLayout(opts: RenderOpts = {}) {
 describe('Layout', () => {
   it('renders the always-visible operator nav links and the outlet', () => {
     renderLayout({ role: 'viewer' });
-    expect(screen.getByRole('link', { name: 'היום' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'היום' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'לטיפול עכשיו' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'כל הלידים' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'תורים טכניים' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'דוחות' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'דוחות' })).not.toBeInTheDocument();
     expect(screen.getByText('leads outlet')).toBeInTheDocument();
+  });
+
+  it('keeps manager-level links visible for Mia operators', () => {
+    renderLayout({ role: 'mia' });
+    expect(screen.getByRole('link', { name: 'היום' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'דוחות' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'משתמשים' })).not.toBeInTheDocument();
   });
 
   it('hides the admin-only Users link from non-admin roles', () => {
@@ -59,8 +66,10 @@ describe('Layout', () => {
     expect(screen.queryByRole('link', { name: 'משתמשים' })).not.toBeInTheDocument();
   });
 
-  it('hides the admin-only Users link from Mia operators', () => {
-    renderLayout({ role: 'mia' });
+  it('hides manager and admin links from sales representatives', () => {
+    renderLayout({ role: 'sales_rep' });
+    expect(screen.queryByRole('link', { name: 'היום' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'דוחות' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'משתמשים' })).not.toBeInTheDocument();
   });
 
