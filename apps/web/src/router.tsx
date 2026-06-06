@@ -21,7 +21,6 @@ const TeamPage = lazy(() => import('@/pages/TeamPage').then((m) => ({ default: m
 const SourcesPage = lazy(() => import('@/pages/SourcesPage').then((m) => ({ default: m.SourcesPage })));
 const PromptVariantsPage = lazy(() => import('@/pages/PromptVariantsPage').then((m) => ({ default: m.PromptVariantsPage })));
 const PermissionsHelpPage = lazy(() => import('@/pages/PermissionsHelpPage').then((m) => ({ default: m.PermissionsHelpPage })));
-const ManagerPreviewPage = lazy(() => import('@/pages/ManagerPreviewPage').then((m) => ({ default: m.ManagerPreviewPage })));
 
 function PageFallback() {
   return (
@@ -34,7 +33,6 @@ function PageFallback() {
 
 const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
-  { path: '/manager-preview', element: <Suspense fallback={<PageFallback />}><ManagerPreviewPage /></Suspense> },
   {
     element: <ProtectedRoute />,
     children: [
