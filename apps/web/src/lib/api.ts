@@ -82,6 +82,7 @@ export interface LeadsListParams {
   status?: string;
   heat?: string;
   ownershipMode?: string;
+  source?: string;
   search?: string;
   searchIn?: 'lead' | 'messages';
   createdFrom?: string;

@@ -42,13 +42,13 @@ export function DashboardPage() {
       <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <KpiCard label={t('kpi_leads_today')} value={s.leadsToday} icon={<IconSparkles />} />
         <KpiCard label={t('kpi_unanswered')} value={s.unansweredNow} tone={s.unansweredNow > 0 ? 'warn' : 'normal'}
-                 to="/queue?type=first_response_due" icon={<IconClock />} />
+                 to="/inbox?lane=reply" icon={<IconClock />} />
         <KpiCard label={t('kpi_hot_leads')} value={s.hotLeadsNow} tone={s.hotLeadsNow > 0 ? 'hot' : 'normal'}
                  to="/leads?heat=hot" icon={<IconFlame />} />
         <KpiCard label={t('kpi_payment_pending')} value={s.paymentPendingNow}
                  to="/leads?status=payment_pending" icon={<IconCreditCard />} />
         <KpiCard label={t('kpi_sla_risk')} value={s.slaRiskCount} tone={s.slaRiskCount > 0 ? 'warn' : 'normal'}
-                 to="/queue?type=sla_risk" icon={<IconAlert />} />
+                 to="/inbox?lane=risk" icon={<IconAlert />} />
       </section>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -129,7 +129,7 @@ function TodayCommandCenter({
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{priority.detail}</p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Link to={priority.href} className="kf-btn kf-btn-primary justify-center">{priority.cta}</Link>
-            <Link to="/inbox" className="kf-btn justify-center">פתיחת לטיפול עכשיו</Link>
+            <Link to="/inbox" className="kf-btn justify-center">פתיחת מסך טיפול</Link>
             <Link to="/leads?heat=hot" className="kf-btn kf-btn-ghost justify-center">לידים חמים</Link>
           </div>
         </div>
@@ -222,7 +222,7 @@ function SourceHealthSection({
           {entries.map(({ source, h24, d7 }) => (
             <Link
               key={source}
-              to={`/leads?search=&searchIn=lead`}
+              to={`/leads?source=${encodeURIComponent(source)}`}
               className="group flex items-baseline justify-between rounded-lg bg-slate-50 p-3 ring-1 ring-transparent transition hover:bg-white hover:ring-slate-200"
               title={source}
             >

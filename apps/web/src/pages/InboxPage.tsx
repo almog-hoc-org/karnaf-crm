@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 import { fetchAttentionInbox, postQueueResolve } from '@/lib/api';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
-import { formatRelative, QUEUE_LABELS } from '@/lib/format';
+import { formatRelative } from '@/lib/format';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import type { AttentionRow } from '@/lib/types';
 
@@ -17,13 +17,22 @@ const LANE_FILTERS: Array<{ key: WorkLane; label: string; hint: string }> = [
   { key: 'all', label: 'הכל', hint: 'כל מה שדורש טיפול' },
   { key: 'reply', label: 'לענות עכשיו', hint: 'לקוחות שממתינים למענה אנושי' },
   { key: 'call', label: 'להתקשר', hint: 'בקשות שיחה ולידים חמים' },
-  { key: 'risk', label: 'בסיכון', hint: 'SLA, איחורים ותקלות' },
-  { key: 'ops', label: 'תפעול', hint: 'בדיקה, תשלום, מעקב וסגירות' },
+  { key: 'risk', label: 'בעיה/סיכון', hint: 'איחורים, תקלות ודברים שעלולים ליפול' },
+  { key: 'ops', label: 'מעקב', hint: 'בדיקה, תשלום, מעקב וסגירות' },
+];
+
+const CLOSE_NOTE_TEMPLATES = [
+  'טופל בוואטסאפ — אין צורך בפעולה נוספת כרגע.',
+  'נקבעה שיחת טלפון להמשך טיפול.',
+  'הועבר למיה/נציג אנושי להמשך טיפול.',
+  'לא רלוונטי כרגע — להשאיר למעקב עתידי.',
 ];
 
 export function InboxPage() {
   useDocumentTitle('לטיפול עכשיו');
-  const [lane, setLane] = useState<WorkLane>('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialLane = parseLane(searchParams.get('lane'));
+  const [lane, setLane] = useState<WorkLane>(initialLane);
   const [pendingClose, setPendingClose] = useState<AttentionRow | null>(null);
   const [closeNote, setCloseNote] = useState('');
   const qc = useQueryClient();
@@ -86,7 +95,13 @@ export function InboxPage() {
             <button
               key={item.key}
               type="button"
-              onClick={() => setLane(item.key)}
+              onClick={() => {
+                setLane(item.key);
+                const next = new URLSearchParams(searchParams);
+                if (item.key === 'all') next.delete('lane');
+                else next.set('lane', item.key);
+                setSearchParams(next, { replace: true });
+              }}
               aria-pressed={active}
               className={clsx(
                 'rounded-2xl border p-4 text-start shadow-sm transition',
@@ -195,6 +210,18 @@ export function InboxPage() {
           setPendingClose(null);
         }}
       >
+        <div className="mb-3 flex flex-wrap gap-2">
+          {CLOSE_NOTE_TEMPLATES.map((template) => (
+            <button
+              key={template}
+              type="button"
+              className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 transition hover:bg-brand-50 hover:text-brand-700"
+              onClick={() => setCloseNote(template)}
+            >
+              {template}
+            </button>
+          ))}
+        </div>
         <label className="block text-sm">
           <span className="text-slate-600">הערת סגירה</span>
           <textarea
@@ -208,6 +235,10 @@ export function InboxPage() {
       </ConfirmDialog>
     </div>
   );
+}
+
+function parseLane(value: string | null): WorkLane {
+  return value === 'reply' || value === 'call' || value === 'risk' || value === 'ops' ? value : 'all';
 }
 
 function Metric({ label, value, tone }: { label: string; value: number | string; tone?: 'danger' | 'ok' }) {
@@ -260,7 +291,7 @@ function humanReason(row: AttentionRow): string {
   if (row.reason) return row.reason;
   if (row.kind === 'mia_reply') return 'הלקוח השיב ומחכה למענה אנושי';
   if (row.kind === 'overdue_action') return 'הפעולה הבאה באיחור';
-  if (row.kind === 'queue') return QUEUE_LABELS[row.ref_id] ?? 'משימה פתוחה לטיפול';
+  if (row.kind === 'queue') return 'משימה פתוחה לטיפול';
   return 'דורש בדיקה';
 }
 

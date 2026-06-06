@@ -64,6 +64,7 @@ interface SavedView {
   createdFrom: string;
   createdTo: string;
   inboundFrom: string;
+  source: string;
 }
 
 const SAVED_VIEWS_KEY = 'karnaf:leads:savedViews';
@@ -259,6 +260,7 @@ export function LeadsPage() {
   const [status, setStatus] = useState(searchParams.get('status') ?? '');
   const [heat, setHeat] = useState(searchParams.get('heat') ?? '');
   const [ownership, setOwnership] = useState(searchParams.get('ownership') ?? '');
+  const [source, setSource] = useState(searchParams.get('source') ?? '');
   const [createdFrom, setCreatedFrom] = useState(searchParams.get('createdFrom') ?? '');
   const [createdTo, setCreatedTo] = useState(searchParams.get('createdTo') ?? '');
   const [inboundFrom, setInboundFrom] = useState(searchParams.get('inboundFrom') ?? '');
@@ -275,11 +277,12 @@ export function LeadsPage() {
     if (status) next.set('status', status);
     if (heat) next.set('heat', heat);
     if (ownership) next.set('ownership', ownership);
+    if (source) next.set('source', source);
     if (createdFrom) next.set('createdFrom', createdFrom);
     if (createdTo) next.set('createdTo', createdTo);
     if (inboundFrom) next.set('inboundFrom', inboundFrom);
     setSearchParams(next, { replace: true });
-  }, [status, heat, ownership, createdFrom, createdTo, inboundFrom, setSearchParams]);
+  }, [status, heat, ownership, source, createdFrom, createdTo, inboundFrom, setSearchParams]);
 
   // dates from UI come as yyyy-mm-dd; expand to UTC range so we match the
   // entire day for createdTo, and start-of-day for createdFrom / inboundFrom.
@@ -292,6 +295,7 @@ export function LeadsPage() {
     status: status || undefined,
     heat: heat || undefined,
     ownershipMode: ownership || undefined,
+    source: source || undefined,
     createdFrom: expandStart(createdFrom),
     createdTo: expandEnd(createdTo),
     inboundFrom: expandStart(inboundFrom),
@@ -304,6 +308,7 @@ export function LeadsPage() {
     setStatus(view.status);
     setHeat(view.heat);
     setOwnership(view.ownership);
+    setSource(view.source ?? '');
     setCreatedFrom(view.createdFrom);
     setCreatedTo(view.createdTo);
     setInboundFrom(view.inboundFrom);
@@ -323,6 +328,7 @@ export function LeadsPage() {
       createdFrom,
       createdTo,
       inboundFrom,
+      source,
     };
     const next = [...savedViews.filter((v) => v.name !== name), view];
     setSavedViews(next);
@@ -370,7 +376,7 @@ export function LeadsPage() {
   // never references rows the manager can't currently see.
   useEffect(() => {
     setSelected(new Set());
-  }, [debouncedSearch, status, heat, ownership, createdFrom, createdTo, inboundFrom, offset]);
+  }, [debouncedSearch, status, heat, ownership, source, createdFrom, createdTo, inboundFrom, offset]);
 
   const bulkMut = useMutation({
     mutationFn: postBulkLeadAction,
@@ -385,13 +391,14 @@ export function LeadsPage() {
   const total = q.data?.total ?? null;
   const start = total != null ? offset + 1 : null;
   const end = total != null ? Math.min(offset + (q.data?.leads.length ?? 0), total) : null;
-  const hasFilters = !!(search || status || heat || ownership || createdFrom || createdTo || inboundFrom);
+  const hasFilters = !!(search || status || heat || ownership || source || createdFrom || createdTo || inboundFrom);
 
   function clearFilters() {
     setSearch('');
     setStatus('');
     setHeat('');
     setOwnership('');
+    setSource('');
     setCreatedFrom('');
     setCreatedTo('');
     setInboundFrom('');
@@ -599,6 +606,14 @@ export function LeadsPage() {
             <p className="text-sm text-slate-500">
               כל ליד מוצג ככרטיס עם המלצת פעולה קצרה, במקום טבלה טכנית.
             </p>
+            {source ? (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 ring-1 ring-brand-100">
+                מקור: {source}
+                <button type="button" className="text-brand-500 hover:text-rose-600" onClick={() => setSource('')} aria-label="ניקוי סינון מקור">
+                  ×
+                </button>
+              </div>
+            ) : null}
           </div>
           {canBulkEdit ? (
             <label className="inline-flex items-center gap-2 text-sm text-slate-600">
