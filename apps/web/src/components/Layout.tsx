@@ -9,10 +9,10 @@ interface NavItem { to: string; labelKey: TranslationKey; end?: boolean; adminOn
 
 const NAV: NavItem[] = [
   { to: '/', labelKey: 'nav_dashboard', end: true, icon: <IconDashboard /> },
-  { to: '/leads', labelKey: 'nav_leads', icon: <IconUsers /> },
   { to: '/inbox', labelKey: 'nav_inbox', icon: <IconInbox /> },
-  { to: '/queue', labelKey: 'nav_queue', icon: <IconInbox /> },
+  { to: '/leads', labelKey: 'nav_leads', icon: <IconUsers /> },
   { to: '/analytics', labelKey: 'nav_analytics', icon: <IconChart /> },
+  { to: '/queue', labelKey: 'nav_queue', adminOnly: true, icon: <IconInbox /> },
   { to: '/team', labelKey: 'nav_team', adminOnly: true, icon: <IconUsers /> },
   { to: '/admin/sources', labelKey: 'nav_sources', adminOnly: true, icon: <IconChart /> },
   { to: '/users', labelKey: 'nav_users', adminOnly: true, icon: <IconShield /> },
@@ -46,7 +46,7 @@ export function Layout() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 7l8 5 8-5M4 7v10l8 5 8-5V7M4 7l8-5 8 5" />
               </svg>
             </span>
-            <span className="text-base font-semibold text-slate-900 sm:text-lg">Karnaf <span className="text-brand-700">CRM</span></span>
+            <span className="text-base font-semibold text-slate-900 sm:text-lg">Karnaf <span className="text-brand-700">CRM</span><span className="ms-2 hidden rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 sm:inline">Manager</span></span>
           </Link>
 
           <nav className="hidden items-center gap-1 md:flex" role="navigation" aria-label={t('app_name')}>

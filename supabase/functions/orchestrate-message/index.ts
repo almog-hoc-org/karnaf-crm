@@ -9,6 +9,7 @@ import { buildTimeContext } from '../_shared/time-context.ts';
 import { extractQuestions } from '../_shared/ai-validation.ts';
 import { inferPersona } from '../_shared/persona-inference.ts';
 import { classifyInbound } from '../_shared/intent-classifier.ts';
+import { classifyLeadIntake } from '../_shared/lead-classifier.ts';
 import { extractTopicsFromText, mergeTopics, type TopicEntry } from '../_shared/topics.ts';
 import { loadProductClaims } from '../_shared/claim-service.ts';
 import { releaseConversationLock, tryConversationLock } from '../_shared/conversation-lock.ts';
@@ -30,7 +31,8 @@ Deno.serve(async (req) => {
 
   const correlationId = correlationFromRequest(req);
   const { leadId, conversationId } = await req.json().catch(() => ({}));
-  if (!leadId || !conversationId) return jsonResponse(req, { error: 'Missing leadId or conversationId' }, 400);
+  if (!leadId || !conversationId)
+    return jsonResponse(req, { error: 'Missing leadId or conversationId' }, 400);
 
   const supabase = getServiceSupabase();
   const got = await tryConversationLock(supabase, conversationId);
@@ -46,41 +48,90 @@ Deno.serve(async (req) => {
     if (leadErr || !lead) return jsonResponse(req, { error: leadErr?.message ?? 'Lead not found' }, 404);
 
     if (lead.do_not_contact || lead.removed_by_request) {
-      log.info('orchestrate_suppressed', { fn: 'orchestrate', correlationId, leadId, reason: 'dnc_or_removed' });
+      log.info('orchestrate_suppressed', {
+        fn: 'orchestrate',
+        correlationId,
+        leadId,
+        reason: 'dnc_or_removed',
+      });
       return jsonResponse(req, { ok: true, skipped: 'suppressed' });
     }
 
     log.info('orchestrate_ownership_seen', {
-      fn: 'orchestrate', correlationId, leadId,
-      ownership_mode: lead.ownership_mode, lead_status: lead.lead_status,
+      fn: 'orchestrate',
+      correlationId,
+      leadId,
+      ownership_mode: lead.ownership_mode,
+      lead_status: lead.lead_status,
     });
 
     // Channel-gating: the AI orchestrator currently only owns the WhatsApp
     // channel. Other channels (email, IG DM scraped manually, etc.) get
     // queued for Mia rather than dispatched.
     const { data: conversation, error: convErr } = await supabase
-      .from('conversations').select('channel').eq('id', conversationId).single();
+      .from('conversations')
+      .select('channel')
+      .eq('id', conversationId)
+      .single();
     if (convErr) return jsonResponse(req, { error: convErr.message }, 500);
     if (conversation?.channel && conversation.channel !== 'whatsapp') {
       await ensurePendingQueueItem(supabase, {
-        leadId, queueType: 'human_handoff', priorityLevel: 2,
+        leadId,
+        queueType: 'human_handoff',
+        priorityLevel: 2,
         reason: `שיחה בערוץ ${conversation.channel} דורשת מענה ידני`,
         payloadJson: { channel: conversation.channel, correlationId },
       });
       log.info('orchestrate_channel_skipped', {
-        fn: 'orchestrate', correlationId, leadId, channel: conversation.channel,
+        fn: 'orchestrate',
+        correlationId,
+        leadId,
+        channel: conversation.channel,
       });
       return jsonResponse(req, { ok: true, skipped: 'non_whatsapp_channel', channel: conversation.channel });
     }
 
     if (!lead.phone) {
       await ensurePendingQueueItem(supabase, {
-        leadId, queueType: 'manual_review_required', priorityLevel: 2,
+        leadId,
+        queueType: 'manual_review_required',
+        priorityLevel: 2,
         reason: 'ליד ללא מספר טלפון, נדרשת בדיקה ידנית',
         payloadJson: { correlationId },
       });
       log.info('orchestrate_no_phone', { fn: 'orchestrate', correlationId, leadId });
       return jsonResponse(req, { ok: true, skipped: 'no_phone' });
+    }
+
+    if (lead.ownership_mode !== 'ai_active') {
+      const queueType = lead.ownership_mode === 'phone_sales_pending' ? 'phone_escalation' : 'human_handoff';
+      await ensurePendingQueueItem(supabase, {
+        leadId,
+        queueType,
+        priorityLevel: lead.ownership_mode === 'phone_sales_pending' ? 1 : 2,
+        reason: `AI suppressed: lead ownership is ${lead.ownership_mode}`,
+        payloadJson: { ownership_mode: lead.ownership_mode, lead_status: lead.lead_status, correlationId },
+        createdByActorType: 'system',
+      });
+      await logLeadEvent(
+        supabase,
+        leadId,
+        'ai_suppressed_human_owner',
+        'system',
+        {
+          ownership_mode: lead.ownership_mode,
+          lead_status: lead.lead_status,
+          correlation_id: correlationId,
+        },
+        conversationId,
+      );
+      log.info('orchestrate_ai_suppressed_by_owner', {
+        fn: 'orchestrate',
+        correlationId,
+        leadId,
+        ownership_mode: lead.ownership_mode,
+      });
+      return jsonResponse(req, { ok: true, skipped: 'non_ai_owner', ownershipMode: lead.ownership_mode });
     }
 
     const { data: recentMessages, error: msgErr } = await supabase
@@ -92,7 +143,9 @@ Deno.serve(async (req) => {
     if (msgErr) return jsonResponse(req, { error: msgErr.message }, 500);
 
     const ordered = (recentMessages ?? []).slice().reverse();
-    const freeAdviceCount = ordered.filter((m) => m.sender_type === 'lead' && (m.content_text ?? '').length > 80).length;
+    const freeAdviceCount = ordered.filter(
+      (m) => m.sender_type === 'lead' && (m.content_text ?? '').length > 80,
+    ).length;
 
     const timeContext = buildTimeContext({
       now: new Date(),
@@ -141,61 +194,114 @@ Deno.serve(async (req) => {
       source: lead.source ?? null,
     });
 
-    const lastLeadMessage = ordered.filter((m) => m.sender_type === 'lead').slice(-1)[0]?.content_text ?? null;
+    const lastLeadMessage =
+      ordered.filter((m) => m.sender_type === 'lead').slice(-1)[0]?.content_text ?? null;
     const intentSignal = classifyInbound(lastLeadMessage as string | null);
+    const leadClassification = classifyLeadIntake({
+      source: lead.source ?? null,
+      sourceDetail: lead.source_detail ?? null,
+      sourceCampaign: lead.source_campaign ?? null,
+      firstMessage: firstInboundSnippet,
+      latestMessage: lastLeadMessage as string | null,
+      metadata: (lead.raw_import_snapshot as Record<string, unknown> | null) ?? null,
+    });
+
+    await updateLeadFields(supabase, leadId, {
+      inquiry_type: leadClassification.inquiryType,
+      product_interest: leadClassification.productInterest,
+      intake_segment: leadClassification.intakeSegment,
+      classification_confidence: leadClassification.confidence,
+      classification_summary: leadClassification.operatorSummary,
+      suggested_next_action: leadClassification.suggestedNextAction,
+      handoff_reason: leadClassification.handoffReason,
+      classification_updated_at: new Date().toISOString(),
+    });
 
     const authorisedClaims = await loadProductClaims(supabase, config.product.code);
 
-    const decision = await runAiDecision(supabase, {
-      lead: {
-        id: String(lead.id),
-        fullName: lead.full_name,
-        phone: lead.phone,
-        source: lead.source,
-        sourceDetail: lead.source_detail ?? null,
-        sourceCampaign: lead.source_campaign ?? null,
-        status: lead.lead_status,
-        heat: lead.lead_heat,
-        score: Number(lead.lead_score ?? 0),
-        ownershipMode: lead.ownership_mode,
-        paymentStatus: lead.payment_status,
-        partnerInvolved: lead.partner_involved === null || lead.partner_involved === undefined
-          ? null
-          : !!lead.partner_involved,
-        doNotContact: !!lead.do_not_contact,
-        removedByRequest: !!lead.removed_by_request,
-        conversationSummary: lead.conversation_summary,
-        lastInboundAt: lead.last_inbound_at,
-        lastOutboundAt: lead.last_outbound_at,
-        priorPhoneCallCount,
-        lastPhoneCallOutcome,
-        firstInboundSnippet,
-        topicsTouched: Array.isArray(lead.topics_touched) ? (lead.topics_touched as TopicEntry[]) : [],
+    const decision = await runAiDecision(
+      supabase,
+      {
+        lead: {
+          id: String(lead.id),
+          fullName: lead.full_name,
+          phone: lead.phone,
+          source: lead.source,
+          sourceDetail: lead.source_detail ?? null,
+          sourceCampaign: lead.source_campaign ?? null,
+          status: lead.lead_status,
+          heat: lead.lead_heat,
+          score: Number(lead.lead_score ?? 0),
+          ownershipMode: lead.ownership_mode,
+          paymentStatus: lead.payment_status,
+          partnerInvolved:
+            lead.partner_involved === null || lead.partner_involved === undefined
+              ? null
+              : !!lead.partner_involved,
+          doNotContact: !!lead.do_not_contact,
+          removedByRequest: !!lead.removed_by_request,
+          conversationSummary: lead.conversation_summary,
+          lastInboundAt: lead.last_inbound_at,
+          lastOutboundAt: lead.last_outbound_at,
+          priorPhoneCallCount,
+          lastPhoneCallOutcome,
+          firstInboundSnippet,
+          topicsTouched: Array.isArray(lead.topics_touched) ? (lead.topics_touched as TopicEntry[]) : [],
+          inquiryType: leadClassification.inquiryType,
+          productInterest: leadClassification.productInterest,
+          intakeSegment: leadClassification.intakeSegment,
+          classificationConfidence: leadClassification.confidence,
+          classificationSummary: leadClassification.operatorSummary,
+          suggestedNextAction: leadClassification.suggestedNextAction,
+          handoffReason: leadClassification.handoffReason,
+        },
+        recentMessages: ordered.map((m) => ({
+          senderType: String(m.sender_type ?? ''),
+          contentText: (m.content_text as string | null) ?? null,
+          createdAt: String(m.created_at ?? ''),
+        })),
+        runtimeConfig: config,
+        freeAdviceCount,
+        timeContext,
+        recentAiQuestions,
+        personaContext: {
+          persona: personaResult.persona,
+          guidance: personaResult.guidance,
+          signals: personaResult.signals,
+        },
+        intentContext: {
+          intent: intentSignal.intent,
+          sentiment: intentSignal.sentiment,
+          confidence: intentSignal.confidence,
+          matchedKeywords: intentSignal.matchedKeywords,
+        },
+        authorisedClaims,
       },
-      recentMessages: ordered.map((m) => ({
-        senderType: String(m.sender_type ?? ''),
-        contentText: (m.content_text as string | null) ?? null,
-        createdAt: String(m.created_at ?? ''),
-      })),
-      runtimeConfig: config,
-      freeAdviceCount,
-      timeContext,
-      recentAiQuestions,
-      personaContext: {
-        persona: personaResult.persona,
-        guidance: personaResult.guidance,
-        signals: personaResult.signals,
-      },
-      intentContext: {
-        intent: intentSignal.intent,
-        sentiment: intentSignal.sentiment,
-        confidence: intentSignal.confidence,
-        matchedKeywords: intentSignal.matchedKeywords,
-      },
-      authorisedClaims,
-    }, correlationId);
+      correlationId,
+    );
 
     const out = decision.output;
+
+    if (
+      leadClassification.intakeSegment === 'support_or_existing' &&
+      !out.escalateToMia &&
+      !out.escalateToPhoneSales
+    ) {
+      out.escalateToMia = true;
+      out.createQueueType = 'human_handoff';
+      out.sendMode = 'manual_only';
+      out.notesForMia = leadClassification.handoffReason ?? leadClassification.operatorSummary;
+      out.replyText = null;
+      out.policyFlags = Array.from(new Set([...out.policyFlags, 'support_or_existing_lead']));
+    } else if (
+      leadClassification.intakeSegment === 'needs_human' &&
+      !out.escalateToMia &&
+      !out.escalateToPhoneSales
+    ) {
+      out.escalateToPhoneSales = true;
+      out.createQueueType = 'phone_escalation';
+      out.notesForMia = leadClassification.handoffReason ?? leadClassification.operatorSummary;
+    }
 
     // Auto-escalate to a human phone call when the lead has been milking
     // free advice across many turns OR has logged repeat phone calls without
@@ -208,22 +314,29 @@ Deno.serve(async (req) => {
       if (freeAdviceCount >= FREE_ADVICE_CEILING || priorPhoneCallCount >= PHONE_CALL_CEILING) {
         out.escalateToPhoneSales = true;
         out.createQueueType = 'phone_escalation';
-        out.notesForMia = out.notesForMia ?? (
-          freeAdviceCount >= FREE_ADVICE_CEILING
+        out.notesForMia =
+          out.notesForMia ??
+          (freeAdviceCount >= FREE_ADVICE_CEILING
             ? `יעוץ חינמי מתמשך (${freeAdviceCount} פניות) — אסקלציה לטלפון.`
-            : `${priorPhoneCallCount} שיחות טלפון קודמות ללא התקדמות.`
-        );
+            : `${priorPhoneCallCount} שיחות טלפון קודמות ללא התקדמות.`);
         autoEscalated = true;
         log.info('orchestrate_auto_escalated', {
-          fn: 'orchestrate', correlationId, leadId,
+          fn: 'orchestrate',
+          correlationId,
+          leadId,
           reason: freeAdviceCount >= FREE_ADVICE_CEILING ? 'free_advice' : 'repeat_calls',
-          freeAdviceCount, priorPhoneCallCount,
+          freeAdviceCount,
+          priorPhoneCallCount,
         });
       }
     }
 
     const desiredMode = out.sendMode;
-    const effectiveMode = resolveSendMode(desiredMode, lead.last_inbound_at, config.whatsappSession.freeformWindowHours);
+    const effectiveMode = resolveSendMode(
+      desiredMode,
+      lead.last_inbound_at,
+      config.whatsappSession.freeformWindowHours,
+    );
 
     let sendResult: { ok: boolean; providerMessageId?: string; error?: string } = { ok: false };
     let attemptedSend = false;
@@ -234,9 +347,11 @@ Deno.serve(async (req) => {
         if (effectiveMode === 'freeform') {
           sendResult = await sendWhatsAppText(lead.phone as string, out.replyText);
         } else {
-          sendResult = await sendWhatsAppTemplate(lead.phone as string, config.whatsappSession.fallbackTemplateName, [
-            { name: 'reply', value: out.replyText },
-          ]);
+          sendResult = await sendWhatsAppTemplate(
+            lead.phone as string,
+            config.whatsappSession.fallbackTemplateName,
+            [{ name: 'reply', value: out.replyText }],
+          );
         }
       } catch (err) {
         sendResult = { ok: false, error: String(err) };
@@ -257,11 +372,24 @@ Deno.serve(async (req) => {
       });
 
       const nextScore = Math.max(0, Math.min(100, Number(lead.lead_score ?? 0) + out.scoreDelta));
-      const updates: Record<string, unknown> = { lead_score: nextScore };
+      const updates: Record<string, unknown> = {
+        lead_score: nextScore,
+        inquiry_type: leadClassification.inquiryType,
+        product_interest: leadClassification.productInterest,
+        intake_segment: leadClassification.intakeSegment,
+        classification_confidence: leadClassification.confidence,
+        classification_summary: leadClassification.operatorSummary,
+        suggested_next_action: leadClassification.suggestedNextAction,
+        handoff_reason: leadClassification.handoffReason,
+        classification_updated_at: new Date().toISOString(),
+      };
       if (out.leadHeatUpdate) updates.lead_heat = out.leadHeatUpdate;
       if (out.nextActionType) updates.next_action_type = out.nextActionType;
       if (out.nextActionDueAt) updates.next_action_due_at = out.nextActionDueAt;
-      else updates.next_action_due_at = new Date(Date.now() + config.followUpDelays.firstResponseMinutes * 60_000).toISOString();
+      else
+        updates.next_action_due_at = new Date(
+          Date.now() + config.followUpDelays.firstResponseMinutes * 60_000,
+        ).toISOString();
       if (out.playbookName && lead.ai_playbook_stage !== out.playbookName) {
         updates.ai_playbook_stage = out.playbookName;
         updates.ai_playbook_stage_at = new Date().toISOString();
@@ -278,17 +406,30 @@ Deno.serve(async (req) => {
       await updateLeadFields(supabase, leadId, updates);
 
       if (out.leadStatusUpdate) {
-        await transitionLeadStatus(supabase, leadId, out.leadStatusUpdate, 'ai', `playbook:${out.playbookName}`);
+        await transitionLeadStatus(
+          supabase,
+          leadId,
+          out.leadStatusUpdate,
+          'ai',
+          `playbook:${out.playbookName}`,
+        );
       }
 
-      await logLeadEvent(supabase, leadId, 'ai_reply_sent', 'ai', {
-        playbook: out.playbookName,
-        score_delta: out.scoreDelta,
-        heat_update: out.leadHeatUpdate,
-        send_mode: effectiveMode,
-        auto_escalated: autoEscalated,
-        correlation_id: correlationId,
-      }, conversationId);
+      await logLeadEvent(
+        supabase,
+        leadId,
+        'ai_reply_sent',
+        'ai',
+        {
+          playbook: out.playbookName,
+          score_delta: out.scoreDelta,
+          heat_update: out.leadHeatUpdate,
+          send_mode: effectiveMode,
+          auto_escalated: autoEscalated,
+          correlation_id: correlationId,
+        },
+        conversationId,
+      );
     } else if (attemptedSend && !sendResult.ok) {
       // Send failed → record an integration log + failed_automation queue.
       await supabase.from('integration_logs').insert({
@@ -320,6 +461,7 @@ Deno.serve(async (req) => {
           escalate_to_mia: out.escalateToMia,
           escalate_to_phone_sales: out.escalateToPhoneSales,
           playbook: out.playbookName,
+          classification: leadClassification,
         },
       });
     }
@@ -339,8 +481,13 @@ Deno.serve(async (req) => {
     );
 
     log.info('orchestrate_completed', {
-      fn: 'orchestrate', correlationId, leadId, conversationId,
-      sentOk: sendResult.ok, mode: effectiveMode, status: decision.executionStatus,
+      fn: 'orchestrate',
+      correlationId,
+      leadId,
+      conversationId,
+      sentOk: sendResult.ok,
+      mode: effectiveMode,
+      status: decision.executionStatus,
       playbook: out.playbookName,
     });
 

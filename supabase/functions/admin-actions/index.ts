@@ -53,6 +53,9 @@ interface ActionPayload {
     pain_point_summary?: string | null;
     main_blocker?: string | null;
     next_action_type?: string | null;
+    inquiry_type?: string | null;
+    product_interest?: string | null;
+    intake_segment?: string | null;
   };
 }
 
@@ -62,13 +65,46 @@ interface ActionPayload {
 // Phone is intentionally NOT here — it's the lead identity for routing,
 // changing it would orphan inbound webhooks; needs a dedicated migration flow.
 const META_TEXT_FIELDS = new Set([
-  'goal_summary', 'pain_point_summary', 'main_blocker', 'next_action_type',
-  'full_name', 'email', 'city', 'decision_context', 'lost_reason',
+  'goal_summary',
+  'pain_point_summary',
+  'main_blocker',
+  'next_action_type',
+  'full_name',
+  'email',
+  'city',
+  'decision_context',
+  'lost_reason',
 ]);
 const META_ENUM_FIELDS: Record<string, Set<string>> = {
   lead_heat: new Set(['cold', 'cool', 'warm', 'hot']),
   lead_fit: new Set(['low', 'medium', 'high']),
   readiness_level: new Set(['exploring', 'considering', 'decided', 'paying']),
+  inquiry_type: new Set([
+    'program_details',
+    'pricing',
+    'financing',
+    'eligibility',
+    'property_search',
+    'mentorship',
+    'purchase_ready',
+    'support',
+    'unknown',
+  ]),
+  product_interest: new Set([
+    'digital_program',
+    'mentorship',
+    'student_tools',
+    'financing_guidance',
+    'unknown',
+  ]),
+  intake_segment: new Set([
+    'hot_sales',
+    'needs_human',
+    'needs_nurture',
+    'info_seeker',
+    'support_or_existing',
+    'unknown',
+  ]),
 };
 const META_MAX_LENGTH = 280;
 
@@ -108,8 +144,17 @@ Deno.serve(async (req) => {
     throw err;
   }
 
-  const body = await req.json().catch(() => ({})) as ActionPayload;
-  const { action, leadId, conversationId, queueItemId, note, targetStatus, callOutcome, callDurationMinutes } = body;
+  const body = (await req.json().catch(() => ({}))) as ActionPayload;
+  const {
+    action,
+    leadId,
+    conversationId,
+    queueItemId,
+    note,
+    targetStatus,
+    callOutcome,
+    callDurationMinutes,
+  } = body;
 
   if (!action) return jsonResponse(req, { error: 'Missing action' }, 400);
 
@@ -130,7 +175,12 @@ Deno.serve(async (req) => {
 
   if (!leadId) return jsonResponse(req, { error: 'Missing leadId' }, 400);
 
-  const meta = { actor_user_id: staff.userId, role: staff.role, note: note ?? null, correlation_id: correlationId };
+  const meta = {
+    actor_user_id: staff.userId,
+    role: staff.role,
+    note: note ?? null,
+    correlation_id: correlationId,
+  };
   const ts = new Date().toISOString();
 
   switch (action) {
@@ -142,13 +192,23 @@ Deno.serve(async (req) => {
       });
       await transitionLeadStatus(supabase, leadId, 'human_handoff', staff.role, 'manual_assign_to_mia');
       await ensurePendingQueueItem(supabase, {
-        leadId, queueType: 'human_handoff', priorityLevel: 2,
+        leadId,
+        queueType: 'human_handoff',
+        priorityLevel: 2,
         reason: note ?? 'Assigned to Mia manually',
         queueSummary: note ?? 'Manual assignment to Mia',
         payloadJson: meta,
         createdByActorType: staff.role,
       });
-      await logLeadEvent(supabase, leadId, 'manual_assign_to_mia', staff.role, meta, conversationId ?? undefined, staff.userId);
+      await logLeadEvent(
+        supabase,
+        leadId,
+        'manual_assign_to_mia',
+        staff.role,
+        meta,
+        conversationId ?? undefined,
+        staff.userId,
+      );
       break;
     }
     case 'return_to_ai': {
@@ -165,11 +225,22 @@ Deno.serve(async (req) => {
         human_owner_id: null,
       });
       const { data: currentLead } = await supabase
-        .from('leads').select('lead_status').eq('id', leadId).maybeSingle();
+        .from('leads')
+        .select('lead_status')
+        .eq('id', leadId)
+        .maybeSingle();
       if (currentLead?.lead_status === 'human_handoff') {
         await transitionLeadStatus(supabase, leadId, 'responded', staff.role, 'manual_return_to_ai');
       }
-      await logLeadEvent(supabase, leadId, 'manual_return_to_ai', staff.role, meta, conversationId ?? undefined, staff.userId);
+      await logLeadEvent(
+        supabase,
+        leadId,
+        'manual_return_to_ai',
+        staff.role,
+        meta,
+        conversationId ?? undefined,
+        staff.userId,
+      );
       // Find the active conversation if the caller didn't supply one — we
       // need to fire orchestrate with a conversationId.
       let cid = conversationId ?? null;
@@ -197,9 +268,14 @@ Deno.serve(async (req) => {
             'x-trigger': 'manual_return_to_ai',
           },
           body: JSON.stringify({ leadId, conversationId: cid }),
-        }).catch((err) => log.error('orchestrate_dispatch_after_return_failed', {
-          fn: 'admin-actions', correlationId, leadId, err: String(err),
-        }));
+        }).catch((err) =>
+          log.error('orchestrate_dispatch_after_return_failed', {
+            fn: 'admin-actions',
+            correlationId,
+            leadId,
+            err: String(err),
+          }),
+        );
       }
       break;
     }
@@ -210,31 +286,65 @@ Deno.serve(async (req) => {
         last_human_touch_at: ts,
       });
       await ensurePendingQueueItem(supabase, {
-        leadId, queueType: 'phone_escalation', priorityLevel: 1,
+        leadId,
+        queueType: 'phone_escalation',
+        priorityLevel: 1,
         reason: note ?? 'Phone escalation requested',
         queueSummary: note ?? null,
         payloadJson: meta,
         createdByActorType: staff.role,
       });
-      await logLeadEvent(supabase, leadId, 'manual_phone_escalation', staff.role, meta, conversationId ?? undefined, staff.userId);
+      await logLeadEvent(
+        supabase,
+        leadId,
+        'manual_phone_escalation',
+        staff.role,
+        meta,
+        conversationId ?? undefined,
+        staff.userId,
+      );
       break;
     }
     case 'mark_dnc': {
       await updateLeadFields(supabase, leadId, { do_not_contact: true });
       await transitionLeadStatus(supabase, leadId, 'do_not_contact', staff.role, 'manual_mark_dnc');
-      await logLeadEvent(supabase, leadId, 'manual_mark_dnc', staff.role, meta, conversationId ?? undefined, staff.userId);
+      await logLeadEvent(
+        supabase,
+        leadId,
+        'manual_mark_dnc',
+        staff.role,
+        meta,
+        conversationId ?? undefined,
+        staff.userId,
+      );
       break;
     }
     case 'mark_lost': {
       await updateLeadFields(supabase, leadId, { lost_at: ts, lost_reason: note ?? null });
       await transitionLeadStatus(supabase, leadId, 'lost', staff.role, 'manual_mark_lost');
-      await logLeadEvent(supabase, leadId, 'manual_mark_lost', staff.role, meta, conversationId ?? undefined, staff.userId);
+      await logLeadEvent(
+        supabase,
+        leadId,
+        'manual_mark_lost',
+        staff.role,
+        meta,
+        conversationId ?? undefined,
+        staff.userId,
+      );
       break;
     }
     case 'mark_won': {
       await updateLeadFields(supabase, leadId, { won_at: ts });
       await transitionLeadStatus(supabase, leadId, 'won', staff.role, 'manual_mark_won');
-      await logLeadEvent(supabase, leadId, 'manual_mark_won', staff.role, meta, conversationId ?? undefined, staff.userId);
+      await logLeadEvent(
+        supabase,
+        leadId,
+        'manual_mark_won',
+        staff.role,
+        meta,
+        conversationId ?? undefined,
+        staff.userId,
+      );
       break;
     }
     case 'reopen_lead': {
@@ -255,7 +365,12 @@ Deno.serve(async (req) => {
         p_actor_user_id: staff.userId,
       });
       if (reopenErr) {
-        log.warn('reopen_lead_failed', { fn: 'admin-actions', correlationId, leadId, err: reopenErr.message });
+        log.warn('reopen_lead_failed', {
+          fn: 'admin-actions',
+          correlationId,
+          leadId,
+          err: reopenErr.message,
+        });
         return jsonResponse(req, { error: reopenErr.message }, 400);
       }
       // Reopen also resets DNC/removed_by_request flags + ownership so the
@@ -272,8 +387,12 @@ Deno.serve(async (req) => {
       let cid = conversationId ?? null;
       if (!cid) {
         const { data: conv } = await supabase
-          .from('conversations').select('id').eq('lead_id', leadId)
-          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+          .from('conversations')
+          .select('id')
+          .eq('lead_id', leadId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
         cid = conv?.id ?? null;
       }
       if (cid) {
@@ -287,9 +406,14 @@ Deno.serve(async (req) => {
             'x-trigger': 'manual_reopen_lead',
           },
           body: JSON.stringify({ leadId, conversationId: cid }),
-        }).catch((err) => log.error('orchestrate_dispatch_after_reopen_failed', {
-          fn: 'admin-actions', correlationId, leadId, err: String(err),
-        }));
+        }).catch((err) =>
+          log.error('orchestrate_dispatch_after_reopen_failed', {
+            fn: 'admin-actions',
+            correlationId,
+            leadId,
+            err: String(err),
+          }),
+        );
       }
       break;
     }
@@ -309,7 +433,11 @@ Deno.serve(async (req) => {
       break;
     }
     case 'log_phone_call': {
-      const callMeta = { ...meta, outcome: callOutcome ?? 'connected', duration_minutes: callDurationMinutes ?? null };
+      const callMeta = {
+        ...meta,
+        outcome: callOutcome ?? 'connected',
+        duration_minutes: callDurationMinutes ?? null,
+      };
       await supabase.from('lead_tasks').insert({
         lead_id: leadId,
         task_type: 'phone_call_logged',
@@ -324,7 +452,15 @@ Deno.serve(async (req) => {
         payload_json: callMeta,
       });
       await updateLeadFields(supabase, leadId, { last_human_touch_at: ts });
-      await logLeadEvent(supabase, leadId, 'phone_call_logged', staff.role, callMeta, conversationId ?? undefined, staff.userId);
+      await logLeadEvent(
+        supabase,
+        leadId,
+        'phone_call_logged',
+        staff.role,
+        callMeta,
+        conversationId ?? undefined,
+        staff.userId,
+      );
       break;
     }
     default:

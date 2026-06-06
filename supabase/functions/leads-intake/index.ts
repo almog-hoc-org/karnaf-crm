@@ -13,10 +13,18 @@ import { env, optional } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
+import { classifyLeadIntake } from '../_shared/lead-classifier.ts';
 
 const FALLBACK_ALLOWED_SOURCES = new Set([
-  'landing_page','webinar','responder_form','lead_magnet','whatsapp_direct',
-  'instagram_dm','manual_entry','screenshot_manual','unknown',
+  'landing_page',
+  'webinar',
+  'responder_form',
+  'lead_magnet',
+  'whatsapp_direct',
+  'instagram_dm',
+  'manual_entry',
+  'screenshot_manual',
+  'unknown',
 ]);
 
 // Edge-function instances are short-lived but reused across invocations
@@ -29,10 +37,7 @@ async function loadAllowedSources(supabase: ReturnType<typeof getServiceSupabase
   if (cachedSources && Date.now() - cachedSources.fetchedAt < SOURCES_CACHE_TTL_MS) {
     return cachedSources.slugs;
   }
-  const { data, error } = await supabase
-    .from('lead_sources')
-    .select('slug')
-    .eq('is_active', true);
+  const { data, error } = await supabase.from('lead_sources').select('slug').eq('is_active', true);
   if (error) {
     // Fail open to the hard-coded set — refusing intake during a DB
     // hiccup is worse than accepting a known-good slug.
@@ -75,7 +80,9 @@ Deno.serve(async (req) => {
   }
 
   let payload: Record<string, unknown>;
-  try { payload = JSON.parse(rawBody); } catch {
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
     return jsonResponse(req, { error: 'Invalid JSON' }, 400);
   }
 
@@ -97,7 +104,10 @@ Deno.serve(async (req) => {
   const cached = await getWebhookIdempotencyResponse(supabase, idempotencyKey);
   if (cached) {
     log.info('intake_idempotency_hit', {
-      fn: 'leads-intake', correlationId, key: idempotencyKey, explicit: !!explicitIdempotencyKey,
+      fn: 'leads-intake',
+      correlationId,
+      key: idempotencyKey,
+      explicit: !!explicitIdempotencyKey,
     });
     return jsonResponse(req, { ...cached, idempotent: true });
   }
@@ -124,28 +134,60 @@ Deno.serve(async (req) => {
     metadata: payload,
   });
 
-  // Backfill optional structured fields without overwriting existing values.
-  const updates: Record<string, unknown> = {};
-  if (typeof payload.source_detail === 'string') updates.source_detail = payload.source_detail;
-  if (typeof payload.campaign_name === 'string') updates.source_campaign = payload.campaign_name;
+  const sourceDetail = typeof payload.source_detail === 'string' ? payload.source_detail : null;
+  const sourceCampaign = typeof payload.campaign_name === 'string' ? payload.campaign_name : null;
+  const firstMessage =
+    typeof payload.message === 'string'
+      ? payload.message
+      : typeof payload.initial_message === 'string'
+        ? payload.initial_message
+        : typeof payload.notes === 'string'
+          ? payload.notes
+          : null;
+  const classification = classifyLeadIntake({
+    source,
+    sourceDetail,
+    sourceCampaign,
+    firstMessage,
+    latestMessage: firstMessage,
+    metadata: payload,
+  });
+
+  // Backfill optional structured fields without rewriting identity/routing data.
+  const updates: Record<string, unknown> = {
+    inquiry_type: classification.inquiryType,
+    product_interest: classification.productInterest,
+    intake_segment: classification.intakeSegment,
+    classification_confidence: classification.confidence,
+    classification_summary: classification.operatorSummary,
+    suggested_next_action: classification.suggestedNextAction,
+    handoff_reason: classification.handoffReason,
+    classification_updated_at: new Date().toISOString(),
+  };
+  if (sourceDetail) updates.source_detail = sourceDetail;
+  if (sourceCampaign) updates.source_campaign = sourceCampaign;
   if (typeof payload.webinar_name === 'string') updates.webinar_name = payload.webinar_name;
   if (typeof payload.lead_magnet_name === 'string') updates.lead_magnet_name = payload.lead_magnet_name;
   if (typeof payload.city === 'string') updates.city = payload.city;
-  if (Object.keys(updates).length) {
-    await supabase.from('leads').update(updates).eq('id', lead.id);
-  }
+  await supabase.from('leads').update(updates).eq('id', lead.id);
 
   await logLeadEvent(supabase, lead.id, 'intake_received', 'system', {
-    source, correlation_id: correlationId,
+    source,
+    correlation_id: correlationId,
     matched_via: phone && lead.phone === phone ? 'phone' : email && lead.email === email ? 'email' : 'new',
+    classification,
   });
 
   // Source-specific first-response SLA, expressed in minutes for a single
   // source of truth; fallback is the runtime config (also minutes).
   const config = await getRuntimeConfig(supabase);
   const slaMinutesBySource: Record<string, number> = {
-    whatsapp_direct: 30, instagram_dm: 30,
-    webinar: 120, lead_magnet: 480, responder_form: 240, landing_page: 240,
+    whatsapp_direct: 30,
+    instagram_dm: 30,
+    webinar: 120,
+    lead_magnet: 480,
+    responder_form: 240,
+    landing_page: 240,
   };
   const minutes = slaMinutesBySource[source] ?? config.followUpDelays.firstResponseMinutes;
   const dueAt = new Date(Date.now() + minutes * 60 * 1000).toISOString();
@@ -154,8 +196,9 @@ Deno.serve(async (req) => {
     leadId: lead.id,
     queueType: 'first_response_due',
     priorityLevel: source === 'whatsapp_direct' || source === 'instagram_dm' ? 1 : 2,
-    reason: 'New lead requires first response',
-    payloadJson: { source, correlationId },
+    reason: classification.handoffReason ?? 'New lead requires first response',
+    queueSummary: classification.operatorSummary,
+    payloadJson: { source, correlationId, classification },
     dueAt,
   });
 
@@ -163,9 +206,11 @@ Deno.serve(async (req) => {
   const response = { ok: true as const, leadId: lead.id, correlationId };
   // Fire-and-forget the idempotency write; failure here doesn't change
   // the caller-visible behaviour (worst case: duplicate work on retry).
-  storeWebhookIdempotencyResponse(supabase, idempotencyKey, 'intake', response).catch(
-    (err) => log.error('intake_idempotency_store_failed', {
-      fn: 'leads-intake', correlationId, err: String(err),
+  storeWebhookIdempotencyResponse(supabase, idempotencyKey, 'intake', response).catch((err) =>
+    log.error('intake_idempotency_store_failed', {
+      fn: 'leads-intake',
+      correlationId,
+      err: String(err),
     }),
   );
   return jsonResponse(req, response);

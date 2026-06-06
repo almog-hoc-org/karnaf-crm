@@ -2,7 +2,7 @@
 // supplied (see integration/README.md). Cleans up the rows it creates so
 // the suite is safe to rerun against a shared local Supabase.
 
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = process.env.INTEGRATION_SUPABASE_URL;
@@ -11,20 +11,34 @@ const skip = !url || !key;
 
 const createdLeadIds: string[] = [];
 
-(skip ? describe.skip : describe)('runtime RPCs', () => {
-  const sb: SupabaseClient = createClient(url!, key!, {
-    auth: { persistSession: false, autoRefreshToken: false },
+const describeIfConfigured = skip ? describe.skip : describe;
+
+describeIfConfigured('runtime RPCs', () => {
+  let sb: SupabaseClient;
+
+  beforeAll(() => {
+    sb = createClient(url!, key!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
   });
 
   it('upsert_lead_smart collapses repeated calls by phone', async () => {
     const phone = `0500000${Math.floor(Math.random() * 9000 + 1000)}`;
     const a = await sb.rpc('upsert_lead_smart', {
-      p_phone: phone, p_email: null, p_full_name: 'Integration A',
-      p_source: 'manual_entry', p_intake_channel: 'manual', p_metadata: {},
+      p_phone: phone,
+      p_email: null,
+      p_full_name: 'Integration A',
+      p_source: 'manual_entry',
+      p_intake_channel: 'manual',
+      p_metadata: {},
     });
     const b = await sb.rpc('upsert_lead_smart', {
-      p_phone: phone, p_email: 'collapse@karnaf.test', p_full_name: null,
-      p_source: 'manual_entry', p_intake_channel: 'manual', p_metadata: {},
+      p_phone: phone,
+      p_email: 'collapse@karnaf.test',
+      p_full_name: null,
+      p_source: 'manual_entry',
+      p_intake_channel: 'manual',
+      p_metadata: {},
     });
     const aRow = (Array.isArray(a.data) ? a.data[0] : a.data) as { id: string };
     const bRow = (Array.isArray(b.data) ? b.data[0] : b.data) as { id: string; email: string | null };
@@ -36,18 +50,27 @@ const createdLeadIds: string[] = [];
   it('transition_lead_status rejects illegal moves', async () => {
     const phone = `0500001${Math.floor(Math.random() * 9000 + 1000)}`;
     const create = await sb.rpc('upsert_lead_smart', {
-      p_phone: phone, p_email: null, p_full_name: 'Integration TXN',
-      p_source: 'manual_entry', p_intake_channel: 'manual', p_metadata: {},
+      p_phone: phone,
+      p_email: null,
+      p_full_name: 'Integration TXN',
+      p_source: 'manual_entry',
+      p_intake_channel: 'manual',
+      p_metadata: {},
     });
     const row = (Array.isArray(create.data) ? create.data[0] : create.data) as { id: string };
     createdLeadIds.push(row.id);
     const illegal = await sb.rpc('transition_lead_status', {
-      p_lead_id: row.id, p_target: 'won', p_actor_type: 'system', p_reason: 'illegal',
+      p_lead_id: row.id,
+      p_target: 'won',
+      p_actor_type: 'system',
+      p_reason: 'illegal',
     });
     expect(illegal.data).toBeNull();
 
     const legal = await sb.rpc('transition_lead_status', {
-      p_lead_id: row.id, p_target: 'first_contact_sent', p_actor_type: 'system',
+      p_lead_id: row.id,
+      p_target: 'first_contact_sent',
+      p_actor_type: 'system',
       p_reason: 'legal',
     });
     expect(legal.data).not.toBeNull();
@@ -58,7 +81,9 @@ const createdLeadIds: string[] = [];
     let allowedCount = 0;
     for (let i = 0; i < 6; i++) {
       const r = await sb.rpc('check_rate_limit', {
-        p_key: bucket, p_window_seconds: 60, p_max_requests: 4,
+        p_key: bucket,
+        p_window_seconds: 60,
+        p_max_requests: 4,
       });
       if (r.data === true) allowedCount++;
     }

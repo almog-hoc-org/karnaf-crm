@@ -1,13 +1,30 @@
 import { supabase } from './supabase';
 import type {
-  AttentionRow, ConversationRow, DashboardSummary, EventRow, LeadDetail, LeadFit,
-  LeadHeat, LeadRow, MessageRow, QueueRow, ReadinessLevel, TaskRow,
+  AttentionRow,
+  ConversationRow,
+  DashboardSummary,
+  EventRow,
+  IntakeSegment,
+  InquiryType,
+  LeadDetail,
+  LeadFit,
+  LeadHeat,
+  LeadRow,
+  MessageRow,
+  ProductInterest,
+  QueueRow,
+  ReadinessLevel,
+  TaskRow,
 } from './types';
 
 const baseUrl = import.meta.env.VITE_FUNCTIONS_BASE_URL || '/functions/v1';
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public detail?: unknown) {
+  constructor(
+    public status: number,
+    message: string,
+    public detail?: unknown,
+  ) {
     super(message);
   }
 }
@@ -23,7 +40,10 @@ async function authHeaders(): Promise<Record<string, string>> {
   };
 }
 
-async function getJson<T>(path: string, params?: Record<string, string | number | undefined> | object): Promise<T> {
+async function getJson<T>(
+  path: string,
+  params?: Record<string, string | number | undefined> | object,
+): Promise<T> {
   const url = new URL(`${baseUrl}${path}`, window.location.origin);
   if (params) {
     for (const [k, v] of Object.entries(params as Record<string, unknown>)) {
@@ -59,15 +79,25 @@ export async function fetchDashboardSummary() {
 }
 
 export interface LeadsListParams {
-  status?: string; heat?: string; ownershipMode?: string; search?: string;
+  status?: string;
+  heat?: string;
+  ownershipMode?: string;
+  search?: string;
   searchIn?: 'lead' | 'messages';
-  createdFrom?: string; createdTo?: string; inboundFrom?: string;
-  limit?: number; offset?: number;
+  createdFrom?: string;
+  createdTo?: string;
+  inboundFrom?: string;
+  limit?: number;
+  offset?: number;
 }
 export async function fetchLeadsList(params: LeadsListParams = {}) {
-  const r = await getJson<{ ok: true; leads: LeadRow[]; total: number | null; limit: number; offset: number }>(
-    '/leads-list', params,
-  );
+  const r = await getJson<{
+    ok: true;
+    leads: LeadRow[];
+    total: number | null;
+    limit: number;
+    offset: number;
+  }>('/leads-list', params);
   return { leads: r.leads, total: r.total, limit: r.limit, offset: r.offset };
 }
 
@@ -97,16 +127,26 @@ export async function fetchQueueList(params: { queueType?: string; status?: stri
 }
 
 export async function fetchAttentionInbox(limit?: number) {
-  const r = await getJson<{ ok: true; items: AttentionRow[] }>('/attention-inbox', limit ? { limit } : undefined);
+  const r = await getJson<{ ok: true; items: AttentionRow[] }>(
+    '/attention-inbox',
+    limit ? { limit } : undefined,
+  );
   return r.items;
 }
 
 // === Writes ===============================================================
 
 export type AdminAction =
-  | 'assign_to_mia' | 'return_to_ai' | 'mark_phone_escalation'
-  | 'mark_dnc' | 'mark_lost' | 'mark_won' | 'reopen_lead'
-  | 'resolve_queue' | 'log_phone_call' | 'update_lead_meta';
+  | 'assign_to_mia'
+  | 'return_to_ai'
+  | 'mark_phone_escalation'
+  | 'mark_dnc'
+  | 'mark_lost'
+  | 'mark_won'
+  | 'reopen_lead'
+  | 'resolve_queue'
+  | 'log_phone_call'
+  | 'update_lead_meta';
 
 export type ReopenTarget = 'responded' | 'qualified' | 'nurture' | 'human_handoff';
 
@@ -127,6 +167,9 @@ export interface LeadMetaUpdates {
   lead_heat?: LeadHeat | null;
   lead_fit?: LeadFit | null;
   readiness_level?: ReadinessLevel | null;
+  inquiry_type?: InquiryType | null;
+  product_interest?: ProductInterest | null;
+  intake_segment?: IntakeSegment | null;
 }
 
 export async function postAdminAction(payload: {
@@ -177,13 +220,28 @@ export interface SourcePerformanceRow {
   win_rate_pct: number;
 }
 
-export interface AgingBucket { count: number; avgMinutes: number; maxMinutes: number; }
+export interface AgingBucket {
+  count: number;
+  avgMinutes: number;
+  maxMinutes: number;
+}
 
-export interface AiVsHumanRow { touch_pattern: string; lead_status: string; leads_count: number; }
+export interface AiVsHumanRow {
+  touch_pattern: string;
+  lead_status: string;
+  leads_count: number;
+}
 
 export interface RecentActivityRow {
-  id: string; lead_id: string; event_type: string; actor_type: string; created_at: string;
-  full_name: string | null; phone: string | null; lead_status: string; lead_heat: string;
+  id: string;
+  lead_id: string;
+  event_type: string;
+  actor_type: string;
+  created_at: string;
+  full_name: string | null;
+  phone: string | null;
+  lead_status: string;
+  lead_heat: string;
 }
 
 export interface PromptVariantOutcome {
@@ -250,13 +308,19 @@ export async function fetchUsersList() {
 }
 
 export async function postCreateUser(payload: {
-  email: string; password: string; role: ProfileRow['role']; fullName?: string | null;
+  email: string;
+  password: string;
+  role: ProfileRow['role'];
+  fullName?: string | null;
 }) {
   return postJson<{ ok: true; profile: ProfileRow }>('/users-manage', { action: 'create', ...payload });
 }
 
 export async function postUpdateUser(payload: {
-  userId: string; role?: ProfileRow['role']; isActive?: boolean; fullName?: string | null;
+  userId: string;
+  role?: ProfileRow['role'];
+  isActive?: boolean;
+  fullName?: string | null;
 }) {
   return postJson<{ ok: true; profile: ProfileRow }>('/users-manage', { action: 'update', ...payload });
 }
@@ -291,11 +355,20 @@ export async function fetchLeadSources() {
   return r.sources;
 }
 
-export async function postCreateLeadSource(payload: { slug: string; display_name: string; sort_order?: number }) {
+export async function postCreateLeadSource(payload: {
+  slug: string;
+  display_name: string;
+  sort_order?: number;
+}) {
   return postJson<{ ok: true; source: LeadSource }>('/lead-sources', { action: 'create', ...payload });
 }
 
-export async function postUpdateLeadSource(payload: { slug: string; display_name?: string; is_active?: boolean; sort_order?: number }) {
+export async function postUpdateLeadSource(payload: {
+  slug: string;
+  display_name?: string;
+  is_active?: boolean;
+  sort_order?: number;
+}) {
   return postJson<{ ok: true; source: LeadSource }>('/lead-sources', { action: 'update', ...payload });
 }
 
@@ -306,9 +379,15 @@ export async function postDeleteLeadSource(slug: string) {
 // === Prompt variants =====================================================
 
 export type PlaybookName =
-  | 'first_contact_whatsapp_inbound' | 'first_contact_form_lead' | 'qualification'
-  | 'price_objection' | 'free_advice_boundary' | 'checkout_push'
-  | 'payment_pending_rescue' | 'phone_request' | 'opt_out';
+  | 'first_contact_whatsapp_inbound'
+  | 'first_contact_form_lead'
+  | 'qualification'
+  | 'price_objection'
+  | 'free_advice_boundary'
+  | 'checkout_push'
+  | 'payment_pending_rescue'
+  | 'phone_request'
+  | 'opt_out';
 
 export interface LeadSegmentFilter {
   heat?: string[];
@@ -347,7 +426,10 @@ export async function postCreatePromptVariant(payload: {
   notes?: string | null;
   lead_segment_filter?: LeadSegmentFilter;
 }) {
-  return postJson<{ ok: true; variant: PromptVariantRow }>('/prompt-variants', { action: 'create', ...payload });
+  return postJson<{ ok: true; variant: PromptVariantRow }>('/prompt-variants', {
+    action: 'create',
+    ...payload,
+  });
 }
 
 export async function postUpdatePromptVariant(payload: {
@@ -358,7 +440,10 @@ export async function postUpdatePromptVariant(payload: {
   notes?: string | null;
   lead_segment_filter?: LeadSegmentFilter;
 }) {
-  return postJson<{ ok: true; variant: PromptVariantRow }>('/prompt-variants', { action: 'update', ...payload });
+  return postJson<{ ok: true; variant: PromptVariantRow }>('/prompt-variants', {
+    action: 'update',
+    ...payload,
+  });
 }
 
 export async function postDeletePromptVariant(id: string) {

@@ -27,6 +27,13 @@ export interface AiLeadContext {
   lastPhoneCallOutcome: string | null;
   firstInboundSnippet: string | null;
   topicsTouched: TopicEntry[];
+  inquiryType?: string | null;
+  productInterest?: string | null;
+  intakeSegment?: string | null;
+  classificationConfidence?: string | null;
+  classificationSummary?: string | null;
+  suggestedNextAction?: string | null;
+  handoffReason?: string | null;
 }
 
 export interface TopicEntry {
@@ -75,7 +82,14 @@ export interface AiPersonaContext {
 }
 
 export interface AiIntentContext {
-  intent: 'question' | 'objection' | 'buy_signal' | 'escalation_request' | 'chit_chat' | 'dnc_request' | 'unclear';
+  intent:
+    | 'question'
+    | 'objection'
+    | 'buy_signal'
+    | 'escalation_request'
+    | 'chit_chat'
+    | 'dnc_request'
+    | 'unclear';
   sentiment: 'positive' | 'neutral' | 'frustrated' | 'confused';
   confidence: 'high' | 'medium' | 'low';
   matchedKeywords?: string[];

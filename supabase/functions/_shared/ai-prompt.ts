@@ -29,12 +29,14 @@ export function buildAiSystemPrompt(
   overrides: PromptOverrides = {},
 ): string {
   const product = ctx.runtimeConfig.product;
-  const objective = typeof overrides.objective === 'string' && overrides.objective.length > 0
-    ? overrides.objective
-    : playbook.objective;
-  const guidance = Array.isArray(overrides.guidance) && overrides.guidance.length > 0
-    ? overrides.guidance
-    : playbook.guidance;
+  const objective =
+    typeof overrides.objective === 'string' && overrides.objective.length > 0
+      ? overrides.objective
+      : playbook.objective;
+  const guidance =
+    Array.isArray(overrides.guidance) && overrides.guidance.length > 0
+      ? overrides.guidance
+      : playbook.guidance;
   const personaGuidance = ctx.personaContext?.guidance ?? [];
   const lines: string[] = [
     `You are the Karnaf CRM operator for the Hebrew-speaking digital program "${product.displayName}".`,
@@ -49,7 +51,9 @@ export function buildAiSystemPrompt(
   }
   const claimLines = formatClaimsForPrompt(ctx.authorisedClaims ?? []);
   if (claimLines.length) {
-    lines.push(`Authorised product claims (these are the ONLY product specifics you may reference; do not invent new features, prices, or commitments):`);
+    lines.push(
+      `Authorised product claims (these are the ONLY product specifics you may reference; do not invent new features, prices, or commitments):`,
+    );
     for (const c of claimLines) lines.push(c);
   }
   const lastSender = ctx.recentMessages.slice(-1)[0]?.senderType ?? null;
@@ -89,6 +93,13 @@ export function buildAiUserPrompt(ctx: AiDecisionContext): string {
     `  source: ${ctx.lead.source}`,
     `  sourceDetail: ${ctx.lead.sourceDetail ?? 'none'}`,
     `  sourceCampaign: ${ctx.lead.sourceCampaign ?? 'none'}`,
+    `  inquiryType: ${ctx.lead.inquiryType ?? 'unknown'}`,
+    `  productInterest: ${ctx.lead.productInterest ?? 'unknown'}`,
+    `  intakeSegment: ${ctx.lead.intakeSegment ?? 'unknown'}`,
+    `  classificationConfidence: ${ctx.lead.classificationConfidence ?? 'unknown'}`,
+    `  classificationSummary: ${ctx.lead.classificationSummary ?? '(none)'}`,
+    `  suggestedNextAction: ${ctx.lead.suggestedNextAction ?? '(none)'}`,
+    `  handoffReason: ${ctx.lead.handoffReason ?? '(none)'}`,
     `  status: ${ctx.lead.status}`,
     `  heat: ${ctx.lead.heat}`,
     `  score: ${ctx.lead.score}`,
@@ -111,6 +122,14 @@ export function buildAiUserPrompt(ctx: AiDecisionContext): string {
     );
   }
 
+  lines.push(
+    `Operational routing rules:`,
+    `  - If intakeSegment=needs_human, do not keep selling in chat; acknowledge briefly and create/keep human handoff.`,
+    `  - If intakeSegment=support_or_existing, avoid sales copy; route to Mia/support with a concise note.`,
+    `  - If intakeSegment=hot_sales, answer the last blocker and move toward payment or phone sales; do not over-educate.`,
+    `  - If intakeSegment=needs_nurture/info_seeker, ask only one diagnostic question after a short useful answer.`,
+  );
+
   if (ctx.timeContext) {
     lines.push(`Temporal context:`);
     for (const l of formatTimeContextForPrompt(ctx.timeContext, ctx.runtimeConfig.activeHours.timezone)) {
@@ -123,7 +142,9 @@ export function buildAiUserPrompt(ctx: AiDecisionContext): string {
   }
 
   if (ctx.recentAiQuestions && ctx.recentAiQuestions.length) {
-    lines.push(`Recent AI questions already asked (do not re-ask these unless the lead explicitly invites re-asking):`);
+    lines.push(
+      `Recent AI questions already asked (do not re-ask these unless the lead explicitly invites re-asking):`,
+    );
     for (const q of ctx.recentAiQuestions) lines.push(`  - ${q}`);
   }
 
@@ -132,9 +153,7 @@ export function buildAiUserPrompt(ctx: AiDecisionContext): string {
     ctx.timeContext?.currentTimeIso,
   );
   if (topicsSummary) {
-    lines.push(
-      `Topics already covered with this lead (do not repeat unless they ask): ${topicsSummary}`,
-    );
+    lines.push(`Topics already covered with this lead (do not repeat unless they ask): ${topicsSummary}`);
   }
 
   lines.push(`Decide the next CRM action and the next WhatsApp reply. Return JSON only.`);

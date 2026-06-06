@@ -3,11 +3,7 @@ import path from 'node:path';
 
 export default defineConfig({
   test: {
-    environment: 'node',
-    environmentMatchGlobs: [
-      ['apps/web/src/**/*.test.tsx', 'happy-dom'],
-      ['apps/web/src/**/*.test.ts', 'happy-dom'],
-    ],
+    environment: 'happy-dom',
     include: ['lib/**/*.test.ts', 'apps/web/src/**/*.test.ts', 'apps/web/src/**/*.test.tsx'],
     setupFiles: ['./apps/web/src/test/setup.ts'],
     globals: true,

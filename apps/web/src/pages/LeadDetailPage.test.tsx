@@ -13,9 +13,7 @@ vi.mock('@/lib/api', () => ({
   postQueueResolve: vi.fn(),
 }));
 
-import {
-  fetchLeadDetail, postAdminAction, postSendReply, postQueueResolve,
-} from '@/lib/api';
+import { fetchLeadDetail, postAdminAction, postSendReply, postQueueResolve } from '@/lib/api';
 
 const lead: LeadDetail = {
   id: 'lead-1',
@@ -58,6 +56,14 @@ const lead: LeadDetail = {
   last_human_touch_at: null,
   ai_playbook_stage: null,
   ai_playbook_stage_at: null,
+  inquiry_type: 'program_details',
+  product_interest: 'digital_program',
+  intake_segment: 'info_seeker',
+  classification_confidence: 'medium',
+  classification_summary: 'סיווג: פרטי תוכנית · מוצר: תוכנית דיגיטלית · מסלול טיפול: מחפש מידע',
+  suggested_next_action: 'לתת תשובה קצרה ולשאול שאלת אבחון אחת.',
+  handoff_reason: null,
+  classification_updated_at: '2026-04-28T10:00:00Z',
 };
 
 const conversation: ConversationRow = {
@@ -71,33 +77,79 @@ const conversation: ConversationRow = {
 
 const messages: MessageRow[] = [
   {
-    id: 'm1', lead_id: 'lead-1', conversation_id: 'conv-1', provider_message_id: null,
-    sender_type: 'lead', sender_name: 'דנה', direction: 'inbound', message_type: 'text',
-    content_text: 'שלום, אשמח לפרטים', provider_status: null, provider_error: null,
-    delivered_at: null, read_at: null, created_at: '2026-04-28T09:30:00Z',
+    id: 'm1',
+    lead_id: 'lead-1',
+    conversation_id: 'conv-1',
+    provider_message_id: null,
+    sender_type: 'lead',
+    sender_name: 'דנה',
+    direction: 'inbound',
+    message_type: 'text',
+    content_text: 'שלום, אשמח לפרטים',
+    provider_status: null,
+    provider_error: null,
+    delivered_at: null,
+    read_at: null,
+    created_at: '2026-04-28T09:30:00Z',
   },
   {
-    id: 'm2', lead_id: 'lead-1', conversation_id: 'conv-1', provider_message_id: 'wa-1',
-    sender_type: 'ai', sender_name: 'AI', direction: 'outbound', message_type: 'text',
-    content_text: 'היי דנה, נשמח לעזור.', provider_status: 'delivered', provider_error: null,
-    delivered_at: '2026-04-28T09:31:00Z', read_at: null, created_at: '2026-04-28T09:31:00Z',
+    id: 'm2',
+    lead_id: 'lead-1',
+    conversation_id: 'conv-1',
+    provider_message_id: 'wa-1',
+    sender_type: 'ai',
+    sender_name: 'AI',
+    direction: 'outbound',
+    message_type: 'text',
+    content_text: 'היי דנה, נשמח לעזור.',
+    provider_status: 'delivered',
+    provider_error: null,
+    delivered_at: '2026-04-28T09:31:00Z',
+    read_at: null,
+    created_at: '2026-04-28T09:31:00Z',
   },
 ];
 
 const queueItems: QueueRow[] = [
   {
-    id: 'q1', lead_id: 'lead-1', queue_type: 'hot_lead', priority_level: 90,
-    status: 'pending', reason: 'high score', queue_summary: null, due_at: null,
-    created_at: '2026-04-28T09:00:00Z', resolution_note: null,
+    id: 'q1',
+    lead_id: 'lead-1',
+    queue_type: 'hot_lead',
+    priority_level: 90,
+    status: 'pending',
+    reason: 'high score',
+    queue_summary: null,
+    due_at: null,
+    created_at: '2026-04-28T09:00:00Z',
+    resolution_note: null,
   },
 ];
 
 const tasks: TaskRow[] = [
-  { id: 't1', lead_id: 'lead-1', task_type: 'follow_up', task_status: 'open', owner_type: 'mia', title: 'מעקב', description: null, priority_level: 50, due_at: null, created_at: '2026-04-28T09:00:00Z' },
+  {
+    id: 't1',
+    lead_id: 'lead-1',
+    task_type: 'follow_up',
+    task_status: 'open',
+    owner_type: 'mia',
+    title: 'מעקב',
+    description: null,
+    priority_level: 50,
+    due_at: null,
+    created_at: '2026-04-28T09:00:00Z',
+  },
 ];
 
 const events: EventRow[] = [
-  { id: 'e1', lead_id: 'lead-1', conversation_id: 'conv-1', event_type: 'lead_created', actor_type: 'system', event_payload: {}, created_at: '2026-04-27T08:00:00Z' },
+  {
+    id: 'e1',
+    lead_id: 'lead-1',
+    conversation_id: 'conv-1',
+    event_type: 'lead_created',
+    actor_type: 'system',
+    event_payload: {},
+    created_at: '2026-04-27T08:00:00Z',
+  },
 ];
 
 function makeAuth(role: Role | null = 'admin'): AuthState {
@@ -136,7 +188,13 @@ function renderDetail(role: Role | null = 'admin') {
 
 beforeEach(() => {
   vi.mocked(fetchLeadDetail).mockResolvedValue({
-    ok: true, lead, conversations: [conversation], messages, queueItems, tasks, events,
+    ok: true,
+    lead,
+    conversations: [conversation],
+    messages,
+    queueItems,
+    tasks,
+    events,
     humanOwnerProfile: null,
   });
   vi.mocked(postAdminAction).mockResolvedValue({ ok: true, action: 'noop' });
@@ -152,6 +210,7 @@ describe('LeadDetailPage', () => {
   it('renders the lead header, transcript, and the back link to the list', async () => {
     renderDetail();
     expect(await screen.findByRole('heading', { name: 'דנה כהן' })).toBeInTheDocument();
+    expect(screen.getByText('ה-AI מטפל — רק לעקוב')).toBeInTheDocument();
     expect(screen.getByText('היי דנה, נשמח לעזור.')).toBeInTheDocument();
     expect(screen.getByText('שלום, אשמח לפרטים')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '← חזרה לרשימה' })).toHaveAttribute('href', '/leads');
@@ -163,9 +222,12 @@ describe('LeadDetailPage', () => {
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'אישור' }));
     await waitFor(() => {
-      expect(postAdminAction).toHaveBeenCalledWith(expect.objectContaining({
-        action: 'mark_won', leadId: 'lead-1',
-      }));
+      expect(postAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'mark_won',
+          leadId: 'lead-1',
+        }),
+      );
     });
   });
 
@@ -175,9 +237,13 @@ describe('LeadDetailPage', () => {
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'אישור' }));
     await waitFor(() => {
-      expect(postAdminAction).toHaveBeenCalledWith(expect.objectContaining({
-        action: 'mark_lost', leadId: 'lead-1', note: 'manual_close',
-      }));
+      expect(postAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'mark_lost',
+          leadId: 'lead-1',
+          note: 'manual_close',
+        }),
+      );
     });
   });
 
@@ -196,7 +262,9 @@ describe('LeadDetailPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'שליחה' }));
     await waitFor(() => {
       expect(postSendReply).toHaveBeenCalledWith({
-        leadId: 'lead-1', conversationId: 'conv-1', text: 'שלום, מתי נוח לך?',
+        leadId: 'lead-1',
+        conversationId: 'conv-1',
+        text: 'שלום, מתי נוח לך?',
       });
     });
     expect(textarea).toHaveValue('');
@@ -206,7 +274,11 @@ describe('LeadDetailPage', () => {
     vi.mocked(fetchLeadDetail).mockResolvedValue({
       ok: true,
       lead: { ...lead, do_not_contact: true },
-      conversations: [conversation], messages, queueItems, tasks, events,
+      conversations: [conversation],
+      messages,
+      queueItems,
+      tasks,
+      events,
       humanOwnerProfile: null,
     });
     renderDetail();
@@ -219,13 +291,14 @@ describe('LeadDetailPage', () => {
     renderDetail();
     fireEvent.click(await screen.findByRole('button', { name: 'סגירה' }));
     const dialog = await screen.findByRole('alertdialog');
-    const confirm = await waitFor(() =>
-      screen.getAllByRole('button', { name: 'סגירה' }).find((el) => dialog.contains(el))!,
+    const confirm = await waitFor(
+      () => screen.getAllByRole('button', { name: 'סגירה' }).find((el) => dialog.contains(el))!,
     );
     fireEvent.click(confirm);
     await waitFor(() => {
       expect(postQueueResolve).toHaveBeenCalledWith({
-        queueItemId: 'q1', resolutionNote: null,
+        queueItemId: 'q1',
+        resolutionNote: null,
       });
     });
   });
@@ -237,12 +310,14 @@ describe('LeadDetailPage', () => {
     fireEvent.change(screen.getByLabelText('תוצאה'), { target: { value: 'no_answer' } });
     fireEvent.click(screen.getByRole('button', { name: 'שמירת שיחה' }));
     await waitFor(() => {
-      expect(postAdminAction).toHaveBeenCalledWith(expect.objectContaining({
-        action: 'log_phone_call',
-        leadId: 'lead-1',
-        callOutcome: 'no_answer',
-        callDurationMinutes: 12,
-      }));
+      expect(postAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'log_phone_call',
+          leadId: 'lead-1',
+          callOutcome: 'no_answer',
+          callDurationMinutes: 12,
+        }),
+      );
     });
   });
 

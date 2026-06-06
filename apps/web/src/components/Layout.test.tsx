@@ -46,10 +46,11 @@ function renderLayout(opts: RenderOpts = {}) {
 describe('Layout', () => {
   it('renders the always-visible operator nav links and the outlet', () => {
     renderLayout({ role: 'viewer' });
-    expect(screen.getByRole('link', { name: 'מסך מצב' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'לידים' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'תורי עבודה' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'אנליטיקה' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'היום' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'לטיפול עכשיו' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'כל הלידים' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'תורים טכניים' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'דוחות' })).toBeInTheDocument();
     expect(screen.getByText('leads outlet')).toBeInTheDocument();
   });
 

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchDashboardSummary, fetchQueueList } from '@/lib/api';
-import type { DashboardSummary } from '@/lib/types';
+import type { DashboardSummary, QueueRow } from '@/lib/types';
 import { QUEUE_LABELS } from '@/lib/format';
 import { Link } from 'react-router-dom';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
@@ -36,6 +36,8 @@ export function DashboardPage() {
           <span className="hidden sm:inline">{summaryQ.isFetching || queueQ.isFetching ? t('refreshing') : t('refresh')}</span>
         </button>
       </header>
+
+      <TodayCommandCenter summary={s} queues={queueQ.data ?? []} queuesLoading={queueQ.isLoading} />
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <KpiCard label={t('kpi_leads_today')} value={s.leadsToday} icon={<IconSparkles />} />
@@ -104,6 +106,101 @@ export function DashboardPage() {
       <SourceHealthSection sourceHealth={s.sourceHealth} />
     </div>
   );
+}
+
+function TodayCommandCenter({
+  summary, queues, queuesLoading,
+}: {
+  summary: DashboardSummary;
+  queues: QueueRow[];
+  queuesLoading: boolean;
+}) {
+  const priority = todayPriority(summary, queues);
+  const topQueues = queues.slice(0, 3);
+  return (
+    <section className="overflow-hidden rounded-3xl border border-brand-100 bg-gradient-to-l from-brand-50 via-white to-white shadow-sm">
+      <div className="grid gap-0 lg:grid-cols-[1.3fr_0.9fr]">
+        <div className="p-4 sm:p-6">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-100">
+            <span aria-hidden="true">🎯</span>
+            ניהול היום
+          </div>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">{priority.title}</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{priority.detail}</p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <Link to={priority.href} className="kf-btn kf-btn-primary justify-center">{priority.cta}</Link>
+            <Link to="/inbox" className="kf-btn justify-center">פתיחת לטיפול עכשיו</Link>
+            <Link to="/leads?heat=hot" className="kf-btn kf-btn-ghost justify-center">לידים חמים</Link>
+          </div>
+        </div>
+        <div className="border-t border-brand-100 bg-white/70 p-4 sm:p-6 lg:border-s lg:border-t-0">
+          <h3 className="text-sm font-semibold text-slate-700">הבא בתור</h3>
+          {queuesLoading ? (
+            <p className="mt-3 text-sm text-slate-500">טוען משימות...</p>
+          ) : topQueues.length > 0 ? (
+            <ol className="mt-3 space-y-2">
+              {topQueues.map((q, i) => (
+                <li key={q.id}>
+                  <Link to={`/leads/${q.lead_id}`} className="flex items-center gap-3 rounded-xl bg-white p-3 text-sm shadow-sm ring-1 ring-slate-100 transition hover:ring-brand-200">
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-50 text-xs font-semibold text-brand-700">{i + 1}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium text-slate-800">{q.leads?.full_name ?? 'ליד ללא שם'}</span>
+                      <span className="block truncate text-xs text-slate-500">{QUEUE_LABELS[q.queue_type] ?? q.queue_type}</span>
+                    </span>
+                    <PriorityDot priority={q.priority_level} />
+                  </Link>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">אין משימות דחופות. כדאי לעבור על לידים חמים ולוודא שאין שיחות רגישות.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function todayPriority(summary: DashboardSummary, queues: QueueRow[]) {
+  const first = queues[0];
+  if (summary.unansweredNow > 0) {
+    return {
+      title: `להתחיל מ-${summary.unansweredNow} לידים שמחכים למענה`,
+      detail: 'זה המקום שבו הכי קל לאבד לקוח. עברי לפי הסדר, עני או העבירי לשיחה, וסגרי כל פריט שטופל.',
+      cta: 'לטפל בממתינים למענה',
+      href: '/inbox?lane=reply',
+    };
+  }
+  if (summary.slaRiskCount > 0) {
+    return {
+      title: `יש ${summary.slaRiskCount} פריטי סיכון שדורשים בדיקה`,
+      detail: 'בדקי קודם פריטים בסיכון SLA או אוטומציה תקועה, כדי לוודא שאף ליד לא נופל בין הכיסאות.',
+      cta: 'לפתוח פריטי סיכון',
+      href: '/inbox?lane=risk',
+    };
+  }
+  if (summary.paymentPendingNow > 0) {
+    return {
+      title: `יש ${summary.paymentPendingNow} לקוחות שממתינים לתשלום`,
+      detail: 'אלה לידים קרובים לסגירה. כדאי לבדוק אם צריך דחיפה עדינה, קישור חדש או שיחת סגירה.',
+      cta: 'לטפל בתשלומים ממתינים',
+      href: '/leads?status=payment_pending',
+    };
+  }
+  if (first) {
+    return {
+      title: 'יש עבודה מסודרת בתור — להתחיל מהפריט הראשון',
+      detail: `${first.leads?.full_name ?? 'הליד הראשון'} נמצא בראש הרשימה בגלל עדיפות ${first.priority_level}.`,
+      cta: 'לפתוח את הפריט הראשון',
+      href: `/leads/${first.lead_id}`,
+    };
+  }
+  return {
+    title: 'היום נראה בשליטה',
+    detail: 'אין כרגע פריטים דחופים. זה זמן טוב לסקירת לידים חמים, איכות מקורות ושיחות שנפתרו היום.',
+    cta: 'סקירת לידים חמים',
+    href: '/leads?heat=hot',
+  };
 }
 
 function SourceHealthSection({

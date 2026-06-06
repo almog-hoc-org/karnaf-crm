@@ -110,8 +110,8 @@ describe('DashboardPage', () => {
 
   it('renders KPI cards with values from the summary', async () => {
     renderDashboard();
-    const heading = await screen.findByText('מסך מצב');
-    const kpiSection = heading.parentElement!.nextElementSibling as HTMLElement;
+    await screen.findByText('מסך מצב');
+    const kpiSection = screen.getByText('לידים היום').closest('section') as HTMLElement;
     const kpiPairs: Array<[string, string]> = [
       ['לידים היום', '12'],
       ['ממתינים למענה', '3'],
@@ -124,6 +124,13 @@ describe('DashboardPage', () => {
       const card = labelNode.parentElement!;
       expect(card.textContent).toContain(value);
     }
+  });
+
+  it('renders the today command center with a clear next action', async () => {
+    renderDashboard();
+    expect(await screen.findByText('להתחיל מ-3 לידים שמחכים למענה')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'לטפל בממתינים למענה' })).toHaveAttribute('href', '/inbox?lane=reply');
+    expect(screen.getByText('דנה כהן')).toBeInTheDocument();
   });
 
   it('renders the funnel rows with the Hebrew labels', async () => {
@@ -140,9 +147,10 @@ describe('DashboardPage', () => {
 
   it('renders the pending queue list with deep links to lead detail', async () => {
     renderDashboard();
-    const link = await screen.findByRole('link', { name: /דנה כהן/ });
-    expect(link).toHaveAttribute('href', '/leads/lead-1');
-    expect(screen.getByRole('link', { name: /יוסי לוי/ })).toHaveAttribute('href', '/leads/lead-2');
+    const danaLinks = await screen.findAllByRole('link', { name: /דנה כהן/ });
+    expect(danaLinks.some((link) => link.getAttribute('href') === '/leads/lead-1')).toBe(true);
+    const yossiLinks = screen.getAllByRole('link', { name: /יוסי לוי/ });
+    expect(yossiLinks.some((link) => link.getAttribute('href') === '/leads/lead-2')).toBe(true);
     expect(screen.getByText('עדיפות 1')).toBeInTheDocument();
   });
 

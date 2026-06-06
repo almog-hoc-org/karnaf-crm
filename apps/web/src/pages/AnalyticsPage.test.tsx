@@ -83,12 +83,20 @@ describe('AnalyticsPage', () => {
   it('shows loading state, then a row per source', async () => {
     renderAnalytics();
     expect(screen.getByText((content) => content.includes('טוען... נתונים...'))).toBeInTheDocument();
-    await waitFor(() => expect(screen.getAllByText('webinar').length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText('מה כדאי לעשות לפי הנתונים?')).toBeInTheDocument());
+    expect(screen.getAllByText('webinar').length).toBeGreaterThan(0);
     expect(screen.getAllByText('whatsapp_direct').length).toBeGreaterThan(0);
     // win_rate_pct rendered with the % suffix in the bar — appears multiple
     // times in the page (source perf, prompt variant outcomes), so just
     // confirm at least one occurrence exists.
     expect(screen.getAllByText('30%').length).toBeGreaterThan(0);
+  });
+
+  it('renders manager action insights', async () => {
+    renderAnalytics();
+    await waitFor(() => expect(screen.getByText('להגדיל את webinar')).toBeInTheDocument());
+    expect(screen.getByText('לקצר מענה ב-webinar')).toBeInTheDocument();
+    expect(screen.getByText('המרה כוללת')).toBeInTheDocument();
   });
 
   it('renders aging buckets per status', async () => {

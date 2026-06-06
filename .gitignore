@@ -19,3 +19,5 @@ test-results/
 .playwright-mcp/
 login-prod.png
 prod-after-deploy.png
+.env*.local
+tmp/
