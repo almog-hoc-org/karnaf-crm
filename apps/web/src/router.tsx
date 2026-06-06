@@ -10,7 +10,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { Spinner } from '@/components/Spinner';
 
-const DashboardPage = lazy(() => import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })));
+const HomeRoute = lazy(() => import('@/pages/HomeRoute').then((m) => ({ default: m.HomeRoute })));
 const LeadsPage = lazy(() => import('@/pages/LeadsPage').then((m) => ({ default: m.LeadsPage })));
 const LeadDetailPage = lazy(() => import('@/pages/LeadDetailPage').then((m) => ({ default: m.LeadDetailPage })));
 const QueuePage = lazy(() => import('@/pages/QueuePage').then((m) => ({ default: m.QueuePage })));
@@ -39,7 +39,7 @@ const router = createBrowserRouter([
       {
         element: <Layout />,
         children: [
-          { path: '/', element: <Suspense fallback={<PageFallback />}><DashboardPage /></Suspense> },
+          { path: '/', element: <Suspense fallback={<PageFallback />}><HomeRoute /></Suspense> },
           { path: '/leads', element: <Suspense fallback={<PageFallback />}><LeadsPage /></Suspense> },
           { path: '/leads/:leadId', element: <Suspense fallback={<PageFallback />}><LeadDetailPage /></Suspense> },
           { path: '/inbox', element: <Suspense fallback={<PageFallback />}><InboxPage /></Suspense> },
