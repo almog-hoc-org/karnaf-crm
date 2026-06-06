@@ -211,6 +211,10 @@ describe('LeadDetailPage', () => {
     renderDetail();
     expect(await screen.findByRole('heading', { name: 'דנה כהן' })).toBeInTheDocument();
     expect(screen.getByText('ה-AI מטפל — רק לעקוב')).toBeInTheDocument();
+    expect(screen.getByText('למה זה כאן')).toBeInTheDocument();
+    expect(screen.getByText('מה להגיד עכשיו')).toBeInTheDocument();
+    expect(screen.getByText('לתת תשובה קצרה ולשאול שאלת אבחון אחת.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'לקחת לטיפול אנושי' })).toBeInTheDocument();
     expect(screen.getByText('היי דנה, נשמח לעזור.')).toBeInTheDocument();
     expect(screen.getByText('שלום, אשמח לפרטים')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '← חזרה לרשימה' })).toHaveAttribute('href', '/leads');

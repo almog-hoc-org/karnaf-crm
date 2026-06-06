@@ -726,64 +726,96 @@ function OperatorGuidanceCard({
   onMarkPhone: () => void;
 }) {
   const insight = operatorInsight(lead, queueItems, messages);
+  const primaryLabel =
+    insight.primaryAction === 'return_ai'
+      ? 'להחזיר למענה אוטומטי'
+      : insight.primaryAction === 'phone'
+        ? 'לסמן לשיחת טלפון'
+        : insight.primaryAction === 'takeover'
+          ? 'לקחת לטיפול אנושי'
+          : null;
+  const primaryHandler =
+    insight.primaryAction === 'return_ai'
+      ? onReturnToAi
+      : insight.primaryAction === 'phone'
+        ? onMarkPhone
+        : insight.primaryAction === 'takeover'
+          ? onAssignToMia
+          : undefined;
+
   return (
     <section
       className={clsx('rounded-2xl border p-4 shadow-sm sm:p-5', insight.tone)}
       aria-label="המלצת פעולה למפעילה"
     >
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="space-y-2">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+        <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-white/75 px-2.5 py-1 text-xs font-semibold ring-1 ring-black/5">
               הפעולה הבאה
             </span>
             <span className="text-xs font-medium opacity-75">{insight.ownerLine}</span>
+            {lead.intake_segment ? (
+              <span className="rounded-full bg-white/60 px-2.5 py-1 text-xs font-medium ring-1 ring-black/5">
+                {SEGMENT_OPTIONS.find((option) => option.value === lead.intake_segment)?.label ?? lead.intake_segment}
+              </span>
+            ) : null}
           </div>
           <h2 className="text-xl font-semibold tracking-tight">{insight.title}</h2>
           <p className="max-w-3xl text-sm leading-6 opacity-85">{insight.detail}</p>
-        </div>
-        {canAct ? (
-          <div className="grid gap-2 sm:min-w-[260px] sm:grid-cols-3 lg:grid-cols-1">
-            {insight.primaryAction === 'return_ai' ? (
-              <button
-                type="button"
-                className="kf-btn kf-btn-primary justify-center"
-                disabled={busy}
-                onClick={onReturnToAi}
-              >
-                החזרה ל-AI
-              </button>
-            ) : insight.primaryAction === 'phone' ? (
-              <button
-                type="button"
-                className="kf-btn kf-btn-primary justify-center"
-                disabled={busy}
-                onClick={onMarkPhone}
-              >
-                סימון לשיחה
-              </button>
-            ) : insight.primaryAction === 'takeover' ? (
-              <button
-                type="button"
-                className="kf-btn kf-btn-primary justify-center"
-                disabled={busy}
-                onClick={onAssignToMia}
-              >
-                לקחת לטיפול
-              </button>
-            ) : null}
-            <a
-              href={lead.phone ? waLink(lead.phone) : undefined}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={clsx('kf-btn justify-center', !lead.phone && 'pointer-events-none opacity-50')}
-            >
-              פתיחה ב-WhatsApp
-            </a>
+          <div className="grid gap-2 md:grid-cols-2">
+            <GuidanceMiniCard label="למה זה כאן" value={insight.why} />
+            <GuidanceMiniCard label="מה להגיד עכשיו" value={insight.script} />
           </div>
-        ) : null}
+        </div>
+        <div className="rounded-2xl bg-white/70 p-3 ring-1 ring-black/5">
+          <p className="text-xs font-semibold uppercase tracking-wide opacity-60">צעדים מהירים</p>
+          {canAct ? (
+            <div className="mt-3 grid gap-2">
+              {primaryLabel && primaryHandler ? (
+                <button
+                  type="button"
+                  className="kf-btn kf-btn-primary justify-center"
+                  disabled={busy}
+                  onClick={primaryHandler}
+                >
+                  {primaryLabel}
+                </button>
+              ) : null}
+              <a
+                href={lead.phone ? waLink(lead.phone) : undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={clsx('kf-btn justify-center', !lead.phone && 'pointer-events-none opacity-50')}
+              >
+                לפתוח שיחה ב-WhatsApp
+              </a>
+              {insight.primaryAction !== 'takeover' ? (
+                <button
+                  type="button"
+                  className="kf-btn kf-btn-ghost justify-center"
+                  disabled={busy}
+                  onClick={onAssignToMia}
+                >
+                  להעביר לאדם
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm opacity-75">יש לך הרשאת צפייה בלבד, לכן הפעולות מוסתרות.</p>
+          )}
+        </div>
       </div>
     </section>
+  );
+}
+
+function GuidanceMiniCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-white/65 p-3 ring-1 ring-black/5">
+      <p className="text-xs font-semibold opacity-60">{label}</p>
+      <p className="mt-1 text-sm leading-6 opacity-90">{value}</p>
+    </div>
   );
 }
 
@@ -799,16 +831,21 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
   const ai = lead.ownership_mode === 'ai_active';
   const last = messages[messages.length - 1];
   const lastFromLead = last?.sender_type === 'lead';
+  const lastText = last?.content_text?.trim();
   const closed =
     lead.lead_status === 'won' ||
     lead.lead_status === 'lost' ||
     lead.do_not_contact ||
     lead.removed_by_request;
+  const classificationWhy = lead.classification_summary || lead.handoff_reason || lead.suggested_next_action;
+  const humanScript = lead.suggested_next_action || 'עני קצר, ברור ובגובה העיניים; סיימי בשאלה אחת שמקדמת לשלב הבא.';
 
   if (closed) {
     return {
       title: 'הליד סגור — לא נדרשת פעולה יומיומית',
       detail: 'אם הלקוח חזר או שהסגירה הייתה טעות, השתמשי בפתיחה מחדש. אחרת אין צורך לגעת.',
+      why: lead.lost_reason || lead.payment_status || 'הסטטוס הנוכחי הוא סופי או חסום ליצירת קשר.',
+      script: 'לא לשלוח הודעה חדשה אלא אם הליד נפתח מחדש במודע.',
       ownerLine: 'מצב סגור',
       primaryAction: null,
       tone: 'border-slate-200 bg-slate-50 text-slate-800',
@@ -818,6 +855,8 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
     return {
       title: 'יש תקלה שמונעת טיפול אוטומטי',
       detail: failed.reason ?? 'נוצר פריט תקלה. כדאי לפתוח את השיחה ולענות ידנית או לבדוק את שליחת WhatsApp.',
+      why: failed.reason ?? 'יש פריט תור פתוח שמסמן שהאוטומציה לא השלימה טיפול.',
+      script: lastText ? `להתייחס להודעה האחרונה: “${lastText.slice(0, 120)}”` : humanScript,
       ownerLine: 'דורש בדיקה ידנית',
       primaryAction: 'takeover' as const,
       tone: 'border-rose-200 bg-rose-50 text-rose-950',
@@ -827,6 +866,8 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
     return {
       title: 'השלב הנכון הוא שיחת טלפון',
       detail: 'הליד ביקש שיחה או זוהה ככזה שצריך התערבות טלפונית. אחרי השיחה תעדי תוצאה וסיכום קצר.',
+      why: classificationWhy || 'הליד חם או דורש מענה אישי מהיר, ולכן שיחה עדיפה על עוד הודעות.',
+      script: 'להתקשר, לפתוח בשאלה קצרה על הצורך שלו, ואז לתעד תוצאה: ענה / לא ענה / נקבע המשך.',
       ownerLine: 'ממתין לשיחה',
       primaryAction: 'phone' as const,
       tone: 'border-indigo-200 bg-indigo-50 text-indigo-950',
@@ -836,6 +877,8 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
     return {
       title: 'הלקוח מחכה לתשובה ממך',
       detail: 'ה-AI מושעה בזמן טיפול אנושי. עני מהתיבה למטה, או החזירי ל-AI אם אין צורך במענה אנושי.',
+      why: classificationWhy || 'ההודעה האחרונה הגיעה מהלקוח בזמן שהשיחה בבעלות אנושית.',
+      script: humanScript,
       ownerLine: 'בטיפול אנושי',
       primaryAction: 'return_ai' as const,
       tone: 'border-amber-200 bg-amber-50 text-amber-950',
@@ -845,6 +888,8 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
     return {
       title: 'הליד אצלך — החליטי אם להמשיך ידנית או להחזיר ל-AI',
       detail: 'אם סיימת טיפול, החזרה ל-AI תחזיר את המענה האוטומטי. אם צריך קשר אישי — המשיכי לענות ידנית.',
+      why: classificationWhy || 'השיחה כבר נלקחה לטיפול אנושי ולכן ה-AI לא ממשיך לבד.',
+      script: 'אם אין צורך בטיפול אישי נוסף — להחזיר למענה אוטומטי. אם יש צורך — לענות ידנית ולתעד.',
       ownerLine: 'בטיפול אנושי',
       primaryAction: 'return_ai' as const,
       tone: 'border-amber-200 bg-amber-50 text-amber-950',
@@ -854,6 +899,8 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
     return {
       title: 'ה-AI מטפל — רק לעקוב',
       detail: 'אין צורך להתערב כרגע. אם את מזהה שיחה רגישה, אפשר לקחת לטיפול אנושי בלחיצה.',
+      why: classificationWhy || 'השיחה נמצאת בבעלות AI ואין כרגע סימן שמחייב התערבות אדם.',
+      script: 'לא לענות ידנית כרגע. אם משהו נראה רגיש או שגוי — לקחת לטיפול אנושי ואז לענות.',
       ownerLine: 'AI פעיל',
       primaryAction: 'takeover' as const,
       tone: 'border-sky-200 bg-sky-50 text-sky-950',
@@ -862,6 +909,8 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
   return {
     title: 'צריך לבדוק מי אחראי על הליד',
     detail: 'מצב הבעלות לא חד־משמעי. מומלץ לקחת לטיפול ידני ולסגור את ההחלטה.',
+    why: classificationWhy || 'מצב הבעלות לא תואם מסלול עבודה ברור.',
+    script: humanScript,
     ownerLine: `בעלות: ${lead.ownership_mode}`,
     primaryAction: 'takeover' as const,
     tone: 'border-slate-200 bg-white text-slate-900',
