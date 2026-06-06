@@ -88,6 +88,8 @@ export function InboxPage() {
         </div>
       </header>
 
+      <InboxTrainingGuide />
+
       <section className="grid gap-3 md:grid-cols-5" aria-label="סינון משימות">
         {LANE_FILTERS.map((item) => {
           const active = lane === item.key;
@@ -233,6 +235,39 @@ export function InboxPage() {
           />
         </label>
       </ConfirmDialog>
+    </div>
+  );
+}
+
+function InboxTrainingGuide() {
+  return (
+    <section className="kf-card p-4 sm:p-5" aria-label="איך לעבוד במסך לטיפול עכשיו">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">הדרך הקצרה לעבודה נכונה</p>
+          <h2 className="mt-1 text-lg font-semibold text-slate-900">פותחים כרטיס, מטפלים, וסוגרים — בלי לחפש ידנית.</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-500">
+            המסך הזה הוא נקודת ההתחלה של עובד. אם משהו דורש אדם, הוא יופיע כאן עם סיבה ופעולה מומלצת.
+          </p>
+        </div>
+        <div className="grid gap-2 text-sm sm:grid-cols-3 lg:min-w-[560px]">
+          <TrainingStep number="1" title="לטפל לפי דחיפות" text="מתחילים מבעיה/סיכון ולענות עכשיו, ואז עוברים לשיחות ומעקב." />
+          <TrainingStep number="2" title="פותחים את הליד" text="בכרטיס הליד יש פעולה הבאה, למה זה כאן, ומה להגיד ללקוח." />
+          <TrainingStep number="3" title="סוגרים משימה" text="אחרי טיפול בוחרים תבנית סגירה כדי שהמערכת לא תמשיך להקפיץ אותה." />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TrainingStep({ number, title, text }: { number: string; title: string; text: string }) {
+  return (
+    <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100">
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-full bg-brand-600 text-xs font-semibold text-white">{number}</span>
+        <span className="font-semibold text-slate-800">{title}</span>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{text}</p>
     </div>
   );
 }
