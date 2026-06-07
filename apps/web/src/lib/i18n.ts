@@ -13,7 +13,7 @@ const HE = {
   // Navigation
   nav_dashboard: 'היום',
   nav_leads: 'כל הלידים',
-  nav_inbox: 'לטיפול עכשיו',
+  nav_inbox: 'היום שלי',
   nav_queue: 'תורים טכניים',
   nav_analytics: 'דוחות',
   nav_users: 'משתמשים',

@@ -13,6 +13,17 @@ import type { AttentionRow } from '@/lib/types';
 
 type WorkLane = 'all' | 'reply' | 'call' | 'risk' | 'ops';
 
+const PRODUCT_LABELS: Record<string, string> = {
+  digital_program: 'תוכנית הדרך לדירה',
+  investor_mentorship: 'ליווי משקיעים',
+  contractor_group_purchase: 'קבוצת רכישה מקבלן',
+  personal_consultation: 'שיחת ייעוץ אישית',
+  mentorship: 'ליווי משקיעים',
+  student_tools: 'כלי תלמידים',
+  financing_guidance: 'הכוונת מימון',
+  unknown: 'מוצר לא ברור',
+};
+
 const LANE_FILTERS: Array<{ key: WorkLane; label: string; hint: string }> = [
   { key: 'all', label: 'הכל', hint: 'כל מה שדורש טיפול' },
   { key: 'reply', label: 'לענות עכשיו', hint: 'לקוחות שממתינים למענה אנושי' },
@@ -30,7 +41,7 @@ const CLOSE_NOTE_TEMPLATES = [
 ];
 
 export function InboxPage() {
-  useDocumentTitle('לטיפול עכשיו');
+  useDocumentTitle('היום שלי');
   const [searchParams, setSearchParams] = useSearchParams();
   const initialLane = parseLane(searchParams.get('lane'));
   const [lane, setLane] = useState<WorkLane>(initialLane);
@@ -74,11 +85,11 @@ export function InboxPage() {
       <header className="overflow-hidden rounded-3xl bg-gradient-to-l from-brand-700 via-brand-600 to-slate-900 p-5 text-white shadow-sm sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
-            <p className="text-sm font-medium text-brand-100">עמדת מנהלת CRM</p>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">לטיפול עכשיו</h1>
+            <p className="text-sm font-medium text-brand-100">עמדת עבודה יומית</p>
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">היום שלי</h1>
             <p className="max-w-2xl text-sm leading-6 text-brand-50/90">
-              מקום אחד לכל מה שמצריך פעולה: לקוחות שמחכים לתשובה, שיחות, תקלות, איחורים ומעקבים.
-              בלי להבדיל בין Inbox, Queue או סטטוס טכני.
+              מתחילים מכאן: מי צריך טיפול עכשיו, למה הוא כאן, ומה הפעולה הבאה הכי נכונה.
+              המטרה היא יום מכירות פשוט — פחות חיפוש, יותר שיחות וסגירות.
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:min-w-[360px]">
@@ -90,6 +101,8 @@ export function InboxPage() {
       </header>
 
       <InboxTrainingGuide />
+
+      <DailyFocusPanel rows={allRows} />
 
       <section className="grid gap-3 md:grid-cols-5" aria-label="סינון משימות">
         {LANE_FILTERS.map((item) => {
@@ -138,6 +151,7 @@ export function InboxPage() {
         ) : (
           rows.map((row) => {
             const meta = classifyRow(row);
+            const plan = operatingPlan(row, meta);
             return (
               <article
                 key={`${row.kind}:${row.ref_id}`}
@@ -163,6 +177,22 @@ export function InboxPage() {
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
                         {row.lead_phone ? <a href={`tel:${row.lead_phone}`} className="tabular-nums hover:text-brand-700">{row.lead_phone}</a> : null}
                         <span>{humanReason(row)}</span>
+                        {row.product_interest ? (
+                          <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+                            {PRODUCT_LABELS[row.product_interest] ?? row.product_interest}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-2 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+                      <div>
+                        <div className="text-xs font-semibold text-slate-500">פעולה הבאה</div>
+                        <div className="mt-1 font-semibold text-slate-900">{plan.nextAction}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold text-slate-500">למה</div>
+                        <div className="mt-1 text-sm leading-6 text-slate-700">{plan.why}</div>
                       </div>
                     </div>
 
@@ -261,6 +291,47 @@ function InboxTrainingGuide() {
   );
 }
 
+function DailyFocusPanel({ rows }: { rows: AttentionRow[] }) {
+  const first = rows[0] ? operatingPlan(rows[0], classifyRow(rows[0])) : null;
+  const critical = rows.filter((row) => classifyRow(row).urgency === 'critical').length;
+  const calls = rows.filter((row) => classifyRow(row).lane === 'call').length;
+  const replies = rows.filter((row) => classifyRow(row).lane === 'reply').length;
+
+  return (
+    <section className="grid gap-3 lg:grid-cols-[1.4fr_1fr_1fr_1fr]" aria-label="מיקוד יומי">
+      <div className="kf-card border-s-4 border-s-brand-500 p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">הדבר הראשון לפתוח</p>
+        {first ? (
+          <>
+            <h2 className="mt-1 text-lg font-semibold text-slate-900">{first.nextAction}</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-500">{first.why}</p>
+          </>
+        ) : (
+          <>
+            <h2 className="mt-1 text-lg font-semibold text-slate-900">אין כרגע טיפול דחוף</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-500">אפשר לעבור ללידים חדשים, פולואפים או שיפור נתונים.</p>
+          </>
+        )}
+      </div>
+      <FocusMetric label="דחוף" value={critical} hint="סיכונים ו-SLA" tone={critical > 0 ? 'danger' : 'ok'} />
+      <FocusMetric label="לענות" value={replies} hint="מחכים לאדם" />
+      <FocusMetric label="להתקשר" value={calls} hint="שיחות והסלמות" />
+    </section>
+  );
+}
+
+function FocusMetric({ label, value, hint, tone }: { label: string; value: number; hint: string; tone?: 'danger' | 'ok' }) {
+  return (
+    <div className="kf-card p-4">
+      <div className="text-sm font-medium text-slate-500">{label}</div>
+      <div className={clsx('mt-1 text-3xl font-semibold tabular-nums', tone === 'danger' && 'text-rose-600', tone === 'ok' && 'text-emerald-600')}>
+        {value}
+      </div>
+      <div className="mt-1 text-xs text-slate-500">{hint}</div>
+    </div>
+  );
+}
+
 function TrainingStep({ number, title, text }: { number: string; title: string; text: string }) {
   return (
     <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100">
@@ -329,6 +400,35 @@ function humanReason(row: AttentionRow): string {
   if (row.kind === 'overdue_action') return 'הפעולה הבאה באיחור';
   if (row.kind === 'queue') return 'משימה פתוחה לטיפול';
   return 'דורש בדיקה';
+}
+
+function operatingPlan(row: AttentionRow, meta = classifyRow(row)): { nextAction: string; why: string } {
+  if (row.suggested_next_action?.trim()) {
+    return { nextAction: row.suggested_next_action.trim(), why: humanReason(row) };
+  }
+  const product = row.product_interest ? PRODUCT_LABELS[row.product_interest] ?? row.product_interest : null;
+  if (meta.lane === 'call') {
+    return {
+      nextAction: 'להתקשר ולסגור אבחון קצר',
+      why: product ? `הליד מתאים ל-${product}; מטרת השיחה היא להבין התאמה וטווח זמן.` : 'יש אינדיקציה לבקשת שיחה או ליד חם שצריך מגע אנושי.',
+    };
+  }
+  if (meta.lane === 'reply') {
+    return {
+      nextAction: 'לענות בוואטסאפ ולשאול שאלת אבחון אחת',
+      why: product ? `הלקוח מחכה למענה אנושי סביב ${product}.` : 'הלקוח השיב ומחכה למענה אנושי.',
+    };
+  }
+  if (meta.lane === 'risk') {
+    return {
+      nextAction: 'לפתוח את הליד ולבדוק למה הטיפול נתקע',
+      why: humanReason(row),
+    };
+  }
+  return {
+    nextAction: 'לעשות בדיקת מצב קצרה ולהחליט המשך',
+    why: product ? `יש ליד פתוח עם מוצר משוער: ${product}.` : humanReason(row),
+  };
 }
 
 function sortRows(rows: AttentionRow[]): AttentionRow[] {

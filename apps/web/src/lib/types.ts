@@ -220,6 +220,9 @@ export interface AttentionRow {
   lead_status: LeadStatus;
   lead_heat: LeadHeat | null;
   ownership_mode: OwnershipMode;
+  product_interest?: ProductInterest | null;
+  suggested_next_action?: string | null;
+  intake_segment?: IntakeSegment | null;
   priority_level: number;
   reason: string | null;
   due_at: string | null;
