@@ -159,6 +159,7 @@ export function InboxPage() {
             const chips = reasonChips(row, meta);
             const talkTrack = repTalkTrack(row, meta);
             const whatsappWindow = whatsappWindowStatus(row);
+            const whatsappUrl = whatsappConversationUrl(row);
             return (
               <article
                 key={`${row.kind}:${row.ref_id}`}
@@ -254,6 +255,17 @@ export function InboxPage() {
                     <Link to={`/leads/${row.lead_id}`} className="kf-btn justify-center">
                       פתיחת ליד
                     </Link>
+                    {whatsappUrl ? (
+                      <a
+                        href={whatsappUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="kf-btn kf-btn-ghost justify-center"
+                        aria-label={`פתיחת WhatsApp עבור ${row.lead_name || row.lead_phone || 'הליד'}`}
+                      >
+                        פתיחת WhatsApp
+                      </a>
+                    ) : null}
                     {row.kind === 'queue' ? (
                       <button
                         type="button"
@@ -484,6 +496,23 @@ function isWhatsAppRelevant(row: AttentionRow) {
     || reason.includes('pending_manual_reply')
     || reason.includes('וואטסאפ')
     || reason.includes('מענה');
+}
+
+function whatsappConversationUrl(row: AttentionRow): string | null {
+  if (!row.lead_phone || !isWhatsAppRelevant(row)) return null;
+  const normalized = normalizePhoneForWhatsApp(row.lead_phone);
+  return normalized ? `https://wa.me/${normalized}` : null;
+}
+
+function normalizePhoneForWhatsApp(phone: string): string | null {
+  const compact = phone.replace(/[^\d+]/g, '');
+  if (compact.startsWith('+')) return compact.slice(1).replace(/\D/g, '') || null;
+  const digits = compact.replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('00')) return digits.slice(2) || null;
+  if (digits.startsWith('972')) return digits;
+  if (digits.startsWith('0')) return `972${digits.slice(1)}`;
+  return digits;
 }
 
 function formatDuration(minutes: number) {
