@@ -65,13 +65,21 @@ Deno.serve(async (req) => {
   }
 
   if (!result.ok) {
+    const friendly = formatManualReplyFailure(result.error ?? 'Send failed', mode, config.whatsappSession.fallbackTemplateName);
     await ensurePendingQueueItem(supabase, {
       leadId, queueType: 'failed_automation', priorityLevel: 1,
-      reason: 'Manual reply failed; provider error',
-      payloadJson: { error: result.error ?? null, correlationId },
+      reason: friendly.queueReason,
+      queueSummary: friendly.userMessage,
+      payloadJson: { error: result.error ?? null, mode, templateName: config.whatsappSession.fallbackTemplateName, correlationId },
       createdByActorType: staff.role,
     });
-    return jsonResponse(req, { ok: false, error: result.error ?? 'Send failed' }, 502);
+    return jsonResponse(req, {
+      ok: false,
+      error: friendly.userMessage,
+      code: friendly.code,
+      providerError: result.error ?? null,
+      mode,
+    }, friendly.status);
   }
 
   await supabase.from('messages').insert({
@@ -102,3 +110,37 @@ Deno.serve(async (req) => {
   log.info('manual_reply_sent', { fn: 'send-reply', correlationId, leadId, userId: staff.userId, mode });
   return jsonResponse(req, { ok: true, mode });
 });
+
+function formatManualReplyFailure(error: string, mode: string, templateName: string) {
+  const templateMissing =
+    mode === 'template' &&
+    (error.includes('132001') || error.toLowerCase().includes('template name does not exist'));
+
+  if (templateMissing) {
+    return {
+      status: 409,
+      code: 'WHATSAPP_TEMPLATE_MISSING',
+      queueReason: 'Manual reply failed; WhatsApp fallback template is missing',
+      userMessage:
+        `אי אפשר לשלוח הודעה חופשית כי חלון ה־24 שעות בוואטסאפ נסגר, ` +
+        `והתבנית המאושרת "${templateName}" לא קיימת ב־Meta בעברית. ` +
+        `צריך שהלקוח ישלח הודעה חדשה או להגדיר/לאשר תבנית WhatsApp מתאימה.`,
+    };
+  }
+
+  return {
+    status: 502,
+    code: 'WHATSAPP_SEND_FAILED',
+    queueReason: 'Manual reply failed; provider error',
+    userMessage: `שליחת ההודעה נכשלה מול WhatsApp. ${summarizeProviderError(error)}`,
+  };
+}
+
+function summarizeProviderError(error: string): string {
+  try {
+    const parsed = JSON.parse(error) as { error?: { message?: string; error_data?: { details?: string } } };
+    return parsed.error?.error_data?.details ?? parsed.error?.message ?? 'נסו שוב או בדקו את הגדרות הספק.';
+  } catch {
+    return error.slice(0, 220);
+  }
+}
