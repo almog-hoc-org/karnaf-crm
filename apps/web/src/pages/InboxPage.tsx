@@ -153,6 +153,7 @@ export function InboxPage() {
             const meta = classifyRow(row);
             const plan = operatingPlan(row, meta);
             const chips = reasonChips(row, meta);
+            const talkTrack = repTalkTrack(row, meta);
             return (
               <article
                 key={`${row.kind}:${row.ref_id}`}
@@ -206,6 +207,11 @@ export function InboxPage() {
                         ))}
                       </div>
                     ) : null}
+
+                    <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-3">
+                      <div className="text-xs font-semibold text-brand-700">מה להגיד עכשיו</div>
+                      <p className="mt-1 text-sm leading-6 text-slate-800">{talkTrack}</p>
+                    </div>
 
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusBadge status={row.lead_status} />
@@ -497,6 +503,32 @@ function operatingPlan(row: AttentionRow, meta = classifyRow(row)): { nextAction
     nextAction: 'לעשות בדיקת מצב קצרה ולהחליט המשך',
     why: product ? `יש ליד פתוח עם מוצר משוער: ${product}.` : humanReason(row),
   };
+}
+
+function repTalkTrack(row: AttentionRow, meta = classifyRow(row)): string {
+  const firstName = firstNameFromLead(row.lead_name) ?? 'היי';
+  const product = row.product_interest ? PRODUCT_LABELS[row.product_interest] ?? row.product_interest : null;
+  if (meta.lane === 'call') {
+    return product
+      ? `${firstName}, ראיתי שפנית לגבי ${product}. אני רוצה להבין איפה אתה עומד היום ומה הכי חשוב לך לפתור, ואז אגיד אם זה בכלל מתאים.`
+      : `${firstName}, ראיתי שביקשת שיחה. אני רוצה להבין בקצרה מה המטרה שלך ומה חסר לך כרגע כדי לדעת אם ואיך נכון לעזור.`;
+  }
+  if (meta.lane === 'reply') {
+    return product
+      ? `${firstName}, קיבלתי את ההודעה שלך לגבי ${product}. כדי לכוון אותך נכון — מה השלב שלך כרגע ומה הדבר שהכי תוקע אותך?`
+      : `${firstName}, קיבלתי את ההודעה. כדי לא לתת תשובה כללית — מה הדבר המרכזי שאתה רוצה לפתור עכשיו?`;
+  }
+  if (meta.lane === 'risk') {
+    return `${firstName}, אני בודק/ת שלא נפלנו על הטיפול שלך. אפשר לוודא רגע מה נשאר פתוח מבחינתך?`;
+  }
+  return product
+    ? `${firstName}, אני עושה בדיקת מצב קצרה לגבי ${product}. מה הצעד הבא שהכי יעזור לך עכשיו?`
+    : `${firstName}, אני עושה בדיקת מצב קצרה. מה הצעד הבא שהכי יעזור לך עכשיו?`;
+}
+
+function firstNameFromLead(name: string | null): string | null {
+  const first = name?.trim().split(/\s+/)[0];
+  return first || null;
 }
 
 function sortRows(rows: AttentionRow[]): AttentionRow[] {
