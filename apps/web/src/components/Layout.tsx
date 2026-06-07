@@ -5,14 +5,21 @@ import { useAuth } from '@/auth/auth-context';
 import { t, type TranslationKey } from '@/lib/i18n';
 import { RoleHelp } from '@/components/RoleHelp';
 
-interface NavItem { to: string; labelKey: TranslationKey; end?: boolean; adminOnly?: boolean; icon: ReactNode; }
+interface NavItem {
+  to: string;
+  labelKey: TranslationKey;
+  end?: boolean;
+  adminOnly?: boolean;
+  managerOnly?: boolean;
+  icon: ReactNode;
+}
 
 const NAV: NavItem[] = [
-  { to: '/', labelKey: 'nav_dashboard', end: true, icon: <IconDashboard /> },
-  { to: '/leads', labelKey: 'nav_leads', icon: <IconUsers /> },
+  { to: '/', labelKey: 'nav_dashboard', end: true, managerOnly: true, icon: <IconDashboard /> },
   { to: '/inbox', labelKey: 'nav_inbox', icon: <IconInbox /> },
-  { to: '/queue', labelKey: 'nav_queue', icon: <IconInbox /> },
-  { to: '/analytics', labelKey: 'nav_analytics', icon: <IconChart /> },
+  { to: '/leads', labelKey: 'nav_leads', icon: <IconUsers /> },
+  { to: '/analytics', labelKey: 'nav_analytics', managerOnly: true, icon: <IconChart /> },
+  { to: '/queue', labelKey: 'nav_queue', adminOnly: true, icon: <IconInbox /> },
   { to: '/team', labelKey: 'nav_team', adminOnly: true, icon: <IconUsers /> },
   { to: '/admin/sources', labelKey: 'nav_sources', adminOnly: true, icon: <IconChart /> },
   { to: '/users', labelKey: 'nav_users', adminOnly: true, icon: <IconShield /> },
@@ -22,7 +29,8 @@ const NAV: NavItem[] = [
 export function Layout() {
   const auth = useAuth();
   const isAdmin = auth.role === 'owner' || auth.role === 'admin';
-  const visible = NAV.filter((item) => !item.adminOnly || isAdmin);
+  const isManager = isAdmin || auth.role === 'mia';
+  const visible = NAV.filter((item) => (!item.adminOnly || isAdmin) && (!item.managerOnly || isManager));
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
 
@@ -40,13 +48,13 @@ export function Layout() {
       </a>
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70">
         <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:gap-6">
-          <Link to="/" className="group flex items-center gap-2">
+          <Link to={isManager ? '/' : '/inbox'} className="group flex items-center gap-2">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white shadow-sm transition group-hover:bg-brand-700" aria-hidden="true">
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 7l8 5 8-5M4 7v10l8 5 8-5V7M4 7l8-5 8 5" />
               </svg>
             </span>
-            <span className="text-base font-semibold text-slate-900 sm:text-lg">Karnaf <span className="text-brand-700">CRM</span></span>
+            <span className="text-base font-semibold text-slate-900 sm:text-lg">Karnaf <span className="text-brand-700">CRM</span><span className="ms-2 hidden rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 sm:inline">Manager</span></span>
           </Link>
 
           <nav className="hidden items-center gap-1 md:flex" role="navigation" aria-label={t('app_name')}>

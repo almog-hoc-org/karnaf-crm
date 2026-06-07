@@ -3,9 +3,8 @@ import { test, expect } from '@playwright/test';
 const EMAIL = process.env.E2E_TEST_EMAIL;
 const PASSWORD = process.env.E2E_TEST_PASSWORD;
 
-test.skip(!EMAIL || !PASSWORD, 'Set E2E_TEST_EMAIL + E2E_TEST_PASSWORD to run.');
-
 test('non-admin users do not see Users link in navigation', async ({ page }) => {
+  test.skip(!EMAIL || !PASSWORD, 'Set E2E_TEST_EMAIL + E2E_TEST_PASSWORD to run.');
   await page.goto('/login');
   await page.getByLabel('אימייל').fill(EMAIL!);
   await page.getByLabel('סיסמה', { exact: true }).fill(PASSWORD!);

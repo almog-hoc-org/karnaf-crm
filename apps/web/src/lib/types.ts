@@ -2,15 +2,32 @@
 // the corresponding Edge Functions (`leads-list`, `lead-detail`, etc.).
 
 export type LeadStatus =
-  | 'new' | 'first_contact_sent' | 'responded' | 'qualified' | 'nurture'
-  | 'checkout_pushed' | 'payment_pending' | 'human_handoff' | 'won' | 'lost'
-  | 'dormant' | 'onboarding_active' | 'active_student' | 'do_not_contact'
-  | 'removed_by_request' | 'duplicate' | 'manual_review_required';
+  | 'new'
+  | 'first_contact_sent'
+  | 'responded'
+  | 'qualified'
+  | 'nurture'
+  | 'checkout_pushed'
+  | 'payment_pending'
+  | 'human_handoff'
+  | 'won'
+  | 'lost'
+  | 'dormant'
+  | 'onboarding_active'
+  | 'active_student'
+  | 'do_not_contact'
+  | 'removed_by_request'
+  | 'duplicate'
+  | 'manual_review_required';
 
 export type LeadHeat = 'hot' | 'warm' | 'cool' | 'cold';
 
 export type OwnershipMode =
-  | 'ai_active' | 'mia_active' | 'phone_sales_pending' | 'shared_watch' | 'suppressed';
+  | 'ai_active'
+  | 'mia_active'
+  | 'phone_sales_pending'
+  | 'shared_watch'
+  | 'suppressed';
 
 export interface LeadRow {
   id: string;
@@ -30,10 +47,37 @@ export interface LeadRow {
   removed_by_request: boolean;
   updated_at: string;
   created_at: string;
+  inquiry_type?: InquiryType | null;
+  product_interest?: ProductInterest | null;
+  intake_segment?: IntakeSegment | null;
+  suggested_next_action?: string | null;
 }
 
 export type LeadFit = 'low' | 'medium' | 'high';
 export type ReadinessLevel = 'exploring' | 'considering' | 'decided' | 'paying';
+export type InquiryType =
+  | 'program_details'
+  | 'pricing'
+  | 'financing'
+  | 'eligibility'
+  | 'property_search'
+  | 'mentorship'
+  | 'purchase_ready'
+  | 'support'
+  | 'unknown';
+export type ProductInterest =
+  | 'digital_program'
+  | 'mentorship'
+  | 'student_tools'
+  | 'financing_guidance'
+  | 'unknown';
+export type IntakeSegment =
+  | 'hot_sales'
+  | 'needs_human'
+  | 'needs_nurture'
+  | 'info_seeker'
+  | 'support_or_existing'
+  | 'unknown';
 
 export interface LeadDetail extends LeadRow {
   source_detail: string | null;
@@ -59,6 +103,14 @@ export interface LeadDetail extends LeadRow {
   last_human_touch_at: string | null;
   ai_playbook_stage: string | null;
   ai_playbook_stage_at: string | null;
+  inquiry_type: InquiryType | null;
+  product_interest: ProductInterest | null;
+  intake_segment: IntakeSegment | null;
+  classification_confidence: 'high' | 'medium' | 'low' | null;
+  classification_summary: string | null;
+  suggested_next_action: string | null;
+  handoff_reason: string | null;
+  classification_updated_at: string | null;
 }
 
 export interface MessageRow {
@@ -99,8 +151,12 @@ export interface QueueRow {
   created_at: string;
   resolution_note: string | null;
   leads?: {
-    id: string; full_name: string | null; phone: string | null;
-    lead_status: LeadStatus; lead_heat: LeadHeat; ownership_mode: OwnershipMode;
+    id: string;
+    full_name: string | null;
+    phone: string | null;
+    lead_status: LeadStatus;
+    lead_heat: LeadHeat;
+    ownership_mode: OwnershipMode;
   } | null;
 }
 
@@ -134,9 +190,15 @@ export interface DashboardSummary {
   paymentPendingNow: number;
   slaRiskCount: number;
   funnel: {
-    new_count: number; first_contact_count: number; responded_count: number;
-    qualified_count: number; checkout_count: number; payment_pending_count: number;
-    won_count: number; lost_count: number; dormant_count: number;
+    new_count: number;
+    first_contact_count: number;
+    responded_count: number;
+    qualified_count: number;
+    checkout_count: number;
+    payment_pending_count: number;
+    won_count: number;
+    lost_count: number;
+    dormant_count: number;
   };
   queueCounts: Record<string, number>;
   // Per-source intake counters for the last 24h / 7d. Always present; may be {}.
@@ -160,4 +222,6 @@ export interface AttentionRow {
   created_at: string | null;
 }
 
-export interface ApiOk { ok: true; }
+export interface ApiOk {
+  ok: true;
+}

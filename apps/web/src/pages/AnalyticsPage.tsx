@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { fetchAnalyticsSummary } from '@/lib/api';
+import { fetchAnalyticsSummary, type FirstResponseTimeRow, type SourcePerformanceRow } from '@/lib/api';
 import { STATUS_LABELS, formatRelative } from '@/lib/format';
 import { t } from '@/lib/i18n';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
@@ -26,8 +26,16 @@ export function AnalyticsPage() {
         >{q.isFetching ? t('refreshing') : t('refresh')}</button>
       </header>
 
+      <ManagerInsightsPanel sources={sourcePerformance} firstResponseTimes={firstResponseTimes} />
+
       <section className="kf-card p-4 sm:p-5">
-        <h2 className="text-lg font-semibold">{t('analytics_by_source')}</h2>
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">ביצועי מקורות</h2>
+            <p className="text-sm text-slate-500">איזה ערוץ מביא לידים איכותיים, ולא רק הרבה לידים.</p>
+          </div>
+          <Link to="/leads" className="text-xs text-brand-700 hover:underline">פתיחת כל הלידים</Link>
+        </div>
         <div className="mt-3 -mx-4 overflow-x-auto sm:mx-0">
           <table className="kf-table min-w-[44rem]">
             <thead>
@@ -261,6 +269,86 @@ export function AnalyticsPage() {
           ))}
         </ul>
       </section>
+    </div>
+  );
+}
+
+function ManagerInsightsPanel({
+  sources, firstResponseTimes,
+}: {
+  sources: SourcePerformanceRow[];
+  firstResponseTimes: FirstResponseTimeRow[];
+}) {
+  const best = [...sources].sort((a, b) => b.win_rate_pct - a.win_rate_pct || b.leads_won - a.leads_won)[0];
+  const weak = [...sources]
+    .filter((s) => s.leads_total >= 3)
+    .sort((a, b) => a.win_rate_pct - b.win_rate_pct || b.leads_total - a.leads_total)[0];
+  const slow = [...firstResponseTimes].sort((a, b) => b.p90_minutes - a.p90_minutes || b.unanswered_leads - a.unanswered_leads)[0];
+  const unanswered = firstResponseTimes.reduce((sum, row) => sum + row.unanswered_leads, 0);
+  const totalWon = sources.reduce((sum, row) => sum + row.leads_won, 0);
+  const totalLeads = sources.reduce((sum, row) => sum + row.leads_total, 0);
+  const overallWinRate = totalLeads > 0 ? Math.round((totalWon / totalLeads) * 100) : 0;
+
+  return (
+    <section className="overflow-hidden rounded-3xl border border-brand-100 bg-gradient-to-l from-brand-50 via-white to-white shadow-sm">
+      <div className="p-4 sm:p-6">
+        <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-100">
+          📊 דוח מנהלת
+        </div>
+        <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr] lg:items-start">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">מה כדאי לעשות לפי הנתונים?</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+              הדוח מתרגם מספרים להחלטות: מאיזה מקור להביא עוד לידים, איפה מאבדים מענה, ואיזה ערוץ דורש בדיקה.
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <InsightMetric label="המרה כוללת" value={`${overallWinRate}%`} hint={`${totalWon} סגירות מתוך ${totalLeads} לידים`} />
+              <InsightMetric label="לא נענו" value={String(unanswered)} hint="לידים בלי מענה ראשון" danger={unanswered > 0} />
+              <InsightMetric label="מקורות פעילים" value={String(sources.length)} hint="ערוצים עם נתונים" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <InsightAction
+              title={best ? `להגדיל את ${best.source}` : 'אין עדיין מקור מוביל'}
+              detail={best ? `${best.win_rate_pct}% המרה ו-${best.leads_won} סגירות. זה מקור שכדאי להמשיך להזרים אליו תקציב/קשב.` : 'כשייכנסו נתונים, נציג כאן את הערוץ הכי משתלם.'}
+              tone="emerald"
+            />
+            <InsightAction
+              title={slow ? `לקצר מענה ב-${slow.source}` : 'אין נתוני זמן מענה'}
+              detail={slow ? `p90 מענה ראשון: ${formatMinutes(slow.p90_minutes)}. אם יש איחורים, זה המקום להתחיל ממנו.` : 'אין עדיין מספיק מדידות למענה ראשון.'}
+              tone={slow && (slow.p90_minutes > 120 || slow.unanswered_leads > 0) ? 'amber' : 'slate'}
+            />
+            <InsightAction
+              title={weak ? `לבדוק איכות ב-${weak.source}` : 'אין מקור חלש בולט'}
+              detail={weak ? `${weak.leads_total} לידים עם ${weak.win_rate_pct}% המרה. כדאי לבדוק התאמת קמפיין/מסר או איכות לידים.` : 'כרגע אין מקור עם נפח מספיק והמרה נמוכה.'}
+              tone={weak && weak.win_rate_pct < overallWinRate ? 'rose' : 'slate'}
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function InsightMetric({ label, value, hint, danger = false }: { label: string; value: string; hint: string; danger?: boolean }) {
+  return (
+    <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className={`mt-1 text-3xl font-semibold tabular-nums ${danger ? 'text-rose-700' : 'text-slate-950'}`}>{value}</div>
+      <div className="mt-1 text-xs text-slate-500">{hint}</div>
+    </div>
+  );
+}
+
+function InsightAction({ title, detail, tone }: { title: string; detail: string; tone: 'emerald' | 'amber' | 'rose' | 'slate' }) {
+  const cls = tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+    : tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-950'
+    : tone === 'rose' ? 'border-rose-200 bg-rose-50 text-rose-950'
+    : 'border-slate-200 bg-slate-50 text-slate-800';
+  return (
+    <div className={`rounded-2xl border p-3 ${cls}`}>
+      <div className="text-sm font-semibold">{title}</div>
+      <p className="mt-1 text-xs leading-5 opacity-80">{detail}</p>
     </div>
   );
 }

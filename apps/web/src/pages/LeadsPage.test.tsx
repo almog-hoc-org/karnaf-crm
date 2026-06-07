@@ -51,11 +51,11 @@ function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 }
 
-function renderLeads(role: Role | null = 'admin') {
+function renderLeads(role: Role | null = 'admin', initialEntry = '/leads') {
   return render(
     <QueryClientProvider client={makeClient()}>
       <AuthContext.Provider value={makeAuth(role)}>
-        <MemoryRouter initialEntries={['/leads']}>
+        <MemoryRouter initialEntries={[initialEntry]}>
           <Routes>
             <Route path="/leads" element={<LeadsPage />} />
             <Route path="/leads/:leadId" element={<div>lead detail</div>} />
@@ -123,6 +123,16 @@ describe('LeadsPage', () => {
       const lastCall = vi.mocked(fetchLeadsList).mock.calls.at(-1)?.[0] as LeadsListParams | undefined;
       expect(lastCall?.search).toBe('דנה');
       expect(lastCall?.offset).toBe(0);
+    });
+  });
+
+  it('applies source filters from dashboard links', async () => {
+    renderLeads('admin', '/leads?source=whatsapp');
+    expect(await screen.findByText('מקור: whatsapp')).toBeInTheDocument();
+
+    await waitFor(() => {
+      const lastCall = vi.mocked(fetchLeadsList).mock.calls.at(-1)?.[0] as LeadsListParams | undefined;
+      expect(lastCall?.source).toBe('whatsapp');
     });
   });
 

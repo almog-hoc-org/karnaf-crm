@@ -44,7 +44,8 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>,
     );
     const tagged = consoleSpy.mock.calls.some(
-      (args) => args[0] === '[ui-error]' && args[1] instanceof Error && args[1].message === 'logged failure',
+      (args: unknown[]) =>
+        args[0] === '[ui-error]' && args[1] instanceof Error && args[1].message === 'logged failure',
     );
     expect(tagged).toBe(true);
   });

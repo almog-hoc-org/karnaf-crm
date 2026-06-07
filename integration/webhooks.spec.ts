@@ -4,7 +4,7 @@
 // expected. Skipped unless the optional INTEGRATION_* envs are set so
 // `npm run test:integration` stays safe in CI without Supabase running.
 
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createHmac } from 'node:crypto';
 
@@ -21,9 +21,15 @@ function signBody(secret: string, body: string): string {
   return createHmac('sha256', secret).update(body).digest('hex');
 }
 
-(skip ? describe.skip : describe)('public webhooks', () => {
-  const sb: SupabaseClient = createClient(supabaseUrl!, serviceRoleKey!, {
-    auth: { persistSession: false, autoRefreshToken: false },
+const describeIfConfigured = skip ? describe.skip : describe;
+
+describeIfConfigured('public webhooks', () => {
+  let sb: SupabaseClient;
+
+  beforeAll(() => {
+    sb = createClient(supabaseUrl!, serviceRoleKey!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
   });
 
   it('leads-intake creates a lead and is idempotent on repeat', async () => {

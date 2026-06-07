@@ -20,7 +20,9 @@ Deno.serve(async (req) => {
   if (pre) return pre;
   if (req.method !== 'GET') return jsonResponse(req, { error: 'Method not allowed' }, 405);
 
-  try { await requireStaff(req); } catch (err) {
+  try {
+    await requireStaff(req);
+  } catch (err) {
     if (err instanceof AuthError) return jsonResponse(req, { error: err.message }, err.status);
     throw err;
   }
@@ -29,6 +31,7 @@ Deno.serve(async (req) => {
   const status = url.searchParams.get('status');
   const heat = url.searchParams.get('heat');
   const ownershipMode = url.searchParams.get('ownershipMode');
+  const source = url.searchParams.get('source');
   const search = url.searchParams.get('search');
   const searchIn = (url.searchParams.get('searchIn') ?? 'lead') as 'lead' | 'messages';
   const createdFrom = url.searchParams.get('createdFrom');
@@ -42,13 +45,17 @@ Deno.serve(async (req) => {
   const supabase = getServiceSupabase();
   let query = supabase
     .from('leads')
-    .select('id, full_name, phone, email, source, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at', { count: 'exact' })
+    .select(
+      'id, full_name, phone, email, source, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, intake_segment, suggested_next_action',
+      { count: 'exact' },
+    )
     .order('updated_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
   if (status) query = query.eq('lead_status', status);
   if (heat) query = query.eq('lead_heat', heat);
   if (ownershipMode) query = query.eq('ownership_mode', ownershipMode);
+  if (source) query = query.eq('source', source.slice(0, 120));
   if (isValidDate(createdFrom)) query = query.gte('created_at', createdFrom as string);
   if (isValidDate(createdTo)) query = query.lte('created_at', createdTo as string);
   if (isValidDate(inboundFrom)) query = query.gte('last_inbound_at', inboundFrom as string);

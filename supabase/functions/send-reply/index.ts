@@ -5,7 +5,8 @@ import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '../_shared/whatsapp-provider.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
-import { logLeadEvent, updateLeadFields } from '../_shared/lead-service.ts';
+import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared/lead-service.ts';
+import { canTransition } from '../_shared/state-machine.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
@@ -42,11 +43,12 @@ Deno.serve(async (req) => {
   const config = await getRuntimeConfig(supabase);
 
   const { data: lead, error: leadErr } = await supabase.from('leads')
-    .select('id, phone, last_inbound_at, do_not_contact, removed_by_request, ownership_mode')
+    .select('id, phone, last_inbound_at, do_not_contact, removed_by_request, ownership_mode, lead_status')
     .eq('id', leadId)
     .single();
   if (leadErr || !lead) return jsonResponse(req, { error: leadErr?.message ?? 'Lead not found' }, 404);
   if (lead.do_not_contact || lead.removed_by_request) return jsonResponse(req, { error: 'Lead suppressed' }, 409);
+  if (!lead.phone) return jsonResponse(req, { error: 'Lead has no phone number' }, 409);
 
   const mode = resolveSendMode('freeform', lead.last_inbound_at, config.whatsappSession.freeformWindowHours);
   let result;
@@ -89,6 +91,9 @@ Deno.serve(async (req) => {
     human_owner_id: staff.userId,
     last_human_touch_at: new Date().toISOString(),
   });
+  if (lead.ownership_mode === 'ai_active' && canTransition(String(lead.lead_status), 'human_handoff')) {
+    await transitionLeadStatus(supabase, leadId, 'human_handoff', staff.role, 'manual_reply_takeover');
+  }
 
   await logLeadEvent(supabase, leadId, 'human_reply_sent', staff.role, {
     correlation_id: correlationId, mode, length: text.length,

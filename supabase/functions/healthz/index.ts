@@ -23,7 +23,7 @@ async function checkDb(): Promise<Check> {
   const started = performance.now();
   try {
     const supabase = getServiceSupabase();
-    const { error } = await supabase.from('crm_config').select('key').limit(1);
+    const { error } = await supabase.from('crm_config').select('config_key').limit(1);
     return {
       ok: !error,
       latencyMs: Math.round(performance.now() - started),
@@ -57,8 +57,19 @@ async function checkLastNightlyRun(): Promise<Check> {
 }
 
 function checkAiProvider(): Check {
-  // Configured-but-not-billed: we ONLY confirm an API key is set. We do not
-  // make a real model call from healthz because that would burn $ per ping.
+  // Configured-but-not-billed: we ONLY confirm the selected provider has an
+  // API key. We do not make a real model call from healthz because that would
+  // burn $ per ping.
+  const provider = env.aiProvider();
+  if (provider === 'gemini' || provider === 'google') {
+    return {
+      ok: !!env.geminiApiKey(),
+      detail: env.geminiApiKey() ? `${provider}:configured` : `${provider}:missing_key`,
+    };
+  }
+  if (provider !== 'openai') {
+    return { ok: false, detail: `${provider}:unsupported_provider` };
+  }
   return {
     ok: !!env.openaiApiKey(),
     detail: env.openaiApiKey() ? 'openai:configured' : 'openai:missing_key',

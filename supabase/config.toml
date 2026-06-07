@@ -38,6 +38,9 @@ verify_jwt = false
 [functions.leads-intake]
 verify_jwt = false
 
+[functions.website-leads-intake]
+verify_jwt = false
+
 [functions.sla-worker]
 verify_jwt = false
 

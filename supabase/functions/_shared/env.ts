@@ -32,8 +32,11 @@ export const env = {
   intakeWebhookSecret: () => optional('INTAKE_WEBHOOK_SECRET'),
   slaWorkerSecret: () => optional('SLA_WORKER_SECRET'),
   outboundDispatchSecret: () => optional('OUTBOUND_DISPATCH_SECRET'),
+  aiProvider: () => optional('AI_PROVIDER', 'openai').toLowerCase(),
   openaiApiKey: () => optional('OPENAI_API_KEY'),
   openaiModel: () => optional('OPENAI_MODEL', 'gpt-4o-mini'),
+  geminiApiKey: () => optional('GEMINI_API_KEY'),
+  geminiModel: () => optional('GEMINI_MODEL', 'gemini-1.5-flash'),
   /** Telegram bot token used by `_shared/notify-telegram.ts` for SLA /
    *  cron alerts. Silently no-ops when missing — operator opts in. */
   telegramBotToken: () => optional('TELEGRAM_BOT_TOKEN'),

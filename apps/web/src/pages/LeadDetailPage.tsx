@@ -3,8 +3,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import clsx from 'clsx';
 import {
-  fetchLeadDetail, postAdminAction, postSendReply, postQueueResolve,
-  type AdminAction, type CallOutcome, type LeadMetaUpdates, type ReopenTarget,
+  fetchLeadDetail,
+  postAdminAction,
+  postSendReply,
+  postQueueResolve,
+  type AdminAction,
+  type CallOutcome,
+  type LeadMetaUpdates,
+  type ReopenTarget,
   type HumanOwnerProfile,
 } from '@/lib/api';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
@@ -13,7 +19,17 @@ import { EmptyState } from '@/components/EmptyState';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
 import { t } from '@/lib/i18n';
 import { QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
-import type { LeadFit, LeadHeat, MessageRow, ReadinessLevel } from '@/lib/types';
+import type {
+  IntakeSegment,
+  InquiryType,
+  LeadDetail as LeadDetailType,
+  LeadFit,
+  LeadHeat,
+  MessageRow,
+  ProductInterest,
+  QueueRow,
+  ReadinessLevel,
+} from '@/lib/types';
 import { useAuth } from '@/auth/auth-context';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
@@ -53,7 +69,10 @@ export function LeadDetailPage() {
 
   const action = useMutation({
     mutationFn: (input: { action: AdminAction; note?: string; label: string }) =>
-      postAdminAction({ action: input.action, leadId, note: input.note ?? null }).then((r) => ({ r, label: input.label })),
+      postAdminAction({ action: input.action, leadId, note: input.note ?? null }).then((r) => ({
+        r,
+        label: input.label,
+      })),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['lead-detail', leadId] });
       toast.success(`${data.label} – בוצע`);
@@ -101,10 +120,13 @@ export function LeadDetailPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
-  const [pendingAction, setPendingAction] = useState<
-    | { action: AdminAction; note?: string; label: string; description: string; destructive: boolean }
-    | null
-  >(null);
+  const [pendingAction, setPendingAction] = useState<{
+    action: AdminAction;
+    note?: string;
+    label: string;
+    description: string;
+    destructive: boolean;
+  } | null>(null);
   const [pendingQueueClose, setPendingQueueClose] = useState<{ id: string; label: string } | null>(null);
   const [queueCloseNote, setQueueCloseNote] = useState('');
   const [reopenOpen, setReopenOpen] = useState(false);
@@ -140,28 +162,43 @@ export function LeadDetailPage() {
   const canEditMeta = auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia';
 
   if (detailQ.isLoading) return <LeadDetailSkeleton />;
-  if (detailQ.error) return <p className="text-rose-600">{t('error_prefix')}: {(detailQ.error as Error).message}</p>;
+  if (detailQ.error)
+    return (
+      <p className="text-rose-600">
+        {t('error_prefix')}: {(detailQ.error as Error).message}
+      </p>
+    );
   if (!detailQ.data) return null;
 
   const { lead, messages, queueItems, tasks, events, humanOwnerProfile } = detailQ.data;
 
   return (
     <div className="space-y-4">
-      <Link to="/leads" className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline">← חזרה לרשימה</Link>
+      <Link to="/leads" className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline">
+        ← חזרה לרשימה
+      </Link>
 
       <header className="kf-card p-4 sm:p-5">
         {/* Identity zone: who is this lead. */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{lead.full_name || 'ליד ללא שם'}</h1>
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+            {lead.full_name || 'ליד ללא שם'}
+          </h1>
           {lead.do_not_contact ? <span className="kf-badge bg-rose-100 text-rose-700">DNC</span> : null}
-          {lead.removed_by_request ? <span className="kf-badge bg-rose-100 text-rose-700">הוסר לבקשתו</span> : null}
+          {lead.removed_by_request ? (
+            <span className="kf-badge bg-rose-100 text-rose-700">הוסר לבקשתו</span>
+          ) : null}
         </div>
         {/* AI playbook subtitle: where in the script the bot currently is. */}
         {lead.ai_playbook_stage ? (
           <p className="mt-1 text-xs text-slate-500">
             <span className="opacity-70">שלב AI:</span>{' '}
-            <span className="font-medium text-slate-700">{PLAYBOOK_LABELS[lead.ai_playbook_stage] ?? lead.ai_playbook_stage}</span>
-            {lead.ai_playbook_stage_at ? <span> · עודכן {formatRelative(lead.ai_playbook_stage_at)}</span> : null}
+            <span className="font-medium text-slate-700">
+              {PLAYBOOK_LABELS[lead.ai_playbook_stage] ?? lead.ai_playbook_stage}
+            </span>
+            {lead.ai_playbook_stage_at ? (
+              <span> · עודכן {formatRelative(lead.ai_playbook_stage_at)}</span>
+            ) : null}
           </p>
         ) : null}
 
@@ -186,10 +223,7 @@ export function LeadDetailPage() {
           <OwnershipBadge ownership={lead.ownership_mode} />
           <HeatBadge heat={lead.lead_heat} />
           <span className="kf-badge kf-badge-mute">ציון {lead.lead_score}</span>
-          <NextActionBadge
-            actionType={lead.next_action_type}
-            dueAt={lead.next_action_due_at}
-          />
+          <NextActionBadge actionType={lead.next_action_type} dueAt={lead.next_action_due_at} />
         </div>
 
         {/* Lifecycle/ownership transitions are restricted server-side to
@@ -197,13 +231,25 @@ export function LeadDetailPage() {
         {auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia' ? (
           <div className="mt-4 flex flex-wrap gap-2">
             <ActionGroup label="בעלות">
-              <button type="button" className="kf-btn" onClick={() => action.mutate({ action: 'assign_to_mia', label: 'הועבר למיה' })}>
+              <button
+                type="button"
+                className="kf-btn"
+                onClick={() => action.mutate({ action: 'assign_to_mia', label: 'הועבר למיה' })}
+              >
                 העברה למיה
               </button>
-              <button type="button" className="kf-btn" onClick={() => action.mutate({ action: 'return_to_ai', label: 'הוחזר ל-AI' })}>
+              <button
+                type="button"
+                className="kf-btn"
+                onClick={() => action.mutate({ action: 'return_to_ai', label: 'הוחזר ל-AI' })}
+              >
                 החזרה ל-AI
               </button>
-              <button type="button" className="kf-btn" onClick={() => action.mutate({ action: 'mark_phone_escalation', label: 'סומן לשיחה' })}>
+              <button
+                type="button"
+                className="kf-btn"
+                onClick={() => action.mutate({ action: 'mark_phone_escalation', label: 'סומן לשיחה' })}
+              >
                 סימון לשיחה
               </button>
             </ActionGroup>
@@ -211,35 +257,35 @@ export function LeadDetailPage() {
               <button
                 type="button"
                 className="kf-btn kf-btn-primary"
-                onClick={() => setPendingAction({
-                  action: 'mark_won',
-                  label: 'נסגר ברכישה',
-                  description: 'לסמן את הליד כסגירה ולהפעיל את תהליך האונבורדינג?',
-                  destructive: false,
-                })}
+                onClick={() =>
+                  setPendingAction({
+                    action: 'mark_won',
+                    label: 'נסגר ברכישה',
+                    description: 'לסמן את הליד כסגירה ולהפעיל את תהליך האונבורדינג?',
+                    destructive: false,
+                  })
+                }
               >
                 סימון כסגירה
               </button>
               <button
                 type="button"
                 className="kf-btn"
-                onClick={() => setPendingAction({
-                  action: 'mark_lost',
-                  note: 'manual_close',
-                  label: 'סומן כאבוד',
-                  description: 'לסמן את הליד כאבוד. פעולה זו לא ניתנת לשחזור.',
-                  destructive: true,
-                })}
+                onClick={() =>
+                  setPendingAction({
+                    action: 'mark_lost',
+                    note: 'manual_close',
+                    label: 'סומן כאבוד',
+                    description: 'לסמן את הליד כאבוד. פעולה זו לא ניתנת לשחזור.',
+                    destructive: true,
+                  })
+                }
               >
                 סימון כאבוד
               </button>
               {(lead.lead_status === 'won' || lead.lead_status === 'lost') &&
               (auth.role === 'owner' || auth.role === 'admin') ? (
-                <button
-                  type="button"
-                  className="kf-btn"
-                  onClick={() => setReopenOpen(true)}
-                >
+                <button type="button" className="kf-btn" onClick={() => setReopenOpen(true)}>
                   פתיחה מחדש
                 </button>
               ) : null}
@@ -248,12 +294,15 @@ export function LeadDetailPage() {
               <button
                 type="button"
                 className="kf-btn kf-btn-danger"
-                onClick={() => setPendingAction({
-                  action: 'mark_dnc',
-                  label: 'סומן כ-DNC',
-                  description: 'לסמן את הליד כ-Do Not Contact. הבוט יפסיק לפנות אליו ולא יישלחו עוד הודעות.',
-                  destructive: true,
-                })}
+                onClick={() =>
+                  setPendingAction({
+                    action: 'mark_dnc',
+                    label: 'סומן כ-DNC',
+                    description:
+                      'לסמן את הליד כ-Do Not Contact. הבוט יפסיק לפנות אליו ולא יישלחו עוד הודעות.',
+                    destructive: true,
+                  })
+                }
               >
                 DNC
               </button>
@@ -266,12 +315,15 @@ export function LeadDetailPage() {
                 <button
                   type="button"
                   className="kf-btn kf-btn-primary"
-                  onClick={() => setPendingAction({
-                    action: 'reopen_lead',
-                    label: 'הליד נפתח מחדש',
-                    description: 'הליד יחזור למצב פעיל, ה-AI יקבל את ההיסטוריה ויחליט אם וכיצד להגיב. סטטוס "נסגר" יישאר בדוחות הקנייה.',
-                    destructive: false,
-                  })}
+                  onClick={() =>
+                    setPendingAction({
+                      action: 'reopen_lead',
+                      label: 'הליד נפתח מחדש',
+                      description:
+                        'הליד יחזור למצב פעיל, ה-AI יקבל את ההיסטוריה ויחליט אם וכיצד להגיב. סטטוס "נסגר" יישאר בדוחות הקנייה.',
+                      destructive: false,
+                    })
+                  }
                 >
                   פתח שיחה מחדש
                 </button>
@@ -279,8 +331,21 @@ export function LeadDetailPage() {
             ) : null}
           </div>
         ) : null}
-        {action.error ? <p className="mt-2 text-sm text-rose-600">{(action.error as Error).message}</p> : null}
+        {action.error ? (
+          <p className="mt-2 text-sm text-rose-600">{(action.error as Error).message}</p>
+        ) : null}
       </header>
+
+      <OperatorGuidanceCard
+        lead={lead}
+        queueItems={queueItems}
+        messages={messages}
+        canAct={auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia'}
+        busy={action.isPending}
+        onAssignToMia={() => action.mutate({ action: 'assign_to_mia', label: 'הועבר למיה' })}
+        onReturnToAi={() => action.mutate({ action: 'return_to_ai', label: 'הוחזר ל-AI' })}
+        onMarkPhone={() => action.mutate({ action: 'mark_phone_escalation', label: 'סומן לשיחה' })}
+      />
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="kf-card p-4 lg:col-span-2">
@@ -288,7 +353,9 @@ export function LeadDetailPage() {
             <h2 className="font-semibold">שיחה</h2>
             {lead.phone ? (
               <a
-                href={waLink(lead.phone)} target="_blank" rel="noopener noreferrer"
+                href={waLink(lead.phone)}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="kf-btn kf-btn-ghost text-xs"
                 title="פתיחת שיחה ב-WhatsApp"
               >
@@ -299,10 +366,7 @@ export function LeadDetailPage() {
               </a>
             ) : null}
           </div>
-          <HandlerBanner
-            ownership={lead.ownership_mode}
-            lastHumanTouchAt={lead.last_human_touch_at}
-          />
+          <HandlerBanner ownership={lead.ownership_mode} lastHumanTouchAt={lead.last_human_touch_at} />
           <Transcript messages={messages} />
           <ReplyBox
             disabled={!conversationId || lead.do_not_contact || lead.removed_by_request}
@@ -383,6 +447,51 @@ export function LeadDetailPage() {
           </div>
 
           <div className="kf-card p-4">
+            <h2 className="font-semibold">סיווג קליטה ותפעול</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              תמונת מצב מהירה לעובד חדש: למה הליד פנה, באיזה מוצר הוא מתעניין ומה צריך לעשות עכשיו.
+            </p>
+            <dl className="mt-3 space-y-1 text-sm">
+              <EditableEnumRow
+                k="סוג פנייה"
+                v={lead.inquiry_type}
+                editable={canEditMeta}
+                options={INQUIRY_OPTIONS}
+                onSave={(next) => updateMeta.mutate({ inquiry_type: next as InquiryType | null })}
+              />
+              <EditableEnumRow
+                k="מוצר"
+                v={lead.product_interest}
+                editable={canEditMeta}
+                options={PRODUCT_OPTIONS}
+                onSave={(next) => updateMeta.mutate({ product_interest: next as ProductInterest | null })}
+              />
+              <EditableEnumRow
+                k="מסלול טיפול"
+                v={lead.intake_segment}
+                editable={canEditMeta}
+                options={SEGMENT_OPTIONS}
+                onSave={(next) => updateMeta.mutate({ intake_segment: next as IntakeSegment | null })}
+              />
+              <Row
+                k="ביטחון סיווג"
+                v={
+                  lead.classification_confidence
+                    ? CLASSIFICATION_CONFIDENCE_LABELS[lead.classification_confidence]
+                    : null
+                }
+              />
+              <Row k="סיכום" v={lead.classification_summary} />
+              <Row k="פעולה מומלצת" v={lead.suggested_next_action} />
+              <Row k="סיבת העברה" v={lead.handoff_reason} />
+              <Row
+                k="עודכן"
+                v={lead.classification_updated_at ? formatRelative(lead.classification_updated_at) : null}
+              />
+            </dl>
+          </div>
+
+          <div className="kf-card p-4">
             <h2 className="font-semibold">הקשר ליד</h2>
             <dl className="mt-2 space-y-1 text-sm">
               <EditableRow
@@ -445,12 +554,15 @@ export function LeadDetailPage() {
                       <span className="text-xs text-slate-500">{q.status}</span>
                     </div>
                     <div className="text-slate-600">{q.reason || '—'}</div>
-                    {(q.status === 'pending' || q.status === 'claimed') ? (
+                    {q.status === 'pending' || q.status === 'claimed' ? (
                       <button
                         type="button"
                         className="kf-btn mt-2 text-xs"
                         onClick={() => {
-                          setPendingQueueClose({ id: q.id, label: QUEUE_LABELS[q.queue_type] ?? q.queue_type });
+                          setPendingQueueClose({
+                            id: q.id,
+                            label: QUEUE_LABELS[q.queue_type] ?? q.queue_type,
+                          });
                           setQueueCloseNote('');
                         }}
                       >
@@ -463,11 +575,16 @@ export function LeadDetailPage() {
             )}
           </div>
 
-          {(auth.role === 'sales_rep' || auth.role === 'mia' || auth.role === 'admin' || auth.role === 'owner') ? (
+          {auth.role === 'sales_rep' ||
+          auth.role === 'mia' ||
+          auth.role === 'admin' ||
+          auth.role === 'owner' ? (
             <div className="kf-card p-4">
               <h2 className="font-semibold">תיעוד שיחת טלפון</h2>
               <CallLogForm
-                onSubmit={(outcome, durationMinutes, note) => logCall.mutate({ outcome, durationMinutes, note })}
+                onSubmit={(outcome, durationMinutes, note) =>
+                  logCall.mutate({ outcome, durationMinutes, note })
+                }
                 submitting={logCall.isPending}
                 errorMessage={logCall.error ? (logCall.error as Error).message : null}
               />
@@ -495,8 +612,8 @@ export function LeadDetailPage() {
             <ul className="mt-2 max-h-72 space-y-1 overflow-auto text-xs text-slate-600">
               {events.slice(0, 30).map((e) => (
                 <li key={e.id}>
-                  <span className="text-slate-400">{formatRelative(e.created_at)}</span>
-                  {' '}<strong>{e.event_type}</strong>{' '}<span className="text-slate-500">{e.actor_type}</span>
+                  <span className="text-slate-400">{formatRelative(e.created_at)}</span>{' '}
+                  <strong>{e.event_type}</strong> <span className="text-slate-500">{e.actor_type}</span>
                 </li>
               ))}
             </ul>
@@ -512,7 +629,11 @@ export function LeadDetailPage() {
         onCancel={() => setPendingAction(null)}
         onConfirm={() => {
           if (!pendingAction) return;
-          action.mutate({ action: pendingAction.action, note: pendingAction.note, label: pendingAction.label });
+          action.mutate({
+            action: pendingAction.action,
+            note: pendingAction.note,
+            label: pendingAction.label,
+          });
           setPendingAction(null);
         }}
       />
@@ -585,6 +706,299 @@ export function LeadDetailPage() {
   );
 }
 
+function OperatorGuidanceCard({
+  lead,
+  queueItems,
+  messages,
+  canAct,
+  busy,
+  onAssignToMia,
+  onReturnToAi,
+  onMarkPhone,
+}: {
+  lead: LeadDetailType;
+  queueItems: QueueRow[];
+  messages: MessageRow[];
+  canAct: boolean;
+  busy: boolean;
+  onAssignToMia: () => void;
+  onReturnToAi: () => void;
+  onMarkPhone: () => void;
+}) {
+  const insight = operatorInsight(lead, queueItems, messages);
+  const resolutionGuide = leadResolutionGuide(lead, insight.primaryAction);
+  const primaryLabel =
+    insight.primaryAction === 'return_ai'
+      ? 'להחזיר למענה אוטומטי'
+      : insight.primaryAction === 'phone'
+        ? 'לסמן לשיחת טלפון'
+        : insight.primaryAction === 'takeover'
+          ? 'לקחת לטיפול אנושי'
+          : null;
+  const primaryHandler =
+    insight.primaryAction === 'return_ai'
+      ? onReturnToAi
+      : insight.primaryAction === 'phone'
+        ? onMarkPhone
+        : insight.primaryAction === 'takeover'
+          ? onAssignToMia
+          : undefined;
+
+  return (
+    <section
+      className={clsx('rounded-2xl border p-4 shadow-sm sm:p-5', insight.tone)}
+      aria-label="המלצת פעולה למפעילה"
+    >
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-white/75 px-2.5 py-1 text-xs font-semibold ring-1 ring-black/5">
+              הפעולה הבאה
+            </span>
+            <span className="text-xs font-medium opacity-75">{insight.ownerLine}</span>
+            {lead.intake_segment ? (
+              <span className="rounded-full bg-white/60 px-2.5 py-1 text-xs font-medium ring-1 ring-black/5">
+                {SEGMENT_OPTIONS.find((option) => option.value === lead.intake_segment)?.label ?? lead.intake_segment}
+              </span>
+            ) : null}
+          </div>
+          <h2 className="text-xl font-semibold tracking-tight">{insight.title}</h2>
+          <p className="max-w-3xl text-sm leading-6 opacity-85">{insight.detail}</p>
+          <div className="grid gap-2 md:grid-cols-2">
+            <GuidanceMiniCard label="למה זה כאן" value={insight.why} />
+            <GuidanceMiniCard label="מה להגיד עכשיו" value={insight.script} />
+          </div>
+          <div className="rounded-2xl bg-white/65 p-3 ring-1 ring-black/5" aria-label="סיום טיפול נכון">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide opacity-60">סיום טיפול</p>
+                <h3 className="text-sm font-semibold">איך יודעים שהליד לא צריך להמשיך לקפוץ?</h3>
+              </div>
+              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium ring-1 ring-black/5">
+                החלטה אחת לפני שסוגרים
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {resolutionGuide.map((item) => (
+                <div key={item.title} className="rounded-xl bg-white/70 p-3 ring-1 ring-black/5">
+                  <p className="text-sm font-semibold">{item.title}</p>
+                  <p className="mt-1 text-xs leading-5 opacity-75">{item.when}</p>
+                  <p className="mt-2 text-xs font-medium opacity-90">{item.action}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="rounded-2xl bg-white/70 p-3 ring-1 ring-black/5">
+          <p className="text-xs font-semibold uppercase tracking-wide opacity-60">צעדים מהירים</p>
+          {canAct ? (
+            <div className="mt-3 grid gap-2">
+              {primaryLabel && primaryHandler ? (
+                <button
+                  type="button"
+                  className="kf-btn kf-btn-primary justify-center"
+                  disabled={busy}
+                  onClick={primaryHandler}
+                >
+                  {primaryLabel}
+                </button>
+              ) : null}
+              <a
+                href={lead.phone ? waLink(lead.phone) : undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={clsx('kf-btn justify-center', !lead.phone && 'pointer-events-none opacity-50')}
+              >
+                לפתוח שיחה ב-WhatsApp
+              </a>
+              {insight.primaryAction !== 'takeover' ? (
+                <button
+                  type="button"
+                  className="kf-btn kf-btn-ghost justify-center"
+                  disabled={busy}
+                  onClick={onAssignToMia}
+                >
+                  להעביר לאדם
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm opacity-75">יש לך הרשאת צפייה בלבד, לכן הפעולות מוסתרות.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function GuidanceMiniCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-white/65 p-3 ring-1 ring-black/5">
+      <p className="text-xs font-semibold opacity-60">{label}</p>
+      <p className="mt-1 text-sm leading-6 opacity-90">{value}</p>
+    </div>
+  );
+}
+
+function leadResolutionGuide(
+  lead: LeadDetailType,
+  primaryAction: ReturnType<typeof operatorInsight>['primaryAction'],
+): Array<{ title: string; when: string; action: string }> {
+  const isOptOut = lead.do_not_contact || lead.removed_by_request;
+  const isClosed = lead.lead_status === 'won' || lead.lead_status === 'lost' || isOptOut;
+
+  if (isOptOut) {
+    return [
+      {
+        title: 'לא לפנות יותר',
+        when: 'הלקוח ביקש הסרה, חסימה או שלא יצרו איתו קשר.',
+        action: 'להשאיר DNC/הוסר פעיל. לא לשלוח הודעה ולא להחזיר ל-AI.',
+      },
+      {
+        title: 'חריג בלבד',
+        when: 'רק אם הלקוח פונה מחדש בעצמו או שסימון DNC היה טעות.',
+        action: 'בעלים/אדמין פותח מחדש במודע ומתעד סיבה.',
+      },
+    ];
+  }
+
+  if (isClosed) {
+    return [
+      {
+        title: lead.lead_status === 'won' ? 'נסגר ברכישה' : 'סומן כאבוד',
+        when: 'הסטטוס כבר סופי ואין משימה יומיומית לצוות.',
+        action: 'לא לסגור שוב. לפתוח מחדש רק אם הלקוח חזר או שהסגירה הייתה טעות.',
+      },
+      {
+        title: 'אם יש שיחה חדשה',
+        when: 'לקוח סגור חזר עם שאלה, תמיכה או עניין מחודש.',
+        action: 'לפתוח מחדש למסלול המתאים: responded / qualified / human_handoff.',
+      },
+    ];
+  }
+
+  return [
+    {
+      title: 'טופל',
+      when: 'הלקוח קיבל מענה ברור, נקבעה פעולה הבאה, או שהמשימה כבר אינה דורשת אדם.',
+      action: 'לסגור פריט תור עם הערה קצרה כדי שלא יקפוץ שוב.',
+    },
+    {
+      title: 'להעביר למיה',
+      when: 'יש רגישות, התנגדות, בקשה אישית, תשלום, או צורך בשיקול דעת אנושי.',
+      action: primaryAction === 'takeover' ? 'זו הפעולה המומלצת כרגע.' : 'ללחוץ “העברה למיה” ולהשאיר סיכום קצר.',
+    },
+    {
+      title: 'להחזיר ל-AI',
+      when: 'הטיפול האנושי הסתיים ואין צורך בקשר אישי נוסף.',
+      action: primaryAction === 'return_ai' ? 'זו הפעולה המומלצת כרגע.' : 'להחזיר ל-AI רק אחרי שההקשר ברור ובטוח.',
+    },
+    {
+      title: 'לסגור / לסמן כאבוד',
+      when: 'הלקוח לא רלוונטי, לא מתאים, ביקש לא לפנות, או אין המשך מסחרי.',
+      action: 'לא להשאיר במעקב עמום: לסמן Lost או DNC לפי המקרה.',
+    },
+  ];
+}
+
+function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages: MessageRow[]) {
+  const pendingQueues = queueItems.filter((q) => q.status === 'pending' || q.status === 'claimed');
+  const failed = pendingQueues.find(
+    (q) => q.queue_type === 'failed_automation' || q.queue_type === 'ai_stuck',
+  );
+  const phone =
+    lead.ownership_mode === 'phone_sales_pending' ||
+    pendingQueues.some((q) => q.queue_type === 'phone_escalation');
+  const human = lead.ownership_mode === 'mia_active' || lead.lead_status === 'human_handoff';
+  const ai = lead.ownership_mode === 'ai_active';
+  const last = messages[messages.length - 1];
+  const lastFromLead = last?.sender_type === 'lead';
+  const lastText = last?.content_text?.trim();
+  const closed =
+    lead.lead_status === 'won' ||
+    lead.lead_status === 'lost' ||
+    lead.do_not_contact ||
+    lead.removed_by_request;
+  const classificationWhy = lead.classification_summary || lead.handoff_reason || lead.suggested_next_action;
+  const humanScript = lead.suggested_next_action || 'עני קצר, ברור ובגובה העיניים; סיימי בשאלה אחת שמקדמת לשלב הבא.';
+
+  if (closed) {
+    return {
+      title: 'הליד סגור — לא נדרשת פעולה יומיומית',
+      detail: 'אם הלקוח חזר או שהסגירה הייתה טעות, השתמשי בפתיחה מחדש. אחרת אין צורך לגעת.',
+      why: lead.lost_reason || lead.payment_status || 'הסטטוס הנוכחי הוא סופי או חסום ליצירת קשר.',
+      script: 'לא לשלוח הודעה חדשה אלא אם הליד נפתח מחדש במודע.',
+      ownerLine: 'מצב סגור',
+      primaryAction: null,
+      tone: 'border-slate-200 bg-slate-50 text-slate-800',
+    };
+  }
+  if (failed) {
+    return {
+      title: 'יש תקלה שמונעת טיפול אוטומטי',
+      detail: failed.reason ?? 'נוצר פריט תקלה. כדאי לפתוח את השיחה ולענות ידנית או לבדוק את שליחת WhatsApp.',
+      why: failed.reason ?? 'יש פריט תור פתוח שמסמן שהאוטומציה לא השלימה טיפול.',
+      script: lastText ? `להתייחס להודעה האחרונה: “${lastText.slice(0, 120)}”` : humanScript,
+      ownerLine: 'דורש בדיקה ידנית',
+      primaryAction: 'takeover' as const,
+      tone: 'border-rose-200 bg-rose-50 text-rose-950',
+    };
+  }
+  if (phone) {
+    return {
+      title: 'השלב הנכון הוא שיחת טלפון',
+      detail: 'הליד ביקש שיחה או זוהה ככזה שצריך התערבות טלפונית. אחרי השיחה תעדי תוצאה וסיכום קצר.',
+      why: classificationWhy || 'הליד חם או דורש מענה אישי מהיר, ולכן שיחה עדיפה על עוד הודעות.',
+      script: 'להתקשר, לפתוח בשאלה קצרה על הצורך שלו, ואז לתעד תוצאה: ענה / לא ענה / נקבע המשך.',
+      ownerLine: 'ממתין לשיחה',
+      primaryAction: 'phone' as const,
+      tone: 'border-indigo-200 bg-indigo-50 text-indigo-950',
+    };
+  }
+  if (human && lastFromLead) {
+    return {
+      title: 'הלקוח מחכה לתשובה ממך',
+      detail: 'ה-AI מושעה בזמן טיפול אנושי. עני מהתיבה למטה, או החזירי ל-AI אם אין צורך במענה אנושי.',
+      why: classificationWhy || 'ההודעה האחרונה הגיעה מהלקוח בזמן שהשיחה בבעלות אנושית.',
+      script: humanScript,
+      ownerLine: 'בטיפול אנושי',
+      primaryAction: 'return_ai' as const,
+      tone: 'border-amber-200 bg-amber-50 text-amber-950',
+    };
+  }
+  if (human) {
+    return {
+      title: 'הליד אצלך — החליטי אם להמשיך ידנית או להחזיר ל-AI',
+      detail: 'אם סיימת טיפול, החזרה ל-AI תחזיר את המענה האוטומטי. אם צריך קשר אישי — המשיכי לענות ידנית.',
+      why: classificationWhy || 'השיחה כבר נלקחה לטיפול אנושי ולכן ה-AI לא ממשיך לבד.',
+      script: 'אם אין צורך בטיפול אישי נוסף — להחזיר למענה אוטומטי. אם יש צורך — לענות ידנית ולתעד.',
+      ownerLine: 'בטיפול אנושי',
+      primaryAction: 'return_ai' as const,
+      tone: 'border-amber-200 bg-amber-50 text-amber-950',
+    };
+  }
+  if (ai) {
+    return {
+      title: 'ה-AI מטפל — רק לעקוב',
+      detail: 'אין צורך להתערב כרגע. אם את מזהה שיחה רגישה, אפשר לקחת לטיפול אנושי בלחיצה.',
+      why: classificationWhy || 'השיחה נמצאת בבעלות AI ואין כרגע סימן שמחייב התערבות אדם.',
+      script: 'לא לענות ידנית כרגע. אם משהו נראה רגיש או שגוי — לקחת לטיפול אנושי ואז לענות.',
+      ownerLine: 'AI פעיל',
+      primaryAction: 'takeover' as const,
+      tone: 'border-sky-200 bg-sky-50 text-sky-950',
+    };
+  }
+  return {
+    title: 'צריך לבדוק מי אחראי על הליד',
+    detail: 'מצב הבעלות לא חד־משמעי. מומלץ לקחת לטיפול ידני ולסגור את ההחלטה.',
+    why: classificationWhy || 'מצב הבעלות לא תואם מסלול עבודה ברור.',
+    script: humanScript,
+    ownerLine: `בעלות: ${lead.ownership_mode}`,
+    primaryAction: 'takeover' as const,
+    tone: 'border-slate-200 bg-white text-slate-900',
+  };
+}
+
 function ActionGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/50 p-1.5">
@@ -594,9 +1008,7 @@ function ActionGroup({ label, children }: { label: string; children: React.React
   );
 }
 
-function NextActionBadge({
-  actionType, dueAt,
-}: { actionType: string | null; dueAt: string | null }) {
+function NextActionBadge({ actionType, dueAt }: { actionType: string | null; dueAt: string | null }) {
   if (!actionType && !dueAt) return null;
   const dueMs = dueAt ? Date.parse(dueAt) : NaN;
   const overdue = Number.isFinite(dueMs) && dueMs < Date.now();
@@ -618,7 +1030,8 @@ function NextActionBadge({
 }
 
 function HandlerBanner({
-  ownership, lastHumanTouchAt,
+  ownership,
+  lastHumanTouchAt,
 }: {
   ownership: import('@/lib/types').OwnershipMode;
   lastHumanTouchAt: string | null;
@@ -626,17 +1039,49 @@ function HandlerBanner({
   const cfg = (() => {
     switch (ownership) {
       case 'ai_active':
-        return { tone: 'bg-violet-50 text-violet-800 ring-violet-200', icon: '🤖', label: 'AI מטפל בליד', detail: 'הבוט עונה אוטומטית להודעות נכנסות.' };
+        return {
+          tone: 'bg-violet-50 text-violet-800 ring-violet-200',
+          icon: '🤖',
+          label: 'AI מטפל בליד',
+          detail: 'הבוט עונה אוטומטית להודעות נכנסות.',
+        };
       case 'mia_active':
-        return { tone: 'bg-amber-50 text-amber-800 ring-amber-200', icon: '👤', label: 'מיה מטפלת', detail: lastHumanTouchAt ? `מגע אנושי אחרון ${formatRelative(lastHumanTouchAt)}` : 'הליד הועבר לטיפול ידני.' };
+        return {
+          tone: 'bg-amber-50 text-amber-800 ring-amber-200',
+          icon: '👤',
+          label: 'מיה מטפלת',
+          detail: lastHumanTouchAt
+            ? `מגע אנושי אחרון ${formatRelative(lastHumanTouchAt)}`
+            : 'הליד הועבר לטיפול ידני.',
+        };
       case 'phone_sales_pending':
-        return { tone: 'bg-orange-50 text-orange-800 ring-orange-200', icon: '📞', label: 'ממתין לשיחת טלפון', detail: 'הליד סומן להתקשרות יזומה.' };
+        return {
+          tone: 'bg-orange-50 text-orange-800 ring-orange-200',
+          icon: '📞',
+          label: 'ממתין לשיחת טלפון',
+          detail: 'הליד סומן להתקשרות יזומה.',
+        };
       case 'shared_watch':
-        return { tone: 'bg-slate-100 text-slate-700 ring-slate-200', icon: '👁️', label: 'במעקב משותף', detail: 'אין מטפל פעיל; הצוות עוקב.' };
+        return {
+          tone: 'bg-slate-100 text-slate-700 ring-slate-200',
+          icon: '👁️',
+          label: 'במעקב משותף',
+          detail: 'אין מטפל פעיל; הצוות עוקב.',
+        };
       case 'suppressed':
-        return { tone: 'bg-rose-50 text-rose-800 ring-rose-200', icon: '🚫', label: 'ליד מנותק', detail: 'לא נשלחות הודעות אוטומטיות.' };
+        return {
+          tone: 'bg-rose-50 text-rose-800 ring-rose-200',
+          icon: '🚫',
+          label: 'ליד מנותק',
+          detail: 'לא נשלחות הודעות אוטומטיות.',
+        };
       default:
-        return { tone: 'bg-slate-100 text-slate-700 ring-slate-200', icon: '•', label: ownership, detail: '' };
+        return {
+          tone: 'bg-slate-100 text-slate-700 ring-slate-200',
+          icon: '•',
+          label: ownership,
+          detail: '',
+        };
     }
   })();
   return (
@@ -647,7 +1092,9 @@ function HandlerBanner({
       )}
       aria-live="polite"
     >
-      <span aria-hidden="true" className="text-base leading-none">{cfg.icon}</span>
+      <span aria-hidden="true" className="text-base leading-none">
+        {cfg.icon}
+      </span>
       <span>{cfg.label}</span>
       {cfg.detail ? <span className="text-xs font-normal opacity-80">· {cfg.detail}</span> : null}
     </div>
@@ -664,7 +1111,11 @@ function Row({ k, v }: { k: string; v: string | null | undefined }) {
 }
 
 function EditableRow({
-  k, v, editable, saving = false, onSave,
+  k,
+  v,
+  editable,
+  saving = false,
+  onSave,
 }: {
   k: string;
   v: string | null | undefined;
@@ -695,7 +1146,13 @@ function EditableRow({
           <span className="min-w-0 flex-1 truncate">{v || '—'}</span>
           {saving ? (
             <span className="inline-flex items-center gap-1 text-xs text-slate-500" aria-live="polite">
-              <svg viewBox="0 0 20 20" className="h-3 w-3 animate-spin" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg
+                viewBox="0 0 20 20"
+                className="h-3 w-3 animate-spin"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
                 <path d="M10 2a8 8 0 1 1-8 8" strokeLinecap="round" />
               </svg>
               שומר...
@@ -742,11 +1199,7 @@ function EditableRow({
         >
           שמירה
         </button>
-        <button
-          type="button"
-          className="kf-btn text-xs"
-          onClick={() => setEditing(false)}
-        >
+        <button type="button" className="kf-btn text-xs" onClick={() => setEditing(false)}>
           ביטול
         </button>
       </dd>
@@ -755,7 +1208,11 @@ function EditableRow({
 }
 
 function EditableEnumRow({
-  k, v, editable, options, onSave,
+  k,
+  v,
+  editable,
+  options,
+  onSave,
 }: {
   k: string;
   v: string | null | undefined;
@@ -782,7 +1239,9 @@ function EditableEnumRow({
         >
           <option value="">— ללא —</option>
           {options.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
           ))}
         </select>
       </dd>
@@ -799,7 +1258,15 @@ function DataRow({ label, value }: { label: string; value: string | null | undef
   );
 }
 
-function ContactRow({ label, value, kind }: { label: string; value: string | null | undefined; kind: 'phone' | 'email' }) {
+function ContactRow({
+  label,
+  value,
+  kind,
+}: {
+  label: string;
+  value: string | null | undefined;
+  kind: 'phone' | 'email';
+}) {
   const toast = useToast();
   if (!value) {
     return (
@@ -819,22 +1286,66 @@ function ContactRow({ label, value, kind }: { label: string; value: string | nul
   return (
     <div className="flex items-baseline gap-2">
       <span className="text-slate-500">{label}:</span>
-      <a href={href} className="font-medium text-slate-800 hover:text-brand-700 hover:underline tabular-nums">{value}</a>
+      <a href={href} className="font-medium text-slate-800 hover:text-brand-700 hover:underline tabular-nums">
+        {value}
+      </a>
       <button
-        type="button" onClick={copy}
+        type="button"
+        onClick={copy}
         className="text-slate-400 transition hover:text-brand-600"
         aria-label={`העתקת ${label}`}
         title={`העתקת ${label}`}
       >
         <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7">
-          <rect x="6" y="6" width="10" height="10" rx="1.5" /><path d="M4 13V5a1 1 0 0 1 1-1h8" />
+          <rect x="6" y="6" width="10" height="10" rx="1.5" />
+          <path d="M4 13V5a1 1 0 0 1 1-1h8" />
         </svg>
       </button>
     </div>
   );
 }
 
-const dayFormatter = new Intl.DateTimeFormat('he-IL', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+const dayFormatter = new Intl.DateTimeFormat('he-IL', {
+  weekday: 'long',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+});
+
+const INQUIRY_OPTIONS: Array<{ value: InquiryType; label: string }> = [
+  { value: 'program_details', label: 'פרטי תוכנית' },
+  { value: 'pricing', label: 'מחיר' },
+  { value: 'financing', label: 'מימון/משכנתא' },
+  { value: 'eligibility', label: 'התאמה' },
+  { value: 'property_search', label: 'איתור עסקה/נכס' },
+  { value: 'mentorship', label: 'ליווי' },
+  { value: 'purchase_ready', label: 'רכישה עכשיו' },
+  { value: 'support', label: 'תמיכה/לקוח קיים' },
+  { value: 'unknown', label: 'לא ידוע' },
+];
+
+const PRODUCT_OPTIONS: Array<{ value: ProductInterest; label: string }> = [
+  { value: 'digital_program', label: 'תוכנית דיגיטלית' },
+  { value: 'mentorship', label: 'ליווי' },
+  { value: 'student_tools', label: 'כלי תלמידים' },
+  { value: 'financing_guidance', label: 'הכוונת מימון' },
+  { value: 'unknown', label: 'לא ידוע' },
+];
+
+const SEGMENT_OPTIONS: Array<{ value: IntakeSegment; label: string }> = [
+  { value: 'hot_sales', label: 'מכירה חמה' },
+  { value: 'needs_human', label: 'נציג אנושי' },
+  { value: 'needs_nurture', label: 'טיפוח/הבשלה' },
+  { value: 'info_seeker', label: 'מחפש מידע' },
+  { value: 'support_or_existing', label: 'תמיכה/קיים' },
+  { value: 'unknown', label: 'לא ידוע' },
+];
+
+const CLASSIFICATION_CONFIDENCE_LABELS: Record<'high' | 'medium' | 'low', string> = {
+  high: 'גבוה',
+  medium: 'בינוני',
+  low: 'נמוך',
+};
 
 const PLAYBOOK_LABELS: Record<string, string> = {
   first_contact_whatsapp_inbound: 'מענה ראשון — WhatsApp/IG',
@@ -860,11 +1371,7 @@ function Transcript({ messages }: { messages: MessageRow[] }) {
   }, [messages.length]);
   if (messages.length === 0) {
     return (
-      <EmptyState
-        icon="💬"
-        title="אין עדיין הודעות בשיחה"
-        hint="כשהלקוח ישלח הודעה ראשונה, היא תופיע כאן."
-      />
+      <EmptyState icon="💬" title="אין עדיין הודעות בשיחה" hint="כשהלקוח ישלח הודעה ראשונה, היא תופיע כאן." />
     );
   }
   return (
@@ -916,13 +1423,20 @@ function groupByDay(messages: MessageRow[]): Array<{ day: string; items: Message
 
 function senderLabel(t: MessageRow['sender_type']): string {
   switch (t) {
-    case 'lead': return 'ליד';
-    case 'ai': return 'AI';
-    case 'mia': return 'מיה';
-    case 'sales_rep': return 'איש מכירות';
-    case 'system': return 'מערכת';
-    case 'admin': return 'אדמין';
-    default: return t;
+    case 'lead':
+      return 'ליד';
+    case 'ai':
+      return 'AI';
+    case 'mia':
+      return 'מיה';
+    case 'sales_rep':
+      return 'איש מכירות';
+    case 'system':
+      return 'מערכת';
+    case 'admin':
+      return 'אדמין';
+    default:
+      return t;
   }
 }
 
@@ -943,8 +1457,12 @@ const PROVIDER_STATUS_LABELS: Record<NonNullable<MessageRow['provider_status']>,
 };
 
 function ProviderStatusBadge({
-  status, error,
-}: { status: MessageRow['provider_status']; error: string | null }) {
+  status,
+  error,
+}: {
+  status: MessageRow['provider_status'];
+  error: string | null;
+}) {
   if (!status) return null;
   if (status === 'failed') {
     return (
@@ -965,7 +1483,11 @@ function waLink(phone: string): string {
   return `https://wa.me/${digits}`;
 }
 
-function CallLogForm({ onSubmit, submitting, errorMessage }: {
+function CallLogForm({
+  onSubmit,
+  submitting,
+  errorMessage,
+}: {
   onSubmit: (outcome: CallOutcome, durationMinutes: number, note: string | null) => void;
   submitting: boolean;
   errorMessage: string | null;
@@ -987,7 +1509,11 @@ function CallLogForm({ onSubmit, submitting, errorMessage }: {
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <label className="block">
           <span className="text-slate-600">תוצאה</span>
-          <select className="kf-input mt-1" value={outcome} onChange={(e) => setOutcome(e.target.value as CallOutcome)}>
+          <select
+            className="kf-input mt-1"
+            value={outcome}
+            onChange={(e) => setOutcome(e.target.value as CallOutcome)}
+          >
             <option value="connected">התקיימה שיחה</option>
             <option value="no_answer">אין מענה</option>
             <option value="voicemail">תא קולי</option>
@@ -997,7 +1523,14 @@ function CallLogForm({ onSubmit, submitting, errorMessage }: {
         </label>
         <label className="block">
           <span className="text-slate-600">משך (דק׳)</span>
-          <input type="number" min={0} max={180} className="kf-input mt-1" value={duration} onChange={(e) => setDuration(e.target.value)} />
+          <input
+            type="number"
+            min={0}
+            max={180}
+            className="kf-input mt-1"
+            value={duration}
+            onChange={(e) => setDuration(e.target.value)}
+          />
         </label>
       </div>
       <textarea
@@ -1014,7 +1547,12 @@ function CallLogForm({ onSubmit, submitting, errorMessage }: {
   );
 }
 
-function ReplyBox({ disabled, onSend, sending, errorMessage }: {
+function ReplyBox({
+  disabled,
+  onSend,
+  sending,
+  errorMessage,
+}: {
   disabled: boolean;
   onSend: (text: string) => void;
   sending: boolean;
@@ -1042,7 +1580,11 @@ function ReplyBox({ disabled, onSend, sending, errorMessage }: {
         <p className="text-xs text-slate-500">
           ייצא דרך WhatsApp באופן אוטומטי. מחוץ לחלון 24 שעות תישלח תבנית.
         </p>
-        <button type="submit" className="kf-btn kf-btn-primary w-full sm:w-auto" disabled={disabled || sending || !text.trim()}>
+        <button
+          type="submit"
+          className="kf-btn kf-btn-primary w-full sm:w-auto"
+          disabled={disabled || sending || !text.trim()}
+        >
           {sending ? 'שולח...' : 'שליחה'}
         </button>
       </div>
