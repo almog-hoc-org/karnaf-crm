@@ -153,5 +153,7 @@ describe('InboxPage', () => {
     expect(screen.getByText(/ההודעה תישמר ותישלח רק כשהלקוח יענה שוב/)).toBeInTheDocument();
     expect(screen.getByText('WhatsApp פתוח')).toBeInTheDocument();
     expect(screen.getByText('WhatsApp מחוץ ל-24ש׳')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'פתיחת WhatsApp עבור רוני לוי' })).toHaveAttribute('href', 'https://wa.me/972500000001');
+    expect(screen.getByRole('link', { name: 'פתיחת WhatsApp עבור איתי כהן' })).toHaveAttribute('href', 'https://wa.me/972500000002');
   });
 });
