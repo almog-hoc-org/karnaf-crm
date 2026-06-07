@@ -20,6 +20,7 @@ const HE = {
   nav_prompts: 'תבניות AI',
   nav_team: 'צוות',
   nav_sources: 'מקורות',
+  nav_whatsapp_router: 'ראוטר WhatsApp',
 
   // Queue
   queue_title: 'תורי עבודה',
@@ -181,6 +182,7 @@ const EN: Partial<Record<keyof typeof HE, string>> = {
   nav_prompts: 'AI Prompts',
   nav_team: 'Team',
   nav_sources: 'Sources',
+  nav_whatsapp_router: 'WhatsApp Router',
   queue_title: 'Queues',
   queue_total_items: 'items',
   queue_open: 'Open',
