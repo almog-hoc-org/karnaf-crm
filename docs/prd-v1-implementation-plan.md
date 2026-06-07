@@ -67,11 +67,18 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 - Added `webinar-events` webhook for webinar registration/attendance/purchase signals, updating `webinars`, `webinar_registrations`, Deals, and follow-up queue items.
 - Added queue labels/filters for WhatsApp router and webinar follow-up lists.
 
-## Still recommended for Phase 2b
+## Phase 2b shipped intake contracts
+
+- Added `intake_source_contracts` for explicit external form contracts.
+- Seeded PRD contracts for webinar registration, phone-call request, presale form, investor mentorship form, and WhatsApp topic-selection documentation.
+- `leads-intake` now applies contract aliases, validates required contract fields, applies default track/stage/topic/tags, and records the contract key in events/queue metadata.
+- The Sources admin page now shows configured intake contracts per source.
+- Added `docs/prd-v1-intake-contracts.md` with integration examples.
+
+## Still recommended for Phase 2c
 
 - Finalize dynamic presale option management instead of static seeded defaults.
 - Add working-hours logic for human handoff.
-- Add exact external payload examples for each landing-page/form provider.
 - Submit/approve WhatsApp templates before using proactive out-of-window router messages.
 
 ## Recommended Phase 3
