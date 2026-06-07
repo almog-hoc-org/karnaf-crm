@@ -275,6 +275,8 @@ export interface AttentionRow {
   product_interest?: ProductInterest | null;
   suggested_next_action?: string | null;
   intake_segment?: IntakeSegment | null;
+  queue_type?: string | null;
+  queue_summary?: string | null;
   priority_level: number;
   reason: string | null;
   due_at: string | null;

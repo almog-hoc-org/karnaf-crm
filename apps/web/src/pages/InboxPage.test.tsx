@@ -65,6 +65,8 @@ describe('InboxPage', () => {
         product_interest: 'investor_mentorship',
         suggested_next_action: null,
         intake_segment: 'hot_sales',
+        queue_type: 'sales_call',
+        queue_summary: 'ביקשה לדבר עם נציג על התאמת ליווי משקיעים',
         priority_level: 1,
         reason: 'ביקשה שיחת ייעוץ עם נציג',
         due_at: '2026-06-07T08:00:00.000Z',
@@ -80,6 +82,8 @@ describe('InboxPage', () => {
     expect(screen.getByText('ליד חם')).toBeInTheDocument();
     expect(screen.getByText('מכירה חמה')).toBeInTheDocument();
     expect(screen.getByText('צריך שיחה')).toBeInTheDocument();
+    expect(screen.getByText('שיחת מכירה')).toBeInTheDocument();
+    expect(screen.getByText('ביקשה לדבר עם נציג על התאמת ליווי משקיעים')).toBeInTheDocument();
     expect(screen.getByText('מה להגיד עכשיו')).toBeInTheDocument();
     expect(screen.getByText(/דנה, ראיתי שפנית לגבי ליווי משקיעים/)).toBeInTheDocument();
     expect(screen.getAllByText('להתקשר ולסגור אבחון קצר').length).toBeGreaterThan(0);
