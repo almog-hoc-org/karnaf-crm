@@ -152,6 +152,7 @@ export function InboxPage() {
           rows.map((row) => {
             const meta = classifyRow(row);
             const plan = operatingPlan(row, meta);
+            const chips = reasonChips(row, meta);
             return (
               <article
                 key={`${row.kind}:${row.ref_id}`}
@@ -195,6 +196,16 @@ export function InboxPage() {
                         <div className="mt-1 text-sm leading-6 text-slate-700">{plan.why}</div>
                       </div>
                     </div>
+
+                    {chips.length ? (
+                      <div className="flex flex-wrap gap-2" aria-label="סימני סיבה">
+                        {chips.map((chip) => (
+                          <span key={`${chip.label}:${chip.tone}`} className={clsx('rounded-full px-2.5 py-1 text-xs font-medium', chipClass(chip.tone))}>
+                            {chip.label}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
 
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusBadge status={row.lead_status} />
@@ -292,7 +303,9 @@ function InboxTrainingGuide() {
 }
 
 function DailyFocusPanel({ rows }: { rows: AttentionRow[] }) {
-  const first = rows[0] ? operatingPlan(rows[0], classifyRow(rows[0])) : null;
+  const firstRow = rows[0] ?? null;
+  const firstMeta = firstRow ? classifyRow(firstRow) : null;
+  const first = firstRow && firstMeta ? operatingPlan(firstRow, firstMeta) : null;
   const critical = rows.filter((row) => classifyRow(row).urgency === 'critical').length;
   const calls = rows.filter((row) => classifyRow(row).lane === 'call').length;
   const replies = rows.filter((row) => classifyRow(row).lane === 'reply').length;
@@ -303,7 +316,15 @@ function DailyFocusPanel({ rows }: { rows: AttentionRow[] }) {
         <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">הדבר הראשון לפתוח</p>
         {first ? (
           <>
-            <h2 className="mt-1 text-lg font-semibold text-slate-900">{first.nextAction}</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-semibold text-slate-900">{first.nextAction}</h2>
+              {firstMeta ? <span className={clsx('rounded-full px-2 py-0.5 text-xs font-semibold', firstMeta.pillClass)}>{firstMeta.actionLabel}</span> : null}
+            </div>
+            {firstRow ? (
+              <Link to={`/leads/${firstRow.lead_id}`} className="mt-1 inline-flex text-sm font-semibold text-brand-700 hover:underline">
+                לפתוח ראשון: {firstRow.lead_name || `ליד ${firstRow.lead_id.slice(0, 8)}`}
+              </Link>
+            ) : null}
             <p className="mt-1 text-sm leading-6 text-slate-500">{first.why}</p>
           </>
         ) : (
@@ -318,6 +339,53 @@ function DailyFocusPanel({ rows }: { rows: AttentionRow[] }) {
       <FocusMetric label="להתקשר" value={calls} hint="שיחות והסלמות" />
     </section>
   );
+}
+
+type ReasonChip = { label: string; tone: 'danger' | 'warning' | 'info' | 'success' | 'neutral' };
+
+function reasonChips(row: AttentionRow, meta = classifyRow(row)): ReasonChip[] {
+  const chips: ReasonChip[] = [];
+  const dueMs = row.due_at ? Date.parse(row.due_at) : NaN;
+  if (Number.isFinite(dueMs)) {
+    const deltaMinutes = Math.round((Date.now() - dueMs) / 60_000);
+    if (deltaMinutes > 0) chips.push({ label: `באיחור ${formatDuration(deltaMinutes)}`, tone: 'danger' });
+    else if (deltaMinutes > -120) chips.push({ label: `לטיפול בקרוב`, tone: 'warning' });
+  }
+  if (row.priority_level <= 1) chips.push({ label: 'עדיפות גבוהה', tone: 'danger' });
+  if (row.lead_heat === 'hot') chips.push({ label: 'ליד חם', tone: 'success' });
+  if (row.intake_segment === 'hot_sales') chips.push({ label: 'מכירה חמה', tone: 'success' });
+  if (row.intake_segment === 'support_or_existing') chips.push({ label: 'לקוח/תמיכה', tone: 'warning' });
+  if (meta.lane === 'reply') chips.push({ label: 'מחכה למענה אנושי', tone: 'warning' });
+  if (meta.lane === 'call') chips.push({ label: 'צריך שיחה', tone: 'info' });
+  if (meta.lane === 'risk') chips.push({ label: 'סיכון נפילה', tone: 'danger' });
+  if (row.product_interest) chips.push({ label: PRODUCT_LABELS[row.product_interest] ?? row.product_interest, tone: 'neutral' });
+  return dedupeChips(chips).slice(0, 5);
+}
+
+function dedupeChips(chips: ReasonChip[]): ReasonChip[] {
+  const seen = new Set<string>();
+  return chips.filter((chip) => {
+    if (seen.has(chip.label)) return false;
+    seen.add(chip.label);
+    return true;
+  });
+}
+
+function chipClass(tone: ReasonChip['tone']) {
+  switch (tone) {
+    case 'danger': return 'bg-rose-50 text-rose-700 ring-1 ring-rose-100';
+    case 'warning': return 'bg-amber-50 text-amber-700 ring-1 ring-amber-100';
+    case 'info': return 'bg-sky-50 text-sky-700 ring-1 ring-sky-100';
+    case 'success': return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100';
+    default: return 'bg-slate-100 text-slate-700';
+  }
+}
+
+function formatDuration(minutes: number) {
+  if (minutes < 60) return `${minutes} דק׳`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}ש׳ ${rest}דק׳` : `${hours}ש׳`;
 }
 
 function FocusMetric({ label, value, hint, tone }: { label: string; value: number; hint: string; tone?: 'danger' | 'ok' }) {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -24,7 +24,13 @@ function renderInbox(initialEntry = '/inbox') {
 
 describe('InboxPage', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-06-07T10:00:00.000Z'));
     mockedFetchAttentionInbox.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('shows first-day operating guidance for employees', async () => {
@@ -69,7 +75,11 @@ describe('InboxPage', () => {
     renderInbox();
 
     expect(await screen.findByText('דנה כהן')).toBeInTheDocument();
+    expect(screen.getByText('לפתוח ראשון: דנה כהן')).toBeInTheDocument();
     expect(screen.getByText('ליווי משקיעים')).toBeInTheDocument();
+    expect(screen.getByText('ליד חם')).toBeInTheDocument();
+    expect(screen.getByText('מכירה חמה')).toBeInTheDocument();
+    expect(screen.getByText('צריך שיחה')).toBeInTheDocument();
     expect(screen.getAllByText('להתקשר ולסגור אבחון קצר').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/מטרת השיחה היא להבין התאמה/).length).toBeGreaterThan(0);
   });
