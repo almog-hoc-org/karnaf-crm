@@ -34,7 +34,11 @@ Deno.serve(async (req) => {
 
   if (req.method === 'GET') {
     const config = await getRuntimeConfig(supabase);
-    return jsonResponse(req, { ok: true, activeHours: normaliseActiveHours(config.activeHours) });
+    return jsonResponse(req, {
+      ok: true,
+      activeHours: normaliseActiveHours(config.activeHours),
+      whatsappSession: normaliseWhatsAppSession(config.whatsappSession),
+    });
   }
 
   if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
@@ -93,4 +97,15 @@ function normaliseActiveHours(input: { start: string; end: string; timezone: str
 
 function normaliseWorkingDays(days: number[]): number[] {
   return [...new Set(days.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b);
+}
+
+function normaliseWhatsAppSession(input: { freeformWindowHours?: number; fallbackTemplateName?: string }) {
+  const fallbackTemplateName = typeof input.fallbackTemplateName === 'string' ? input.fallbackTemplateName.trim() : '';
+  const freeformWindowHours = Number.isFinite(input.freeformWindowHours) ? Math.max(1, Math.min(72, Math.round(input.freeformWindowHours ?? 24))) : 24;
+  return {
+    freeformWindowHours,
+    fallbackTemplateName: fallbackTemplateName || 'karnaf_followup_v1',
+    templateConfigured: Boolean(fallbackTemplateName),
+    templateApprovalRequired: true,
+  };
 }

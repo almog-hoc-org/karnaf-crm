@@ -103,9 +103,14 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 
 - Added CSV export for the WhatsApp router audit log from `/admin/whatsapp-router`.
 
-## Still recommended for Phase 2h
+## Phase 2h in progress: WhatsApp template readiness
 
-- Submit/approve WhatsApp templates before using proactive out-of-window router messages.
+- Added a safe runtime-config readout for WhatsApp session settings.
+- Added `/admin/settings` visibility for the configured fallback template and the hard Meta approval blocker.
+
+## Still recommended for Phase 2i
+
+- Submit/approve WhatsApp templates in Meta Business before using proactive out-of-window router messages.
 
 ## Recommended Phase 3
 
