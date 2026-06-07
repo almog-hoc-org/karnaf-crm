@@ -47,7 +47,7 @@ describe('Layout', () => {
   it('renders the always-visible operator nav links and the outlet', () => {
     renderLayout({ role: 'viewer' });
     expect(screen.queryByRole('link', { name: 'היום' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'לטיפול עכשיו' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'היום שלי' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'כל הלידים' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'תורים טכניים' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'דוחות' })).not.toBeInTheDocument();
