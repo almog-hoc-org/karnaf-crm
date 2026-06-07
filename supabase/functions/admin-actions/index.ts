@@ -92,6 +92,10 @@ const META_ENUM_FIELDS: Record<string, Set<string>> = {
   ]),
   product_interest: new Set([
     'digital_program',
+    'investor_mentorship',
+    'contractor_group_purchase',
+    'personal_consultation',
+    // Legacy values accepted for backwards compatibility with older rows.
     'mentorship',
     'student_tools',
     'financing_guidance',

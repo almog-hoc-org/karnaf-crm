@@ -17,6 +17,10 @@ export type InquiryType =
 
 export type ProductInterest =
   | 'digital_program'
+  | 'investor_mentorship'
+  | 'contractor_group_purchase'
+  | 'personal_consultation'
+  // Legacy values kept so older rows still render/round-trip safely.
   | 'mentorship'
   | 'student_tools'
   | 'financing_guidance'
@@ -50,12 +54,14 @@ export interface LeadClassificationSignal {
   handoffReason: string | null;
 }
 
-const PROGRAM_HINTS = ['תוכנית', 'קורס', 'לימודים', 'הכשרה', 'מסלול', 'נדלן', 'נדל״ן', 'נדל"ן'];
+const PROGRAM_HINTS = ['דרך לדירה', 'הדרך לדירה', 'תוכנית', 'תכנית', 'קורס', 'לימודים', 'הכשרה', 'מסלול', 'נדלן', 'נדל״ן', 'נדל"ן'];
 const PRICE_HINTS = ['מחיר', 'עלות', 'כמה עולה', 'כמה זה עולה', 'תשלום', 'משלמים', 'יקר'];
 const FINANCING_HINTS = ['משכנתא', 'מימון', 'הון עצמי', 'הלוואה', 'בנק', 'תקציב'];
 const ELIGIBILITY_HINTS = ['מתאים לי', 'מתאים עבורי', 'בלי ניסיון', 'מתחיל', 'מתחילה', 'גיל', 'זכאות'];
 const PROPERTY_HINTS = ['דירה', 'נכס', 'עסקה', 'השקעה', 'אזור', 'תשואה', 'חיפה', 'באר שבע'];
-const MENTORSHIP_HINTS = ['ליווי', 'מנטור', 'מנטורינג', 'אחד על אחד', 'ייעוץ אישי', 'שיחה אישית'];
+const INVESTOR_MENTORSHIP_HINTS = ['ליווי משקיעים', 'ליווי למשקיעים', 'ליווי השקעות', 'מנטור', 'מנטורינג', 'ליווי'];
+const CONTRACTOR_GROUP_HINTS = ['קבוצת רכישה', 'קבוצה מקבלן', 'מקבלן', 'קבלן', 'יזם', 'פרויקט חדש', 'דירה מקבלן'];
+const CONSULTATION_HINTS = ['שיחת ייעוץ', 'ייעוץ אישי', 'שיחה אישית', 'שיחה עם יועץ', 'פגישת ייעוץ', 'פגישה אישית'];
 const BUY_HINTS = ['רוצה להירשם', 'רוצה להתחיל', 'איך נרשמים', 'איך משלמים', 'לסגור', 'לרכוש'];
 const HUMAN_HINTS = ['נציג', 'בן אדם', 'בנאדם', 'שיחה', 'תתקשרו', 'טלפון', 'מיה'];
 const SUPPORT_HINTS = ['כבר נרשמתי', 'אני תלמיד', 'גישה', 'התחברות', 'חשבונית', 'תמיכה'];
@@ -91,7 +97,9 @@ export function classifyLeadIntake(input: LeadClassificationInput): LeadClassifi
   const financing = hit('financing', FINANCING_HINTS);
   const eligibility = hit('eligibility', ELIGIBILITY_HINTS);
   const property = hit('property', PROPERTY_HINTS);
-  const mentorship = hit('mentorship', MENTORSHIP_HINTS);
+  const investorMentorship = hit('investor_mentorship', INVESTOR_MENTORSHIP_HINTS);
+  const contractorGroup = hit('contractor_group_purchase', CONTRACTOR_GROUP_HINTS);
+  const consultation = hit('personal_consultation', CONSULTATION_HINTS);
   const program = hit('program', PROGRAM_HINTS);
 
   let inquiryType: InquiryType = 'unknown';
@@ -100,22 +108,22 @@ export function classifyLeadIntake(input: LeadClassificationInput): LeadClassifi
   else if (price) inquiryType = 'pricing';
   else if (financing) inquiryType = 'financing';
   else if (eligibility) inquiryType = 'eligibility';
-  else if (property) inquiryType = 'property_search';
-  else if (mentorship) inquiryType = 'mentorship';
+  else if (contractorGroup || property) inquiryType = 'property_search';
+  else if (investorMentorship || consultation) inquiryType = 'mentorship';
   else if (program) inquiryType = 'program_details';
 
   let productInterest: ProductInterest = 'unknown';
-  if (support) productInterest = 'student_tools';
-  else if (mentorship || human) productInterest = 'mentorship';
-  else if (financing) productInterest = 'financing_guidance';
-  else if (program || price || buy || eligibility || property) productInterest = 'digital_program';
+  if (contractorGroup) productInterest = 'contractor_group_purchase';
+  else if (consultation || human) productInterest = 'personal_consultation';
+  else if (investorMentorship) productInterest = 'investor_mentorship';
+  else if (program || price || buy || eligibility || property || financing) productInterest = 'digital_program';
 
   let intakeSegment: IntakeSegment = 'unknown';
   if (support) intakeSegment = 'support_or_existing';
   else if (buy) intakeSegment = 'hot_sales';
   else if (human) intakeSegment = 'needs_human';
   else if (price || financing || eligibility) intakeSegment = 'needs_nurture';
-  else if (program || property || mentorship) intakeSegment = 'info_seeker';
+  else if (program || property || investorMentorship || contractorGroup || consultation) intakeSegment = 'info_seeker';
 
   const confidence = matched.length >= 3 ? 'high' : matched.length >= 1 ? 'medium' : 'low';
   return buildSignal(inquiryType, productInterest, intakeSegment, matched, confidence);
@@ -173,7 +181,10 @@ function label(value: string): string {
     mentorship: 'ליווי',
     purchase_ready: 'רכישה עכשיו',
     support: 'תמיכה/לקוח קיים',
-    digital_program: 'תוכנית דיגיטלית',
+    digital_program: 'תוכנית הדרך לדירה',
+    investor_mentorship: 'ליווי משקיעים',
+    contractor_group_purchase: 'קבוצת רכישה מקבלן',
+    personal_consultation: 'שיחת ייעוץ אישית',
     student_tools: 'כלי תלמידים',
     financing_guidance: 'הכוונת מימון',
     hot_sales: 'מכירה חמה',

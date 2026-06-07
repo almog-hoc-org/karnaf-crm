@@ -206,6 +206,8 @@ export function LeadDetailPage() {
             kept above the metadata grid so it's always visible at a glance. */}
         <CurrentOwnerLine ownershipMode={lead.ownership_mode} humanOwner={humanOwnerProfile} />
 
+        <ProductFocusStrip lead={lead} />
+
         <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
           <ContactRow label="טלפון" value={lead.phone} kind="phone" />
           <ContactRow label="אימייל" value={lead.email} kind="email" />
@@ -283,12 +285,6 @@ export function LeadDetailPage() {
               >
                 סימון כאבוד
               </button>
-              {(lead.lead_status === 'won' || lead.lead_status === 'lost') &&
-              (auth.role === 'owner' || auth.role === 'admin') ? (
-                <button type="button" className="kf-btn" onClick={() => setReopenOpen(true)}>
-                  פתיחה מחדש
-                </button>
-              ) : null}
             </ActionGroup>
             <ActionGroup label="הסרה">
               <button
@@ -310,21 +306,10 @@ export function LeadDetailPage() {
             {/* Reopen — visible only for terminal/dead-end states. won_at stays
                 intact (analytics keeps the conversion); lost_at + DNC clear so
                 AI can resume the conversation. */}
-            {lead.lead_status === 'won' || lead.lead_status === 'lost' || lead.do_not_contact ? (
+            {(lead.lead_status === 'won' || lead.lead_status === 'lost' || lead.do_not_contact) &&
+            (auth.role === 'owner' || auth.role === 'admin') ? (
               <ActionGroup label="פתיחה מחדש">
-                <button
-                  type="button"
-                  className="kf-btn kf-btn-primary"
-                  onClick={() =>
-                    setPendingAction({
-                      action: 'reopen_lead',
-                      label: 'הליד נפתח מחדש',
-                      description:
-                        'הליד יחזור למצב פעיל, ה-AI יקבל את ההיסטוריה ויחליט אם וכיצד להגיב. סטטוס "נסגר" יישאר בדוחות הקנייה.',
-                      destructive: false,
-                    })
-                  }
-                >
+                <button type="button" className="kf-btn kf-btn-primary" onClick={() => setReopenOpen(true)}>
                   פתח שיחה מחדש
                 </button>
               </ActionGroup>
@@ -667,7 +652,7 @@ export function LeadDetailPage() {
       <ConfirmDialog
         open={reopenOpen}
         title="פתיחת ליד מחדש"
-        description="הליד יחזור לסטטוס פעיל. won_at/lost_at יתאפסו; תשלומים שכבר נרשמו יישארו לתיעוד."
+        description="הליד יחזור לסטטוס פעיל. אם הוא נסגר כ-Won/Lost שדות הסגירה יתאפסו; תשלומים שכבר נרשמו יישארו לתיעוד."
         confirmLabel="פתיחה מחדש"
         busy={reopen.isPending}
         onCancel={() => setReopenOpen(false)}
@@ -836,6 +821,36 @@ function GuidanceMiniCard({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl bg-white/65 p-3 ring-1 ring-black/5">
       <p className="text-xs font-semibold opacity-60">{label}</p>
       <p className="mt-1 text-sm leading-6 opacity-90">{value}</p>
+    </div>
+  );
+}
+
+function ProductFocusStrip({ lead }: { lead: LeadDetailType }) {
+  const product = lead.product_interest ?? 'unknown';
+  const label = PRODUCT_LABELS[product] ?? product;
+  const hint = PRODUCT_OPERATOR_HINTS[product] ?? PRODUCT_OPERATOR_HINTS.unknown;
+  const confidence = lead.classification_confidence
+    ? CLASSIFICATION_CONFIDENCE_LABELS[lead.classification_confidence]
+    : 'לא ידוע';
+
+  return (
+    <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-amber-950 sm:flex sm:items-start sm:justify-between sm:gap-4">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">מוצר רלוונטי לנציג</p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <strong className="text-lg leading-6">{label}</strong>
+          <span className="rounded-full bg-white/75 px-2 py-0.5 text-xs font-medium ring-1 ring-amber-200">
+            ביטחון: {confidence}
+          </span>
+        </div>
+        <p className="mt-1 text-sm leading-6 text-amber-900/85">{hint}</p>
+      </div>
+      {lead.suggested_next_action ? (
+        <div className="mt-3 rounded-xl bg-white/70 p-2 text-sm ring-1 ring-amber-200 sm:mt-0 sm:max-w-sm">
+          <span className="block text-xs font-semibold text-amber-700">פעולה מומלצת</span>
+          {lead.suggested_next_action}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1325,12 +1340,35 @@ const INQUIRY_OPTIONS: Array<{ value: InquiryType; label: string }> = [
 ];
 
 const PRODUCT_OPTIONS: Array<{ value: ProductInterest; label: string }> = [
-  { value: 'digital_program', label: 'תוכנית דיגיטלית' },
-  { value: 'mentorship', label: 'ליווי' },
-  { value: 'student_tools', label: 'כלי תלמידים' },
-  { value: 'financing_guidance', label: 'הכוונת מימון' },
+  { value: 'digital_program', label: 'תוכנית הדרך לדירה' },
+  { value: 'investor_mentorship', label: 'ליווי משקיעים' },
+  { value: 'contractor_group_purchase', label: 'קבוצת רכישה מקבלן' },
+  { value: 'personal_consultation', label: 'שיחת ייעוץ אישית' },
   { value: 'unknown', label: 'לא ידוע' },
 ];
+
+const PRODUCT_LABELS: Record<string, string> = {
+  digital_program: 'תוכנית הדרך לדירה',
+  investor_mentorship: 'ליווי משקיעים',
+  contractor_group_purchase: 'קבוצת רכישה מקבלן',
+  personal_consultation: 'שיחת ייעוץ אישית',
+  // Legacy labels from the first classifier version.
+  mentorship: 'ליווי משקיעים',
+  student_tools: 'כלי תלמידים / לקוח קיים',
+  financing_guidance: 'הכוונת מימון',
+  unknown: 'לא ידוע',
+};
+
+const PRODUCT_OPERATOR_HINTS: Record<string, string> = {
+  digital_program: 'מוצר הליבה: מסלול הדרך לדירה. לכוון לאבחון התאמה, ערך ותהליך הצטרפות.',
+  investor_mentorship: 'הליד כנראה מחפש ליווי השקעות אישי. לברר הון עצמי, ניסיון, אזור יעד ורמת בשלות.',
+  contractor_group_purchase: 'עניין בקבוצת רכישה/דירה מקבלן. לברר פרויקט, תקציב, לו״ז ורמת סיכון/מחויבות.',
+  personal_consultation: 'הליד מבקש שיחת ייעוץ אישית. לקדם לתיאום שיחה ולתעד שאלת אבחון מרכזית.',
+  mentorship: 'ערך ישן: להתייחס כליווי משקיעים ולחדד אם צריך.',
+  student_tools: 'ערך ישן: ייתכן לקוח/תלמיד קיים — לבדוק לפני מכירה.',
+  financing_guidance: 'ערך ישן: שיחת מימון/תקציב — בדרך כלל לשייך לתוכנית הדרך לדירה אחרי בירור.',
+  unknown: 'המוצר עדיין לא ברור. לשאול שאלה אחת: מה הכי רלוונטי — הדרך לדירה, ליווי משקיעים, קבוצת רכישה מקבלן או שיחת ייעוץ?',
+};
 
 const SEGMENT_OPTIONS: Array<{ value: IntakeSegment; label: string }> = [
   { value: 'hot_sales', label: 'מכירה חמה' },

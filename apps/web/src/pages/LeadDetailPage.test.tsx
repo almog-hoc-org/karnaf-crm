@@ -213,7 +213,9 @@ describe('LeadDetailPage', () => {
     expect(screen.getByText('ה-AI מטפל — רק לעקוב')).toBeInTheDocument();
     expect(screen.getByText('למה זה כאן')).toBeInTheDocument();
     expect(screen.getByText('מה להגיד עכשיו')).toBeInTheDocument();
-    expect(screen.getByText('לתת תשובה קצרה ולשאול שאלת אבחון אחת.')).toBeInTheDocument();
+    expect(screen.getByText('מוצר רלוונטי לנציג')).toBeInTheDocument();
+    expect(screen.getAllByText('תוכנית הדרך לדירה').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('לתת תשובה קצרה ולשאול שאלת אבחון אחת.').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'לקחת לטיפול אנושי' })).toBeInTheDocument();
     expect(screen.getByText('היי דנה, נשמח לעזור.')).toBeInTheDocument();
     expect(screen.getByText('שלום, אשמח לפרטים')).toBeInTheDocument();
@@ -289,6 +291,32 @@ describe('LeadDetailPage', () => {
     const textarea = await screen.findByPlaceholderText('לא ניתן לשלוח (ליד מושתק או חסרה שיחה).');
     expect(textarea).toBeDisabled();
     expect(screen.getByRole('button', { name: 'שליחה' })).toBeDisabled();
+  });
+
+  it('opens the reopen dialog from DNC and sends a targetStatus', async () => {
+    vi.mocked(fetchLeadDetail).mockResolvedValue({
+      ok: true,
+      lead: { ...lead, lead_status: 'do_not_contact', do_not_contact: true },
+      conversations: [conversation],
+      messages,
+      queueItems,
+      tasks,
+      events,
+      humanOwnerProfile: null,
+    });
+    renderDetail('owner');
+    fireEvent.click(await screen.findByRole('button', { name: 'פתח שיחה מחדש' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'פתיחה מחדש' }));
+    await waitFor(() => {
+      expect(postAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'reopen_lead',
+          leadId: 'lead-1',
+          targetStatus: 'responded',
+        }),
+      );
+    });
   });
 
   it('resolves a pending queue item via the close confirmation dialog', async () => {
