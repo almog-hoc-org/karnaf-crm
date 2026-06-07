@@ -3,6 +3,7 @@ import type {
   AttentionRow,
   ConversationRow,
   DashboardSummary,
+  DealRow,
   EventRow,
   IntakeSegment,
   InquiryType,
@@ -10,8 +11,10 @@ import type {
   LeadFit,
   LeadHeat,
   LeadRow,
+  MeetingRow,
   MessageRow,
   ProductInterest,
+  ProgramMemberRow,
   QueueRow,
   ReadinessLevel,
   TaskRow,
@@ -118,6 +121,9 @@ export async function fetchLeadDetail(leadId: string) {
     queueItems: QueueRow[];
     tasks: TaskRow[];
     events: EventRow[];
+    deals?: DealRow[];
+    meetings?: MeetingRow[];
+    programMember?: ProgramMemberRow | null;
     humanOwnerProfile: HumanOwnerProfile | null;
   }>('/lead-detail', { leadId });
 }
@@ -171,6 +177,8 @@ export interface LeadMetaUpdates {
   inquiry_type?: InquiryType | null;
   product_interest?: ProductInterest | null;
   intake_segment?: IntakeSegment | null;
+  primary_track?: 'program' | 'presale' | 'investor_mentorship' | null;
+  interest_topic?: string | null;
 }
 
 export async function postAdminAction(payload: {

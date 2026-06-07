@@ -18,13 +18,16 @@ Deno.serve(async (req) => {
 
   const supabase = getServiceSupabase();
 
-  const [leadRes, conversationsRes, messagesRes, queueRes, tasksRes, eventsRes] = await Promise.all([
+  const [leadRes, conversationsRes, messagesRes, queueRes, tasksRes, eventsRes, dealsRes, meetingsRes, programMemberRes] = await Promise.all([
     supabase.from('leads').select('*').eq('id', leadId).single(),
     supabase.from('conversations').select('*').eq('lead_id', leadId),
     supabase.from('messages').select('*').eq('lead_id', leadId).order('created_at', { ascending: true }).limit(200),
     supabase.from('work_queue').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(50),
     supabase.from('lead_tasks').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(50),
     supabase.from('lead_events').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(100),
+    supabase.from('deals').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(20),
+    supabase.from('meetings').select('*').eq('lead_id', leadId).order('starts_at', { ascending: false }).limit(20),
+    supabase.from('program_members').select('*').eq('lead_id', leadId).maybeSingle(),
   ]);
 
   if (leadRes.error) return jsonResponse(req, { error: leadRes.error.message }, 404);
@@ -38,6 +41,9 @@ Deno.serve(async (req) => {
     { label: 'queueItems', err: queueRes.error },
     { label: 'tasks', err: tasksRes.error },
     { label: 'events', err: eventsRes.error },
+    { label: 'deals', err: dealsRes.error },
+    { label: 'meetings', err: meetingsRes.error },
+    { label: 'programMember', err: programMemberRes.error },
   ].find((r) => r.err);
   if (secondary) {
     return jsonResponse(req, { error: `${secondary.label}: ${secondary.err!.message}` }, 500);
@@ -65,6 +71,9 @@ Deno.serve(async (req) => {
     queueItems: queueRes.data ?? [],
     tasks: tasksRes.data ?? [],
     events: eventsRes.data ?? [],
+    deals: dealsRes.data ?? [],
+    meetings: meetingsRes.data ?? [],
+    programMember: programMemberRes.data ?? null,
     humanOwnerProfile,
   });
 });

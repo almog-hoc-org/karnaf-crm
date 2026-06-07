@@ -56,6 +56,8 @@ interface ActionPayload {
     inquiry_type?: string | null;
     product_interest?: string | null;
     intake_segment?: string | null;
+    primary_track?: string | null;
+    interest_topic?: string | null;
   };
 }
 
@@ -74,6 +76,7 @@ const META_TEXT_FIELDS = new Set([
   'city',
   'decision_context',
   'lost_reason',
+  'interest_topic',
 ]);
 const META_ENUM_FIELDS: Record<string, Set<string>> = {
   lead_heat: new Set(['cold', 'cool', 'warm', 'hot']),
@@ -109,6 +112,7 @@ const META_ENUM_FIELDS: Record<string, Set<string>> = {
     'support_or_existing',
     'unknown',
   ]),
+  primary_track: new Set(['program', 'presale', 'investor_mentorship']),
 };
 const META_MAX_LENGTH = 280;
 
@@ -424,6 +428,13 @@ Deno.serve(async (req) => {
     case 'update_lead_meta': {
       const sanitised = sanitiseMetaUpdates(body.metaUpdates);
       if (!sanitised) return jsonResponse(req, { error: 'No meta fields to update' }, 400);
+      if (sanitised.primary_track) {
+        const { data: current } = await supabase.from('leads').select('active_tracks').eq('id', leadId).maybeSingle();
+        const currentTracks = Array.isArray(current?.active_tracks)
+          ? current.active_tracks.filter((t) => typeof t === 'string') as string[]
+          : [];
+        (sanitised as Record<string, unknown>).active_tracks = [...new Set([...currentTracks, sanitised.primary_track])];
+      }
       await updateLeadFields(supabase, leadId, sanitised);
       await logLeadEvent(
         supabase,
