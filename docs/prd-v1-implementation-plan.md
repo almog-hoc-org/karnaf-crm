@@ -88,11 +88,16 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 - Customer acknowledgement now distinguishes immediate handoff from outside-hours handoff without promising an instant human reply.
 - Queue payload/events include whether the request arrived during open hours and the next opening label.
 
-## Still recommended for Phase 2e
+## Phase 2e shipped admin runtime settings
+
+- Added owner/admin `runtime-config` function for low-risk runtime settings.
+- Added `/admin/settings` UI to edit active hours, timezone, and working days without SQL.
+- Active-hours edits immediately affect new human handoff scheduling.
+
+## Still recommended for Phase 2f
 
 - Submit/approve WhatsApp templates before using proactive out-of-window router messages.
 - Add a light audit/export view for router option changes if operators start changing options frequently.
-- Optional: admin UI for editing active hours and working days instead of SQL/config edits.
 
 ## Recommended Phase 3
 

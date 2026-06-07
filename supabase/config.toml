@@ -38,6 +38,9 @@ verify_jwt = false
 [functions.whatsapp-router-options]
 verify_jwt = true
 
+[functions.runtime-config]
+verify_jwt = true
+
 [functions.provider-status-webhook]
 verify_jwt = false
 
