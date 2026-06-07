@@ -10,6 +10,8 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { archiveWhatsAppMedia } from '../_shared/media-fetch.ts';
+import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { buildHumanHandoffSchedule } from '../_shared/handoff-schedule.ts';
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -299,10 +301,14 @@ async function handleWhatsAppRouter(
   const matched = text ? matchRouterOption(text, options as RouterOption[]) : null;
   if (matched) {
     if (matched.track === 'human') {
+      const runtimeConfig = await getRuntimeConfig(supabase);
+      const handoff = buildHumanHandoffSchedule(new Date(), runtimeConfig.activeHours);
       await updateLeadFields(supabase, input.leadId, {
         ownership_mode: 'mia_active',
         primary_track: null,
         interest_topic: matched.interest_topic ?? 'נציג אנושי',
+        next_action_type: 'human_whatsapp_handoff',
+        next_action_due_at: handoff.dueAtIso,
       });
       await supabase.from('whatsapp_router_state').upsert({
         lead_id: input.leadId,
@@ -310,22 +316,31 @@ async function handleWhatsAppRouter(
         status: 'human_requested',
         selected_option_key: matched.option_key,
         selected_at: new Date().toISOString(),
-        metadata: { correlationId: input.correlationId, text },
+        metadata: { correlationId: input.correlationId, text, workingHours: { isOpenNow: handoff.isOpenNow, nextOpenLabel: handoff.nextOpenLabel } },
       }, { onConflict: 'lead_id' });
       await ensurePendingQueueItem(supabase, {
         leadId: input.leadId,
         queueType: 'whatsapp_human_requested',
-        priorityLevel: 1,
-        reason: 'לקוח ביקש מעבר לנציג אנושי בוואטסאפ',
+        priorityLevel: handoff.priorityLevel,
+        reason: handoff.reason,
         queueSummary: input.text,
-        payloadJson: { correlationId: input.correlationId, optionKey: matched.option_key },
+        dueAt: handoff.dueAtIso,
+        payloadJson: {
+          correlationId: input.correlationId,
+          optionKey: matched.option_key,
+          isOpenNow: handoff.isOpenNow,
+          nextOpenLabel: handoff.nextOpenLabel,
+        },
       });
       await logLeadEvent(supabase, input.leadId, 'whatsapp_router_human_requested', 'system', {
         correlation_id: input.correlationId,
         option_key: matched.option_key,
         text: input.text,
+        is_open_now: handoff.isOpenNow,
+        handoff_due_at: handoff.dueAtIso,
+        next_open_label: handoff.nextOpenLabel,
       }, input.conversationId);
-      await sendRouterText(supabase, input, 'מעולה, העברתי לנציג אנושי. נחזור אליך כאן בהקדם.');
+      await sendRouterText(supabase, input, handoff.customerText);
       return { handled: true, action: 'human_requested' };
     }
 

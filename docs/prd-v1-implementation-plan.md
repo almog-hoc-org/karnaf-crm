@@ -81,11 +81,18 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 - Added `/admin/whatsapp-router` UI to create, edit, activate/deactivate, reorder, and delete topic routing options.
 - Router changes now affect WhatsApp topic selection from DB without code changes or SQL access.
 
-## Still recommended for Phase 2d
+## Phase 2d shipped working-hours handoff logic
 
-- Add working-hours logic for human handoff.
+- Added explicit `active_hours.workingDays` config, defaulting to Israel work week Sunday-Thursday.
+- Human WhatsApp handoff now schedules `work_queue.due_at` and `leads.next_action_due_at` according to active hours.
+- Customer acknowledgement now distinguishes immediate handoff from outside-hours handoff without promising an instant human reply.
+- Queue payload/events include whether the request arrived during open hours and the next opening label.
+
+## Still recommended for Phase 2e
+
 - Submit/approve WhatsApp templates before using proactive out-of-window router messages.
 - Add a light audit/export view for router option changes if operators start changing options frequently.
+- Optional: admin UI for editing active hours and working days instead of SQL/config edits.
 
 ## Recommended Phase 3
 

@@ -49,7 +49,7 @@ export interface AiRecentMessage {
 }
 
 export interface AiRuntimeConfig {
-  activeHours: { start: string; end: string; timezone: string };
+  activeHours: { start: string; end: string; timezone: string; workingDays?: number[] };
   followUpDelays: { firstResponseMinutes: number; nurtureHours: number; paymentPendingHours: number };
   product: { code: string; displayName: string; priceMinIls: number; priceTypicalIls: number };
   forbiddenClaims: string[];
