@@ -71,8 +71,14 @@ export function LeadDetailPage() {
   useRealtimeInvalidate('conversation_claims', leadDetailKey);
 
   const action = useMutation({
-    mutationFn: (input: { action: AdminAction; note?: string; label: string }) =>
-      postAdminAction({ action: input.action, leadId, note: input.note ?? null }).then((r) => ({
+    mutationFn: (input: { action: AdminAction; note?: string; label: string; dealId?: string; targetStage?: string }) =>
+      postAdminAction({
+        action: input.action,
+        leadId,
+        note: input.note ?? null,
+        dealId: input.dealId,
+        targetStage: input.targetStage,
+      }).then((r) => ({
         r,
         label: input.label,
       })),
@@ -441,7 +447,23 @@ export function LeadDetailPage() {
             </dl>
           </div>
 
-          <PipelineOverviewCard lead={lead} deals={deals} meetings={meetings} programMember={programMember} />
+          <PipelineOverviewCard
+            lead={lead}
+            deals={deals}
+            meetings={meetings}
+            programMember={programMember}
+            canAdvance={auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia' || auth.role === 'sales_rep'}
+            advancing={action.isPending}
+            onAdvance={(deal, targetStage) =>
+              action.mutate({
+                action: 'advance_deal_stage',
+                label: 'שלב העסקה עודכן',
+                note: `advance:${deal.stage}->${targetStage}`,
+                dealId: deal.id,
+                targetStage,
+              })
+            }
+          />
 
           <div className="kf-card p-4">
             <h2 className="font-semibold">סיווג קליטה ותפעול</h2>
@@ -842,11 +864,17 @@ function PipelineOverviewCard({
   deals,
   meetings,
   programMember,
+  canAdvance,
+  advancing,
+  onAdvance,
 }: {
   lead: LeadDetailType;
   deals: DealRow[];
   meetings: MeetingRow[];
   programMember: ProgramMemberRow | null;
+  canAdvance: boolean;
+  advancing: boolean;
+  onAdvance: (deal: DealRow, targetStage: string) => void;
 }) {
   const nextMeeting = [...meetings]
     .filter((m) => m.status === 'scheduled')
@@ -887,6 +915,9 @@ function PipelineOverviewCard({
                 {deal.presale_project ? ` · פרויקט: ${deal.presale_project}` : ''}
                 {deal.partner_name ? ` · שותף: ${deal.partner_name}` : ''}
               </div>
+              {canAdvance && deal.status === 'open' ? (
+                <DealStageActions deal={deal} busy={advancing} onAdvance={onAdvance} />
+              ) : null}
             </li>
           ))}
         </ul>
@@ -896,6 +927,55 @@ function PipelineOverviewCard({
     </div>
   );
 }
+
+function DealStageActions({
+  deal,
+  busy,
+  onAdvance,
+}: {
+  deal: DealRow;
+  busy: boolean;
+  onAdvance: (deal: DealRow, targetStage: string) => void;
+}) {
+  const nextStages = NEXT_DEAL_STAGES[deal.track]?.[deal.stage] ?? [];
+  if (!nextStages.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {nextStages.map((stage) => (
+        <button
+          key={stage}
+          type="button"
+          className="kf-btn kf-btn-ghost text-xs"
+          disabled={busy}
+          onClick={() => onAdvance(deal, stage)}
+        >
+          {DEAL_STAGE_LABELS[stage] ?? stage}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const NEXT_DEAL_STAGES: Record<string, Record<string, string[]>> = {
+  program: {
+    new: ['webinar_registered', 'phone_call_booked'],
+    webinar_registered: ['webinar_attended', 'phone_call_booked'],
+    webinar_attended: ['phone_call_booked', 'zoom_meeting', 'paid_program_member'],
+    phone_call_booked: ['zoom_meeting', 'paid_program_member', 'not_relevant'],
+    zoom_meeting: ['paid_program_member', 'not_relevant'],
+  },
+  presale: {
+    new: ['phone_call_done', 'not_relevant'],
+    phone_call_done: ['meeting_scheduled', 'not_relevant'],
+    meeting_scheduled: ['office_meeting_held', 'not_relevant'],
+    office_meeting_held: ['signed', 'not_relevant'],
+  },
+  investor_mentorship: {
+    form_submitted: ['shahar_phone_call_done', 'not_relevant'],
+    shahar_phone_call_done: ['zoom_meeting', 'not_relevant'],
+    zoom_meeting: ['closed_won', 'not_relevant'],
+  },
+};
 
 const PRD_TRACK_LABELS: Record<string, string> = {
   program: 'תכנית הליווי',
@@ -918,8 +998,14 @@ const DEAL_STAGE_LABELS: Record<string, string> = {
   form_submitted: 'מילא טופס',
   zoom_meeting: 'פגישת זום',
   office_meeting: 'פגישה במשרד',
+  phone_call_done: 'בוצעה שיחה',
+  meeting_scheduled: 'תואמה פגישה',
+  office_meeting_held: 'פגישה התקיימה',
+  signed: 'חתם',
+  shahar_phone_call_done: 'בוצעה שיחה (שחר)',
   paid_program_member: 'שילם — חבר תכנית',
   closed_won: 'נסגר',
+  not_relevant: 'לא רלוונטי',
 };
 
 const MEETING_TYPE_LABELS: Record<string, string> = {

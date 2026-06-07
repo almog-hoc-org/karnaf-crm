@@ -32,6 +32,9 @@ verify_jwt = false
 [functions.payment-webhook]
 verify_jwt = false
 
+[functions.webinar-events]
+verify_jwt = false
+
 [functions.provider-status-webhook]
 verify_jwt = false
 
