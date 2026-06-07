@@ -99,10 +99,13 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 - Added persistent audit table for WhatsApp router option create/update/delete events.
 - Added a light audit log inside `/admin/whatsapp-router` showing recent changes and changed fields.
 
-## Still recommended for Phase 2g
+## Phase 2g in progress: router audit export
+
+- Added CSV export for the WhatsApp router audit log from `/admin/whatsapp-router`.
+
+## Still recommended for Phase 2h
 
 - Submit/approve WhatsApp templates before using proactive out-of-window router messages.
-- Optional: export audit log to CSV if operators start changing options frequently.
 
 ## Recommended Phase 3
 

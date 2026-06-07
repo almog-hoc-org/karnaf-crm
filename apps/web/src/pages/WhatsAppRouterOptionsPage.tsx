@@ -155,7 +155,9 @@ function RouterOptionAuditLog({ events, loading }: { events: WhatsAppRouterOptio
           <h2 className="text-lg font-semibold">יומן שינויים</h2>
           <p className="text-sm text-slate-500">50 השינויים האחרונים באפשרויות הראוטר.</p>
         </div>
-        <span className="text-xs text-slate-400">Audit</span>
+        <button type="button" className="kf-btn text-xs" disabled={events.length === 0} onClick={() => exportAuditCsv(events)}>
+          יצוא CSV
+        </button>
       </div>
       {loading ? (
         <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">{t('loading')}</div>
@@ -201,6 +203,41 @@ function summariseOption(option: Partial<WhatsAppRouterOption> | null) {
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat('he-IL', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
+}
+
+function exportAuditCsv(events: WhatsAppRouterOptionEvent[]) {
+  const rows = [
+    ['created_at', 'action', 'option_key', 'changed_fields', 'label_he', 'track', 'stage', 'presale_project', 'actor_user_id'],
+    ...events.map((event) => {
+      const option = event.after_value ?? event.before_value ?? {};
+      return [
+        event.created_at,
+        event.action,
+        event.option_key ?? '',
+        event.changed_fields.join('|'),
+        option.label_he ?? '',
+        option.track ?? '',
+        option.stage ?? '',
+        option.presale_project ?? '',
+        event.actor_user_id ?? '',
+      ];
+    }),
+  ];
+  const csv = rows.map((row) => row.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `whatsapp-router-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? '');
+  return `"${text.replace(/"/g, '""')}"`;
 }
 
 function CreateRouterOptionForm({
