@@ -80,6 +80,8 @@ describe('InboxPage', () => {
     expect(screen.getByText('ליד חם')).toBeInTheDocument();
     expect(screen.getByText('מכירה חמה')).toBeInTheDocument();
     expect(screen.getByText('צריך שיחה')).toBeInTheDocument();
+    expect(screen.getByText('מה להגיד עכשיו')).toBeInTheDocument();
+    expect(screen.getByText(/דנה, ראיתי שפנית לגבי ליווי משקיעים/)).toBeInTheDocument();
     expect(screen.getAllByText('להתקשר ולסגור אבחון קצר').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/מטרת השיחה היא להבין התאמה/).length).toBeGreaterThan(0);
   });
