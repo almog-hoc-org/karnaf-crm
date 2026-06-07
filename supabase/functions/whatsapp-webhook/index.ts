@@ -1,6 +1,6 @@
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { normalizeIsraeliPhone } from '../_shared/phone.ts';
-import { normalizeProviderInbound } from '../_shared/whatsapp-provider.ts';
+import { normalizeProviderInbound, sendWhatsAppText } from '../_shared/whatsapp-provider.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { ensureConversation, logLeadEvent, upsertLeadByPhone } from '../_shared/lead-service.ts';
 import { messageAlreadyLogged } from '../_shared/idempotency.ts';
@@ -133,6 +133,27 @@ Deno.serve(async (req) => {
     correlation_id: correlationId,
   }, conversation.id);
 
+  const flushedManualReplies = await flushPendingManualReplies(supabase, {
+    leadId: lead.id,
+    conversationId: conversation.id,
+    phone,
+    correlationId,
+  });
+
+  if (flushedManualReplies > 0) {
+    log.info('pending_manual_replies_flushed', {
+      fn: 'whatsapp-webhook', correlationId, leadId: lead.id, conversationId: conversation.id, count: flushedManualReplies,
+    });
+    return jsonResponse(req, {
+      ok: true,
+      leadId: lead.id,
+      conversationId: conversation.id,
+      correlationId,
+      flushedManualReplies,
+      skippedAi: true,
+    });
+  }
+
   // Enqueue an orchestrate-message dispatch instead of fire-and-forget so
   // a crashed orchestrator or network glitch doesn't silently drop the
   // reply. dispatch-outbound (run every minute by pg_cron) drains the
@@ -172,3 +193,69 @@ Deno.serve(async (req) => {
   log.info('inbound_accepted', { fn: 'whatsapp-webhook', correlationId, leadId: lead.id, conversationId: conversation.id });
   return jsonResponse(req, { ok: true, leadId: lead.id, conversationId: conversation.id, correlationId });
 });
+
+async function flushPendingManualReplies(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  input: { leadId: string; conversationId: string; phone: string; correlationId: string },
+): Promise<number> {
+  const { data: pending, error } = await supabase
+    .from('pending_manual_replies')
+    .select('id, text, sender_type, sender_name')
+    .eq('lead_id', input.leadId)
+    .eq('conversation_id', input.conversationId)
+    .in('status', ['queued', 'reopen_sent', 'failed'])
+    .order('queued_at', { ascending: true })
+    .limit(5);
+
+  if (error || !pending?.length) return 0;
+
+  let sent = 0;
+  for (const row of pending as Array<{ id: string; text: string; sender_type: string; sender_name: string | null }>) {
+    const result = await sendWhatsAppText(input.phone, row.text);
+    if (!result.ok) {
+      await supabase.from('pending_manual_replies').update({
+        status: 'failed',
+        last_error: result.error ?? 'Send failed after inbound reopened window',
+        failed_at: new Date().toISOString(),
+      }).eq('id', row.id);
+      await ensurePendingQueueItem(supabase, {
+        leadId: input.leadId,
+        queueType: 'failed_automation',
+        priorityLevel: 1,
+        reason: 'Pending manual reply failed after customer reopened WhatsApp window',
+        queueSummary: result.error ?? 'Send failed',
+        payloadJson: { pendingReplyId: row.id, correlationId: input.correlationId },
+        createdByActorType: 'system',
+      });
+      continue;
+    }
+
+    await supabase.from('messages').insert({
+      conversation_id: input.conversationId,
+      lead_id: input.leadId,
+      provider_message_id: result.providerMessageId ?? null,
+      sender_type: row.sender_type,
+      sender_name: row.sender_name,
+      direction: 'outbound',
+      message_type: 'text',
+      content_text: row.text,
+      provider_status: 'sent',
+      raw_payload: { source: 'pending_manual_reply', pending_reply_id: row.id, correlation_id: input.correlationId },
+    });
+
+    await supabase.from('pending_manual_replies').update({
+      status: 'sent',
+      send_provider_message_id: result.providerMessageId ?? null,
+      sent_at: new Date().toISOString(),
+      last_error: null,
+    }).eq('id', row.id);
+
+    await logLeadEvent(supabase, input.leadId, 'pending_manual_reply_sent', 'system', {
+      correlation_id: input.correlationId,
+      pending_reply_id: row.id,
+      provider_message_id: result.providerMessageId ?? null,
+    }, input.conversationId);
+    sent += 1;
+  }
+  return sent;
+}

@@ -52,12 +52,27 @@ Deno.serve(async (req) => {
 
   const mode = resolveSendMode('freeform', lead.last_inbound_at, config.whatsappSession.freeformWindowHours);
   let result;
+  let pendingReplyId: string | null = null;
   try {
     if (mode === 'freeform') {
       result = await sendWhatsAppText(lead.phone as string, text);
     } else {
+      const { data: pending, error: pendingErr } = await supabase.from('pending_manual_replies').insert({
+        lead_id: leadId,
+        conversation_id: conversationId,
+        text,
+        sender_user_id: staff.userId,
+        sender_type: staff.role === 'sales_rep' ? 'sales_rep' : 'mia',
+        sender_name: staff.fullName || staff.email,
+        status: 'queued',
+        reopen_template_name: config.whatsappSession.fallbackTemplateName,
+        metadata: { correlationId },
+      }).select('id').single();
+      if (pendingErr) throw pendingErr;
+      pendingReplyId = pending?.id as string | null;
+
       result = await sendWhatsAppTemplate(lead.phone as string, config.whatsappSession.fallbackTemplateName, [
-        { name: 'reply', value: text },
+        { name: 'name', value: lead.phone as string },
       ]);
     }
   } catch (err) {
@@ -66,13 +81,35 @@ Deno.serve(async (req) => {
 
   if (!result.ok) {
     const friendly = formatManualReplyFailure(result.error ?? 'Send failed', mode, config.whatsappSession.fallbackTemplateName);
+    if (pendingReplyId) {
+      await supabase.from('pending_manual_replies').update({
+        status: 'failed',
+        last_error: result.error ?? 'Send failed',
+        failed_at: new Date().toISOString(),
+      }).eq('id', pendingReplyId);
+    }
     await ensurePendingQueueItem(supabase, {
       leadId, queueType: 'failed_automation', priorityLevel: 1,
       reason: friendly.queueReason,
       queueSummary: friendly.userMessage,
-      payloadJson: { error: result.error ?? null, mode, templateName: config.whatsappSession.fallbackTemplateName, correlationId },
+      payloadJson: { error: result.error ?? null, mode, pendingReplyId, templateName: config.whatsappSession.fallbackTemplateName, correlationId },
       createdByActorType: staff.role,
     });
+    if (pendingReplyId && friendly.code === 'WHATSAPP_TEMPLATE_MISSING') {
+      await logLeadEvent(supabase, leadId, 'manual_reply_queued_template_missing', staff.role, {
+        correlation_id: correlationId,
+        pending_reply_id: pendingReplyId,
+        template_name: config.whatsappSession.fallbackTemplateName,
+        length: text.length,
+      }, conversationId, staff.userId);
+      return jsonResponse(req, {
+        ok: true,
+        mode: 'queued_no_template',
+        queued: true,
+        pendingReplyId,
+        warning: friendly.userMessage,
+      });
+    }
     return jsonResponse(req, {
       ok: false,
       error: friendly.userMessage,
@@ -80,6 +117,34 @@ Deno.serve(async (req) => {
       providerError: result.error ?? null,
       mode,
     }, friendly.status);
+  }
+
+  if (mode === 'template' && pendingReplyId) {
+    await supabase.from('pending_manual_replies').update({
+      status: 'reopen_sent',
+      reopen_provider_message_id: result.providerMessageId ?? null,
+      reopen_sent_at: new Date().toISOString(),
+    }).eq('id', pendingReplyId);
+
+    await updateLeadFields(supabase, leadId, {
+      ownership_mode: lead.ownership_mode === 'ai_active' ? 'mia_active' : lead.ownership_mode,
+      human_owner_id: staff.userId,
+      last_human_touch_at: new Date().toISOString(),
+    });
+    if (lead.ownership_mode === 'ai_active' && canTransition(String(lead.lead_status), 'human_handoff')) {
+      await transitionLeadStatus(supabase, leadId, 'human_handoff', staff.role, 'manual_reply_takeover');
+    }
+
+    await logLeadEvent(supabase, leadId, 'manual_reply_queued_after_24h', staff.role, {
+      correlation_id: correlationId,
+      pending_reply_id: pendingReplyId,
+      template_name: config.whatsappSession.fallbackTemplateName,
+      template_provider_message_id: result.providerMessageId ?? null,
+      length: text.length,
+    }, conversationId, staff.userId);
+
+    log.info('manual_reply_queued_after_24h', { fn: 'send-reply', correlationId, leadId, userId: staff.userId, pendingReplyId });
+    return jsonResponse(req, { ok: true, mode: 'queued_template', queued: true, pendingReplyId });
   }
 
   await supabase.from('messages').insert({

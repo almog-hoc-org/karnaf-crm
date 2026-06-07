@@ -103,8 +103,12 @@ export function LeadDetailPage() {
       if (!conversationId) throw new Error('No conversation');
       return postSendReply({ leadId, conversationId, text });
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['lead-detail', leadId] });
+      if (result.queued) {
+        toast.success('ההודעה נשמרה ותישלח אוטומטית כשהלקוח יענה');
+        return;
+      }
       toast.success('הודעה נשלחה');
     },
     onError: (err) => toast.error((err as Error).message),
