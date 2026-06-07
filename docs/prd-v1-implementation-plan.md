@@ -94,16 +94,16 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 - Added `/admin/settings` UI to edit active hours, timezone, and working days without SQL.
 - Active-hours edits immediately affect new human handoff scheduling.
 
-## Phase 2f in progress: router option audit
+## Phase 2f shipped router option audit
 
 - Added persistent audit table for WhatsApp router option create/update/delete events.
 - Added a light audit log inside `/admin/whatsapp-router` showing recent changes and changed fields.
 
-## Phase 2g in progress: router audit export
+## Phase 2g shipped router audit export
 
 - Added CSV export for the WhatsApp router audit log from `/admin/whatsapp-router`.
 
-## Phase 2h in progress: WhatsApp template readiness
+## Phase 2h shipped WhatsApp template readiness
 
 - Added a safe runtime-config readout for WhatsApp session settings.
 - Added `/admin/settings` visibility for the configured fallback template and the hard Meta approval blocker.
@@ -112,13 +112,24 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 
 - Submit/approve WhatsApp templates in Meta Business before using proactive out-of-window router messages.
 
-## Recommended Phase 3
+## Phase 3a shipped daily inbox operator clarity
 
-Meetings + onboarding:
-- meeting scheduling endpoint
-- calendar integration
-- meeting status/no-show automation
-- program onboarding tasks and keep-alive state
+- Improved `היום שלי` as the primary rep work surface:
+  - each card now shows clear reason chips such as overdue, hot lead, sales call, support/customer, blocked/risk, and product context.
+  - daily focus highlights the first lead to open and why.
+  - cards include a short `מה להגיד עכשיו` talk-track personalized by lane, first name, and product where available.
+  - reps can copy the talk-track directly; this is only operator assistance and never sends a customer message automatically.
+- Extended `attention_inbox` with `queue_type` and `queue_summary` so the UI can classify and explain queue cards using structured backend context instead of relying only on free-text reasons.
+- Kept the implementation lightweight: no new heavy CRM screen, no WhatsApp policy bypass, and no automation behavior change.
+
+## Recommended Phase 3b
+
+Continue improving rep execution before adding heavy workflows:
+- direct safe action buttons on daily inbox cards where policy allows.
+- clearer blocked/out-of-window indicators for WhatsApp conversations.
+- meeting scheduling endpoint and calendar integration.
+- meeting status/no-show automation.
+- program onboarding tasks and keep-alive state.
 
 ## Recommended Phase 4
 
