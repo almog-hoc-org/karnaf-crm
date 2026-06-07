@@ -20,13 +20,16 @@ import { LeadDetailSkeleton } from '@/components/Skeleton';
 import { t } from '@/lib/i18n';
 import { QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
 import type {
+  DealRow,
   IntakeSegment,
   InquiryType,
   LeadDetail as LeadDetailType,
   LeadFit,
   LeadHeat,
+  MeetingRow,
   MessageRow,
   ProductInterest,
+  ProgramMemberRow,
   QueueRow,
   ReadinessLevel,
 } from '@/lib/types';
@@ -175,6 +178,9 @@ export function LeadDetailPage() {
   if (!detailQ.data) return null;
 
   const { lead, messages, queueItems, tasks, events, humanOwnerProfile } = detailQ.data;
+  const deals = detailQ.data.deals ?? [];
+  const meetings = detailQ.data.meetings ?? [];
+  const programMember = detailQ.data.programMember ?? null;
 
   return (
     <div className="space-y-4">
@@ -434,6 +440,8 @@ export function LeadDetailPage() {
               />
             </dl>
           </div>
+
+          <PipelineOverviewCard lead={lead} deals={deals} meetings={meetings} programMember={programMember} />
 
           <div className="kf-card p-4">
             <h2 className="font-semibold">סיווג קליטה ותפעול</h2>
@@ -827,6 +835,107 @@ function GuidanceMiniCard({ label, value }: { label: string; value: string }) {
       <p className="mt-1 text-sm leading-6 opacity-90">{value}</p>
     </div>
   );
+}
+
+function PipelineOverviewCard({
+  lead,
+  deals,
+  meetings,
+  programMember,
+}: {
+  lead: LeadDetailType;
+  deals: DealRow[];
+  meetings: MeetingRow[];
+  programMember: ProgramMemberRow | null;
+}) {
+  const nextMeeting = [...meetings]
+    .filter((m) => m.status === 'scheduled')
+    .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())[0];
+
+  return (
+    <div className="kf-card p-4">
+      <h2 className="font-semibold">מסלולים ועסקאות</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        שכבת ה־PRD החדשה: איש קשר אחד יכול להחזיק כמה מסלולי מכירה במקביל.
+      </p>
+      <dl className="mt-3 space-y-1 text-sm">
+        <Row k="מסלול ראשי" v={lead.primary_track ? PRD_TRACK_LABELS[lead.primary_track] ?? lead.primary_track : null} />
+        <Row k="נושא עניין" v={lead.interest_topic} />
+        <Row k="תגיות" v={lead.tags?.length ? lead.tags.join(', ') : null} />
+        <Row k="הסכמת WhatsApp" v={formatConsent(lead.consent_whatsapp)} />
+        <Row k="הסכמת מייל" v={formatConsent(lead.consent_email)} />
+        <Row
+          k="חבר תכנית"
+          v={programMember ? `${PROGRAM_PROGRESS_LABELS[programMember.progress_stage] ?? programMember.progress_stage} · ${formatDateTime(programMember.joined_at)}` : null}
+        />
+        <Row
+          k="פגישה קרובה"
+          v={nextMeeting ? `${MEETING_TYPE_LABELS[nextMeeting.meeting_type]} · ${formatDateTime(nextMeeting.starts_at)}` : null}
+        />
+      </dl>
+
+      {deals.length ? (
+        <ul className="mt-3 space-y-2">
+          {deals.map((deal) => (
+            <li key={deal.id} className="rounded-md bg-slate-50 p-2 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <strong>{PRD_TRACK_LABELS[deal.track] ?? deal.track}</strong>
+                <span className="text-xs text-slate-500">{DEAL_STATUS_LABELS[deal.status] ?? deal.status}</span>
+              </div>
+              <div className="mt-1 text-slate-600">
+                שלב: {DEAL_STAGE_LABELS[deal.stage] ?? deal.stage}
+                {deal.presale_project ? ` · פרויקט: ${deal.presale_project}` : ''}
+                {deal.partner_name ? ` · שותף: ${deal.partner_name}` : ''}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-sm text-slate-500">עדיין אין Deal פתוח/היסטורי לליד הזה.</p>
+      )}
+    </div>
+  );
+}
+
+const PRD_TRACK_LABELS: Record<string, string> = {
+  program: 'תכנית הליווי',
+  presale: 'פריסייל / חתימה',
+  investor_mentorship: 'ליווי משקיעים',
+};
+
+const DEAL_STATUS_LABELS: Record<string, string> = {
+  open: 'פתוח',
+  won: 'נסגר בהצלחה',
+  lost: 'לא רלוונטי',
+  cancelled: 'בוטל',
+};
+
+const DEAL_STAGE_LABELS: Record<string, string> = {
+  new: 'ליד חדש',
+  webinar_registered: 'נרשם לוובינר',
+  webinar_attended: 'השתתף בוובינר',
+  phone_call_booked: 'קבע שיחת טלפון',
+  form_submitted: 'מילא טופס',
+  zoom_meeting: 'פגישת זום',
+  office_meeting: 'פגישה במשרד',
+  paid_program_member: 'שילם — חבר תכנית',
+  closed_won: 'נסגר',
+};
+
+const MEETING_TYPE_LABELS: Record<string, string> = {
+  phone: 'טלפון',
+  zoom: 'זום',
+  office: 'משרד',
+};
+
+const PROGRAM_PROGRESS_LABELS: Record<string, string> = {
+  joined: 'הצטרף',
+};
+
+function formatConsent(value: boolean | null | undefined) {
+  if (value === true) return 'כן';
+  if (value === false) return 'לא';
+  return null;
 }
 
 function ProductFocusStrip({ lead }: { lead: LeadDetailType }) {

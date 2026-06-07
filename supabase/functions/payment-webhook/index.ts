@@ -123,16 +123,46 @@ Deno.serve(async (req) => {
   }
 
   if (PAID_STATUSES.has(paymentStatus)) {
-    await supabase.from('leads').update({
+    const linkSource = (payload.link_source ?? payload.source ?? null) as string | null;
+    const paidTrack = resolvePaidTrack(productCode);
+    const leadPaymentUpdates: Record<string, unknown> = {
       payment_status: 'paid',
       payment_reference: orderId ?? null,
       payment_completed_at: new Date().toISOString(),
       won_at: new Date().toISOString(),
-    }).eq('id', matchedLeadId);
+    };
+    if (paidTrack) leadPaymentUpdates.primary_track = paidTrack;
+    await supabase.from('leads').update(leadPaymentUpdates).eq('id', matchedLeadId);
+    if (paidTrack) {
+      const { data: existingDeal } = await supabase
+        .from('deals')
+        .select('id')
+        .eq('lead_id', matchedLeadId)
+        .eq('track', paidTrack)
+        .eq('status', 'open')
+        .maybeSingle();
+      if (existingDeal?.id) {
+        await supabase.from('deals').update({
+          stage: paidTrack === 'program' ? 'paid_program_member' : 'closed_won',
+          status: 'won',
+          closed_at: new Date().toISOString(),
+          value: payload.amount ?? null,
+          metadata: { orderId: orderId ?? null, productCode, linkSource, correlationId },
+        }).eq('id', existingDeal.id);
+      }
+    }
+    if (paidTrack === 'program') {
+      await supabase.from('program_members').upsert({
+        lead_id: matchedLeadId,
+        progress_stage: 'joined',
+        metadata: { orderId: orderId ?? null, productCode, linkSource, correlationId },
+      }, { onConflict: 'lead_id' });
+    }
     await transitionLeadStatus(supabase, matchedLeadId, 'won', 'provider', 'payment_completed');
     await logLeadEvent(supabase, matchedLeadId, 'payment_completed', 'provider', {
       order_id: orderId ?? null,
       product_code: productCode ?? null,
+      link_source: linkSource,
       correlation_id: correlationId,
     });
   } else if (paymentStatus === 'pending' || paymentStatus === 'started') {
@@ -156,3 +186,11 @@ Deno.serve(async (req) => {
 
   return jsonResponse(req, { ok: true, matchedLeadId, eventId: eventRow.id });
 });
+
+function resolvePaidTrack(productCode: string | null | undefined): string | null {
+  const raw = String(productCode ?? '').toLowerCase();
+  if (!raw || raw.includes('program') || raw.includes('digital') || raw.includes('course') || raw.includes('תכנית') || raw.includes('תוכנית')) return 'program';
+  if (raw.includes('investor') || raw.includes('mentorship') || raw.includes('משקיע')) return 'investor_mentorship';
+  if (raw.includes('presale') || raw.includes('contractor') || raw.includes('פריסייל')) return 'presale';
+  return null;
+}

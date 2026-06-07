@@ -51,6 +51,58 @@ export interface LeadRow {
   product_interest?: ProductInterest | null;
   intake_segment?: IntakeSegment | null;
   suggested_next_action?: string | null;
+  primary_track?: PrdTrack | null;
+  active_tracks?: PrdTrack[] | null;
+  interest_topic?: string | null;
+  tags?: string[] | null;
+  consent_whatsapp?: boolean | null;
+  consent_email?: boolean | null;
+}
+
+export type PrdTrack = 'program' | 'presale' | 'investor_mentorship';
+
+export interface DealRow {
+  id: string;
+  lead_id: string;
+  track: PrdTrack;
+  stage: string;
+  value: number | null;
+  currency: string;
+  presale_project: string | null;
+  partner_name: string | null;
+  expected_close: string | null;
+  status: 'open' | 'won' | 'lost' | 'cancelled';
+  owner_user_id: string | null;
+  source: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+export interface MeetingRow {
+  id: string;
+  lead_id: string;
+  deal_id: string | null;
+  meeting_type: 'phone' | 'zoom' | 'office';
+  starts_at: string;
+  ends_at: string | null;
+  assigned_to_user_id: string | null;
+  status: 'scheduled' | 'held' | 'cancelled' | 'no_show';
+  summary: string | null;
+  calendar_event_id: string | null;
+  meeting_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProgramMemberRow {
+  lead_id: string;
+  joined_at: string;
+  progress_stage: string;
+  client_profile: Record<string, unknown>;
+  keep_alive_state: Record<string, unknown>;
+  portal_user_id: string | null;
+  updated_at: string;
 }
 
 export type LeadFit = 'low' | 'medium' | 'high';
