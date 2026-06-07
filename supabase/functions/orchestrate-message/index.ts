@@ -448,6 +448,27 @@ Deno.serve(async (req) => {
         queueSummary: sendResult.error ?? 'unknown_error',
         payloadJson: { effectiveMode, correlationId },
       });
+    } else if (isModelExecutionFailure(decision.executionStatus)) {
+      // Model/provider unavailable → make the failure visible immediately.
+      // The dispatcher itself completed successfully, but no customer reply
+      // was produced; without this guard the only signal is a delayed ai_stuck
+      // SLA item, which is too opaque for operators.
+      await supabase.from('integration_logs').insert({
+        source: 'ai_decision',
+        status: 'error',
+        lead_id: leadId,
+        request_data: { execution_status: decision.executionStatus, playbook: out.playbookName },
+        response_data: { raw_output: decision.rawOutput ?? null, validated_output: out },
+        error_message: decision.executionStatus,
+      });
+      await ensurePendingQueueItem(supabase, {
+        leadId,
+        queueType: 'failed_automation',
+        priorityLevel: 1,
+        reason: `AI decision failed: ${decision.executionStatus}`,
+        queueSummary: 'ה־AI לא ייצר תשובה — נדרש טיפול ידני או תיקון הגדרת מודל.',
+        payloadJson: { executionStatus: decision.executionStatus, correlationId },
+      });
     }
 
     if (out.createQueueType) {
@@ -510,4 +531,15 @@ function snippet(text: string | null, maxChars: number): string | null {
   if (!trimmed) return null;
   if (trimmed.length <= maxChars) return trimmed;
   return `${trimmed.slice(0, maxChars - 1)}…`;
+}
+
+function isModelExecutionFailure(status: string): boolean {
+  return (
+    status === 'model_disabled' ||
+    status === 'circuit_open' ||
+    status.endsWith('_timeout') ||
+    status.endsWith('_empty_content') ||
+    status.endsWith('_exception') ||
+    /^(openai|gemini)_error:/.test(status)
+  );
 }
