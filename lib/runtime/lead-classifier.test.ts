@@ -18,10 +18,25 @@ describe('classifyLeadIntake', () => {
     expect(r.suggestedNextAction).toContain('מסגרת ערך');
   });
 
-  it('detects financing guidance interest', () => {
+  it('keeps financing questions under the core program until a rep clarifies otherwise', () => {
     const r = classifyLeadIntake({ latestMessage: 'יש לי שאלה על משכנתא והון עצמי לעסקה' });
     expect(r.inquiryType).toBe('financing');
-    expect(r.productInterest).toBe('financing_guidance');
+    expect(r.productInterest).toBe('digital_program');
+  });
+
+  it('detects investor mentorship interest', () => {
+    const r = classifyLeadIntake({ latestMessage: 'אני מחפש ליווי משקיעים לעסקאות נדלן' });
+    expect(r.productInterest).toBe('investor_mentorship');
+  });
+
+  it('detects contractor group purchase interest', () => {
+    const r = classifyLeadIntake({ latestMessage: 'יש פרטים על קבוצת רכישה מקבלן?' });
+    expect(r.productInterest).toBe('contractor_group_purchase');
+  });
+
+  it('detects personal consultation interest', () => {
+    const r = classifyLeadIntake({ latestMessage: 'אפשר לקבוע שיחת ייעוץ אישית?' });
+    expect(r.productInterest).toBe('personal_consultation');
   });
 
   it('detects explicit human handoff need', () => {
@@ -33,7 +48,7 @@ describe('classifyLeadIntake', () => {
   it('detects existing student/support context', () => {
     const r = classifyLeadIntake({ latestMessage: 'אני תלמיד וכבר נרשמתי אבל אין לי גישה' });
     expect(r.inquiryType).toBe('support');
-    expect(r.productInterest).toBe('student_tools');
+    expect(r.productInterest).toBe('unknown');
     expect(r.intakeSegment).toBe('support_or_existing');
   });
 

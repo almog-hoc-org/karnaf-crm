@@ -18,6 +18,16 @@ import { notifyTelegram } from '../_shared/notify-telegram.ts';
 // — meaning a temporary DB hiccup would mask SLA breaches. Now any query
 // error makes the response non-2xx so alerting can fire.
 
+function stillNeedsResponse(lead: { last_inbound_at?: string | null; last_outbound_at?: string | null }): boolean {
+  if (!lead.last_inbound_at) return false;
+  if (!lead.last_outbound_at) return true;
+  const inboundMs = Date.parse(lead.last_inbound_at);
+  const outboundMs = Date.parse(lead.last_outbound_at);
+  if (!Number.isFinite(inboundMs)) return false;
+  if (!Number.isFinite(outboundMs)) return true;
+  return outboundMs < inboundMs;
+}
+
 Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
@@ -31,6 +41,7 @@ Deno.serve(async (req) => {
   }
   if (!verifyBearer(req, expected)) return jsonResponse(req, { error: 'Unauthorized' }, 401);
 
+  try {
   const supabase = getServiceSupabase();
   const config = await getRuntimeConfig(supabase);
 
@@ -50,18 +61,18 @@ Deno.serve(async (req) => {
   };
   const queryErrors: Array<{ stage: string; message: string }> = [];
 
-  const { data: slaRiskLeads, error: slaRiskErr } = await supabase
+  const { data: slaRiskRows, error: slaRiskErr } = await supabase
     .from('leads')
-    .select('id')
+    .select('id, last_inbound_at, last_outbound_at')
     .lt('last_inbound_at', warn)
-    .or('last_outbound_at.is.null,last_outbound_at.lt.last_inbound_at')
     .eq('do_not_contact', false)
     .eq('removed_by_request', false);
   if (slaRiskErr) {
     queryErrors.push({ stage: 'sla_risk_query', message: slaRiskErr.message });
     log.error('sla_risk_query_failed', { fn: 'sla-worker', correlationId, err: slaRiskErr.message });
   }
-  for (const lead of slaRiskLeads ?? []) {
+  const slaRiskLeads = (slaRiskRows ?? []).filter(stillNeedsResponse);
+  for (const lead of slaRiskLeads) {
     await ensurePendingQueueItem(supabase, {
       leadId: lead.id, queueType: 'sla_risk', priorityLevel: 2,
       reason: `No outbound response within ${config.slaThresholds.firstResponseWarnHours}h`,
@@ -70,18 +81,18 @@ Deno.serve(async (req) => {
     counters.sla_risk++;
   }
 
-  const { data: breachLeads, error: breachErr } = await supabase
+  const { data: breachRows, error: breachErr } = await supabase
     .from('leads')
-    .select('id')
+    .select('id, last_inbound_at, last_outbound_at')
     .lt('last_inbound_at', breach)
-    .or('last_outbound_at.is.null,last_outbound_at.lt.last_inbound_at')
     .eq('do_not_contact', false)
     .eq('removed_by_request', false);
   if (breachErr) {
     queryErrors.push({ stage: 'sla_breach_query', message: breachErr.message });
     log.error('sla_breach_query_failed', { fn: 'sla-worker', correlationId, err: breachErr.message });
   }
-  for (const lead of breachLeads ?? []) {
+  const breachLeads = (breachRows ?? []).filter(stillNeedsResponse);
+  for (const lead of breachLeads) {
     await ensurePendingQueueItem(supabase, {
       leadId: lead.id, queueType: 'human_handoff', priorityLevel: 1,
       reason: `SLA breach: > ${config.slaThresholds.firstResponseBreachHours}h without response`,
@@ -114,19 +125,19 @@ Deno.serve(async (req) => {
   // 8h SLA risk above: this catches silent AI drops (provider errors,
   // validation blocks) early enough for a human to intervene before the
   // customer cools off.
-  const { data: stuckAiLeads, error: stuckErr } = await supabase
+  const { data: stuckAiRows, error: stuckErr } = await supabase
     .from('leads')
-    .select('id')
+    .select('id, last_inbound_at, last_outbound_at')
     .eq('ownership_mode', 'ai_active')
     .lt('last_inbound_at', stuck)
-    .or('last_outbound_at.is.null,last_outbound_at.lt.last_inbound_at')
     .eq('do_not_contact', false)
     .eq('removed_by_request', false);
   if (stuckErr) {
     queryErrors.push({ stage: 'ai_stuck_query', message: stuckErr.message });
     log.error('ai_stuck_query_failed', { fn: 'sla-worker', correlationId, err: stuckErr.message });
   }
-  for (const lead of stuckAiLeads ?? []) {
+  const stuckAiLeads = (stuckAiRows ?? []).filter(stillNeedsResponse);
+  for (const lead of stuckAiLeads) {
     await ensurePendingQueueItem(supabase, {
       leadId: lead.id, queueType: 'ai_stuck', priorityLevel: 2,
       reason: `AI לא הגיב תוך ${stuckMinutes} דק׳ — נדרשת בדיקה`,
@@ -175,4 +186,11 @@ Deno.serve(async (req) => {
   const ok = queryErrors.length === 0;
   log.info('sla_worker_run', { fn: 'sla-worker', correlationId, counters, queryErrors });
   return jsonResponse(req, { ok, counters, queryErrors, correlationId }, ok ? 200 : 500);
+  } catch (err) {
+    const message = err instanceof Error
+      ? `${err.name}: ${err.message}`
+      : JSON.stringify(err, Object.getOwnPropertyNames(err));
+    log.error('sla_worker_unhandled', { fn: 'sla-worker', correlationId, err: message });
+    return jsonResponse(req, { ok: false, error: message, correlationId }, 500);
+  }
 });

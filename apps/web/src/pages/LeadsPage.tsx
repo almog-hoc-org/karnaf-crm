@@ -47,9 +47,12 @@ const INTAKE_SEGMENT_LABELS: Record<IntakeSegment, string> = {
 };
 
 const PRODUCT_INTEREST_LABELS: Record<string, string> = {
-  digital_program: 'תוכנית דיגיטלית',
-  mentorship: 'ליווי',
-  student_tools: 'כלי תלמידים',
+  digital_program: 'תוכנית הדרך לדירה',
+  investor_mentorship: 'ליווי משקיעים',
+  contractor_group_purchase: 'קבוצת רכישה מקבלן',
+  personal_consultation: 'שיחת ייעוץ אישית',
+  mentorship: 'ליווי משקיעים',
+  student_tools: 'כלי תלמידים / לקוח קיים',
   financing_guidance: 'הכוונת מימון',
   unknown: 'לא ידוע',
 };

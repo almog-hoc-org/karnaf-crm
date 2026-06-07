@@ -67,6 +67,10 @@ export type InquiryType =
   | 'unknown';
 export type ProductInterest =
   | 'digital_program'
+  | 'investor_mentorship'
+  | 'contractor_group_purchase'
+  | 'personal_consultation'
+  // Legacy values kept for rows classified before the product model was sharpened.
   | 'mentorship'
   | 'student_tools'
   | 'financing_guidance'
