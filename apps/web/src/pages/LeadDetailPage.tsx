@@ -726,6 +726,7 @@ function OperatorGuidanceCard({
   onMarkPhone: () => void;
 }) {
   const insight = operatorInsight(lead, queueItems, messages);
+  const resolutionGuide = leadResolutionGuide(lead, insight.primaryAction);
   const primaryLabel =
     insight.primaryAction === 'return_ai'
       ? 'להחזיר למענה אוטומטי'
@@ -766,6 +767,26 @@ function OperatorGuidanceCard({
           <div className="grid gap-2 md:grid-cols-2">
             <GuidanceMiniCard label="למה זה כאן" value={insight.why} />
             <GuidanceMiniCard label="מה להגיד עכשיו" value={insight.script} />
+          </div>
+          <div className="rounded-2xl bg-white/65 p-3 ring-1 ring-black/5" aria-label="סיום טיפול נכון">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide opacity-60">סיום טיפול</p>
+                <h3 className="text-sm font-semibold">איך יודעים שהליד לא צריך להמשיך לקפוץ?</h3>
+              </div>
+              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium ring-1 ring-black/5">
+                החלטה אחת לפני שסוגרים
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {resolutionGuide.map((item) => (
+                <div key={item.title} className="rounded-xl bg-white/70 p-3 ring-1 ring-black/5">
+                  <p className="text-sm font-semibold">{item.title}</p>
+                  <p className="mt-1 text-xs leading-5 opacity-75">{item.when}</p>
+                  <p className="mt-2 text-xs font-medium opacity-90">{item.action}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
         <div className="rounded-2xl bg-white/70 p-3 ring-1 ring-black/5">
@@ -817,6 +838,67 @@ function GuidanceMiniCard({ label, value }: { label: string; value: string }) {
       <p className="mt-1 text-sm leading-6 opacity-90">{value}</p>
     </div>
   );
+}
+
+function leadResolutionGuide(
+  lead: LeadDetailType,
+  primaryAction: ReturnType<typeof operatorInsight>['primaryAction'],
+): Array<{ title: string; when: string; action: string }> {
+  const isOptOut = lead.do_not_contact || lead.removed_by_request;
+  const isClosed = lead.lead_status === 'won' || lead.lead_status === 'lost' || isOptOut;
+
+  if (isOptOut) {
+    return [
+      {
+        title: 'לא לפנות יותר',
+        when: 'הלקוח ביקש הסרה, חסימה או שלא יצרו איתו קשר.',
+        action: 'להשאיר DNC/הוסר פעיל. לא לשלוח הודעה ולא להחזיר ל-AI.',
+      },
+      {
+        title: 'חריג בלבד',
+        when: 'רק אם הלקוח פונה מחדש בעצמו או שסימון DNC היה טעות.',
+        action: 'בעלים/אדמין פותח מחדש במודע ומתעד סיבה.',
+      },
+    ];
+  }
+
+  if (isClosed) {
+    return [
+      {
+        title: lead.lead_status === 'won' ? 'נסגר ברכישה' : 'סומן כאבוד',
+        when: 'הסטטוס כבר סופי ואין משימה יומיומית לצוות.',
+        action: 'לא לסגור שוב. לפתוח מחדש רק אם הלקוח חזר או שהסגירה הייתה טעות.',
+      },
+      {
+        title: 'אם יש שיחה חדשה',
+        when: 'לקוח סגור חזר עם שאלה, תמיכה או עניין מחודש.',
+        action: 'לפתוח מחדש למסלול המתאים: responded / qualified / human_handoff.',
+      },
+    ];
+  }
+
+  return [
+    {
+      title: 'טופל',
+      when: 'הלקוח קיבל מענה ברור, נקבעה פעולה הבאה, או שהמשימה כבר אינה דורשת אדם.',
+      action: 'לסגור פריט תור עם הערה קצרה כדי שלא יקפוץ שוב.',
+    },
+    {
+      title: 'להעביר למיה',
+      when: 'יש רגישות, התנגדות, בקשה אישית, תשלום, או צורך בשיקול דעת אנושי.',
+      action: primaryAction === 'takeover' ? 'זו הפעולה המומלצת כרגע.' : 'ללחוץ “העברה למיה” ולהשאיר סיכום קצר.',
+    },
+    {
+      title: 'להחזיר ל-AI',
+      when: 'הטיפול האנושי הסתיים ואין צורך בקשר אישי נוסף.',
+      action: primaryAction === 'return_ai' ? 'זו הפעולה המומלצת כרגע.' : 'להחזיר ל-AI רק אחרי שההקשר ברור ובטוח.',
+    },
+    {
+      title: 'לסגור / לסמן כאבוד',
+      when: 'הלקוח לא רלוונטי, לא מתאים, ביקש לא לפנות, או אין המשך מסחרי.',
+      action: 'לא להשאיר במעקב עמום: לסמן Lost או DNC לפי המקרה.',
+    },
+  ];
 }
 
 function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages: MessageRow[]) {

@@ -28,7 +28,8 @@ describe('InboxPage', () => {
     expect(screen.getByText('פותחים כרטיס, מטפלים, וסוגרים — בלי לחפש ידנית.')).toBeInTheDocument();
     expect(screen.getByText('לטפל לפי דחיפות')).toBeInTheDocument();
     expect(screen.getByText('פותחים את הליד')).toBeInTheDocument();
-    expect(screen.getByText('סוגרים משימה')).toBeInTheDocument();
+    expect(screen.getByText('סוגרים נכון')).toBeInTheDocument();
+    expect(screen.getByText(/הוחזר ל-AI/)).toBeInTheDocument();
   });
 
   it('opens the lane requested in the URL', () => {
