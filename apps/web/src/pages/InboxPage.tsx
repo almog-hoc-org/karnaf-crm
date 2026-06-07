@@ -195,6 +195,9 @@ export function InboxPage() {
                       <div>
                         <div className="text-xs font-semibold text-slate-500">למה</div>
                         <div className="mt-1 text-sm leading-6 text-slate-700">{plan.why}</div>
+                        {row.queue_summary && row.queue_summary !== plan.why ? (
+                          <div className="mt-1 text-xs leading-5 text-slate-500">תקציר מערכת: {row.queue_summary}</div>
+                        ) : null}
                       </div>
                     </div>
 
@@ -361,11 +364,12 @@ function reasonChips(row: AttentionRow, meta = classifyRow(row)): ReasonChip[] {
   if (row.lead_heat === 'hot') chips.push({ label: 'ליד חם', tone: 'success' });
   if (row.intake_segment === 'hot_sales') chips.push({ label: 'מכירה חמה', tone: 'success' });
   if (row.intake_segment === 'support_or_existing') chips.push({ label: 'לקוח/תמיכה', tone: 'warning' });
+  if (row.queue_type) chips.push({ label: queueTypeLabel(row.queue_type), tone: queueTypeTone(row.queue_type) });
   if (meta.lane === 'reply') chips.push({ label: 'מחכה למענה אנושי', tone: 'warning' });
   if (meta.lane === 'call') chips.push({ label: 'צריך שיחה', tone: 'info' });
   if (meta.lane === 'risk') chips.push({ label: 'סיכון נפילה', tone: 'danger' });
   if (row.product_interest) chips.push({ label: PRODUCT_LABELS[row.product_interest] ?? row.product_interest, tone: 'neutral' });
-  return dedupeChips(chips).slice(0, 5);
+  return dedupeChips(chips).slice(0, 6);
 }
 
 function dedupeChips(chips: ReasonChip[]): ReasonChip[] {
@@ -385,6 +389,26 @@ function chipClass(tone: ReasonChip['tone']) {
     case 'success': return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100';
     default: return 'bg-slate-100 text-slate-700';
   }
+}
+
+function queueTypeLabel(queueType: string) {
+  const labels: Record<string, string> = {
+    failed_automation: 'כשל אוטומציה',
+    ai_stuck: 'AI נתקע',
+    human_handoff: 'העברה לאדם',
+    manual_reply: 'תגובה ידנית',
+    pending_manual_reply: 'תגובה ממתינה',
+    payment_followup: 'מעקב תשלום',
+    sales_call: 'שיחת מכירה',
+  };
+  return labels[queueType] ?? queueType.replace(/_/g, ' ');
+}
+
+function queueTypeTone(queueType: string): ReasonChip['tone'] {
+  if (queueType.includes('failed') || queueType.includes('stuck')) return 'danger';
+  if (queueType.includes('handoff') || queueType.includes('manual')) return 'warning';
+  if (queueType.includes('call')) return 'info';
+  return 'neutral';
 }
 
 function formatDuration(minutes: number) {
@@ -440,7 +464,7 @@ function classifyRow(row: AttentionRow): {
   pillClass: string;
   borderClass: string;
 } {
-  const reason = `${row.reason ?? ''} ${row.lead_status} ${row.ownership_mode}`.toLowerCase();
+  const reason = `${row.reason ?? ''} ${row.queue_type ?? ''} ${row.queue_summary ?? ''} ${row.lead_status} ${row.ownership_mode}`.toLowerCase();
   const dueMs = row.due_at ? Date.parse(row.due_at) : NaN;
   const overdue = row.kind === 'overdue_action' || (Number.isFinite(dueMs) && dueMs < Date.now());
 
@@ -450,7 +474,7 @@ function classifyRow(row: AttentionRow): {
       pillClass: 'bg-amber-100 text-amber-800', borderClass: 'border-s-amber-400',
     };
   }
-  if (row.ownership_mode === 'phone_sales_pending' || reason.includes('phone') || reason.includes('שיחה') || reason.includes('טלפון')) {
+  if (row.ownership_mode === 'phone_sales_pending' || reason.includes('phone') || reason.includes('call') || reason.includes('שיחה') || reason.includes('טלפון')) {
     return {
       lane: 'call', actionLabel: 'להתקשר', urgency: row.priority_level <= 1 ? 'critical' : 'normal',
       pillClass: 'bg-indigo-100 text-indigo-800', borderClass: 'border-s-indigo-400',
@@ -469,6 +493,7 @@ function classifyRow(row: AttentionRow): {
 }
 
 function humanReason(row: AttentionRow): string {
+  if (row.queue_summary) return row.queue_summary;
   if (row.reason) return row.reason;
   if (row.kind === 'mia_reply') return 'הלקוח השיב ומחכה למענה אנושי';
   if (row.kind === 'overdue_action') return 'הפעולה הבאה באיחור';
