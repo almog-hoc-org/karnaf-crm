@@ -122,11 +122,21 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 - Extended `attention_inbox` with `queue_type` and `queue_summary` so the UI can classify and explain queue cards using structured backend context instead of relying only on free-text reasons.
 - Kept the implementation lightweight: no new heavy CRM screen, no WhatsApp policy bypass, and no automation behavior change.
 
-## Recommended Phase 3b
+## Phase 3b shipped daily inbox safe actions + WhatsApp policy visibility
 
-Continue improving rep execution before adding heavy workflows:
-- direct safe action buttons on daily inbox cards where policy allows.
-- clearer blocked/out-of-window indicators for WhatsApp conversations.
+Continued improving rep execution before adding heavier workflows:
+- Extended `attention_inbox` with `last_inbound_at` and `last_outbound_at` so the UI can explain WhatsApp customer-care window state from structured lead timestamps.
+- Daily inbox cards now show explicit WhatsApp state:
+  - `WhatsApp פתוח למענה חופשי` when the last customer inbound is inside the 24h freeform window.
+  - `WhatsApp מחוץ לחלון 24 שעות` when replies should be queued until customer inbound or a Hebrew Meta template is approved.
+- Added safe `פתיחת WhatsApp` action on WhatsApp-relevant daily inbox cards using normalized `wa.me` links.
+- This action only opens WhatsApp and never sends a customer message automatically.
+- The blocker remains visible: proactive reopen after 24h still requires an approved Hebrew Meta template.
+
+## Recommended Phase 3c
+
+Next rep-execution improvements before heavy reporting:
+- richer direct safe actions on daily inbox cards where policy allows.
 - meeting scheduling endpoint and calendar integration.
 - meeting status/no-show automation.
 - program onboarding tasks and keep-alive state.
