@@ -188,7 +188,7 @@ export async function postAdminAction(payload: {
 }
 
 export async function postSendReply(payload: { leadId: string; conversationId: string; text: string }) {
-  return postJson<{ ok: true; mode: string }>('/send-reply', payload);
+  return postJson<{ ok: true; mode: string; queued?: boolean; pendingReplyId?: string; warning?: string }>('/send-reply', payload);
 }
 
 export async function postQueueResolve(payload: { queueItemId: string; resolutionNote?: string | null }) {
