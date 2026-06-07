@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  fetchWhatsAppRouterOptionEvents,
   fetchWhatsAppRouterOptions,
   postCreateWhatsAppRouterOption,
   postDeleteWhatsAppRouterOption,
   postUpdateWhatsAppRouterOption,
+  type WhatsAppRouterOptionEvent,
   type WhatsAppRouterOption,
   type WhatsAppRouterTrack,
 } from '@/lib/api';
@@ -21,7 +23,11 @@ export function WhatsAppRouterOptionsPage() {
   const toast = useToast();
   const qc = useQueryClient();
   const optionsQ = useQuery({ queryKey: ['whatsapp-router-options'], queryFn: fetchWhatsAppRouterOptions });
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['whatsapp-router-options'] });
+  const eventsQ = useQuery({ queryKey: ['whatsapp-router-option-events'], queryFn: () => fetchWhatsAppRouterOptionEvents(50) });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['whatsapp-router-options'] });
+    qc.invalidateQueries({ queryKey: ['whatsapp-router-option-events'] });
+  };
   const create = useMutation({
     mutationFn: postCreateWhatsAppRouterOption,
     onSuccess: () => { invalidate(); toast.success('אפשרות נוספה'); },
@@ -135,8 +141,66 @@ export function WhatsAppRouterOptionsPage() {
           setPendingDelete(null);
         }}
       />
+
+      <RouterOptionAuditLog events={eventsQ.data ?? []} loading={eventsQ.isLoading} />
     </div>
   );
+}
+
+function RouterOptionAuditLog({ events, loading }: { events: WhatsAppRouterOptionEvent[]; loading: boolean }) {
+  return (
+    <section className="kf-card overflow-hidden p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">יומן שינויים</h2>
+          <p className="text-sm text-slate-500">50 השינויים האחרונים באפשרויות הראוטר.</p>
+        </div>
+        <span className="text-xs text-slate-400">Audit</span>
+      </div>
+      {loading ? (
+        <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">{t('loading')}</div>
+      ) : events.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">עוד אין שינויי ראוטר מתועדים.</div>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {events.map((event) => (
+            <li key={event.id} className="py-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${event.action === 'delete' ? 'bg-rose-50 text-rose-700' : event.action === 'create' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>
+                    {actionLabel(event.action)}
+                  </span>
+                  <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs" dir="ltr">{event.option_key ?? 'unknown'}</code>
+                  {event.changed_fields.length ? <span className="text-xs text-slate-500">{event.changed_fields.join(', ')}</span> : null}
+                </div>
+                <time className="text-xs text-slate-400" dateTime={event.created_at}>{formatDateTime(event.created_at)}</time>
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                {summariseOption(event.after_value ?? event.before_value)}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function actionLabel(action: WhatsAppRouterOptionEvent['action']) {
+  if (action === 'create') return 'יצירה';
+  if (action === 'delete') return 'מחיקה';
+  return 'עדכון';
+}
+
+function summariseOption(option: Partial<WhatsAppRouterOption> | null) {
+  if (!option) return 'אין פרטים זמינים';
+  const label = option.label_he ? `“${option.label_he}”` : '';
+  const route = [option.track, option.stage, option.presale_project].filter(Boolean).join(' / ');
+  return [label, route].filter(Boolean).join(' · ') || 'אין פרטים זמינים';
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat('he-IL', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
 }
 
 function CreateRouterOptionForm({

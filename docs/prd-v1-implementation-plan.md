@@ -94,10 +94,15 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 - Added `/admin/settings` UI to edit active hours, timezone, and working days without SQL.
 - Active-hours edits immediately affect new human handoff scheduling.
 
-## Still recommended for Phase 2f
+## Phase 2f in progress: router option audit
+
+- Added persistent audit table for WhatsApp router option create/update/delete events.
+- Added a light audit log inside `/admin/whatsapp-router` showing recent changes and changed fields.
+
+## Still recommended for Phase 2g
 
 - Submit/approve WhatsApp templates before using proactive out-of-window router messages.
-- Add a light audit/export view for router option changes if operators start changing options frequently.
+- Optional: export audit log to CSV if operators start changing options frequently.
 
 ## Recommended Phase 3
 

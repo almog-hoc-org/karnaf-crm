@@ -415,9 +415,25 @@ export interface WhatsAppRouterOption {
   updated_at: string;
 }
 
+export interface WhatsAppRouterOptionEvent {
+  id: string;
+  option_key: string | null;
+  action: 'create' | 'update' | 'delete';
+  actor_user_id: string | null;
+  before_value: Partial<WhatsAppRouterOption> | null;
+  after_value: Partial<WhatsAppRouterOption> | null;
+  changed_fields: string[];
+  created_at: string;
+}
+
 export async function fetchWhatsAppRouterOptions() {
   const r = await getJson<{ ok: true; options: WhatsAppRouterOption[] }>('/whatsapp-router-options');
   return r.options;
+}
+
+export async function fetchWhatsAppRouterOptionEvents(limit = 50) {
+  const r = await getJson<{ ok: true; events: WhatsAppRouterOptionEvent[] }>(`/whatsapp-router-options?audit=1&limit=${limit}`);
+  return r.events;
 }
 
 export async function postCreateWhatsAppRouterOption(payload: {
