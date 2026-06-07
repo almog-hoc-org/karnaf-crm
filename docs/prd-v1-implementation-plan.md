@@ -75,11 +75,17 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 - The Sources admin page now shows configured intake contracts per source.
 - Added `docs/prd-v1-intake-contracts.md` with integration examples.
 
-## Still recommended for Phase 2c
+## Phase 2c shipped dynamic WhatsApp router management
 
-- Finalize dynamic presale option management instead of static seeded defaults.
+- Added owner/admin `whatsapp-router-options` function for CRUD over `whatsapp_router_options`.
+- Added `/admin/whatsapp-router` UI to create, edit, activate/deactivate, reorder, and delete topic routing options.
+- Router changes now affect WhatsApp topic selection from DB without code changes or SQL access.
+
+## Still recommended for Phase 2d
+
 - Add working-hours logic for human handoff.
 - Submit/approve WhatsApp templates before using proactive out-of-window router messages.
+- Add a light audit/export view for router option changes if operators start changing options frequently.
 
 ## Recommended Phase 3
 

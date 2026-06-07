@@ -398,6 +398,60 @@ export async function postDeleteLeadSource(slug: string) {
   return postJson<{ ok: true }>('/lead-sources', { action: 'delete', slug });
 }
 
+// === WhatsApp router options =============================================
+
+export type WhatsAppRouterTrack = 'program' | 'presale' | 'investor_mentorship' | 'human';
+
+export interface WhatsAppRouterOption {
+  option_key: string;
+  display_order: number;
+  label_he: string;
+  match_terms: string[];
+  track: WhatsAppRouterTrack;
+  stage: string | null;
+  interest_topic: string | null;
+  presale_project: string | null;
+  is_active: boolean;
+  updated_at: string;
+}
+
+export async function fetchWhatsAppRouterOptions() {
+  const r = await getJson<{ ok: true; options: WhatsAppRouterOption[] }>('/whatsapp-router-options');
+  return r.options;
+}
+
+export async function postCreateWhatsAppRouterOption(payload: {
+  option_key: string;
+  display_order?: number;
+  label_he: string;
+  match_terms?: string[];
+  track: WhatsAppRouterTrack;
+  stage?: string | null;
+  interest_topic?: string | null;
+  presale_project?: string | null;
+  is_active?: boolean;
+}) {
+  return postJson<{ ok: true; option: WhatsAppRouterOption }>('/whatsapp-router-options', { action: 'create', ...payload });
+}
+
+export async function postUpdateWhatsAppRouterOption(payload: {
+  option_key: string;
+  display_order?: number;
+  label_he?: string;
+  match_terms?: string[];
+  track?: WhatsAppRouterTrack;
+  stage?: string | null;
+  interest_topic?: string | null;
+  presale_project?: string | null;
+  is_active?: boolean;
+}) {
+  return postJson<{ ok: true; option: WhatsAppRouterOption }>('/whatsapp-router-options', { action: 'update', ...payload });
+}
+
+export async function postDeleteWhatsAppRouterOption(optionKey: string) {
+  return postJson<{ ok: true }>('/whatsapp-router-options', { action: 'delete', option_key: optionKey });
+}
+
 // === Prompt variants =====================================================
 
 export type PlaybookName =
