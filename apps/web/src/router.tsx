@@ -20,6 +20,7 @@ const UsersPage = lazy(() => import('@/pages/UsersPage').then((m) => ({ default:
 const TeamPage = lazy(() => import('@/pages/TeamPage').then((m) => ({ default: m.TeamPage })));
 const SourcesPage = lazy(() => import('@/pages/SourcesPage').then((m) => ({ default: m.SourcesPage })));
 const WhatsAppRouterOptionsPage = lazy(() => import('@/pages/WhatsAppRouterOptionsPage').then((m) => ({ default: m.WhatsAppRouterOptionsPage })));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 const PromptVariantsPage = lazy(() => import('@/pages/PromptVariantsPage').then((m) => ({ default: m.PromptVariantsPage })));
 const PermissionsHelpPage = lazy(() => import('@/pages/PermissionsHelpPage').then((m) => ({ default: m.PermissionsHelpPage })));
 
@@ -50,6 +51,7 @@ const router = createBrowserRouter([
           { path: '/team', element: <Suspense fallback={<PageFallback />}><TeamPage /></Suspense> },
           { path: '/admin/sources', element: <Suspense fallback={<PageFallback />}><SourcesPage /></Suspense> },
           { path: '/admin/whatsapp-router', element: <Suspense fallback={<PageFallback />}><WhatsAppRouterOptionsPage /></Suspense> },
+          { path: '/admin/settings', element: <Suspense fallback={<PageFallback />}><SettingsPage /></Suspense> },
           { path: '/prompts', element: <Suspense fallback={<PageFallback />}><PromptVariantsPage /></Suspense> },
           { path: '/help/permissions', element: <Suspense fallback={<PageFallback />}><PermissionsHelpPage /></Suspense> },
           { path: '*', element: <Navigate to="/" replace /> },

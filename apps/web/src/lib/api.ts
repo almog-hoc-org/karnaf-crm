@@ -452,6 +452,23 @@ export async function postDeleteWhatsAppRouterOption(optionKey: string) {
   return postJson<{ ok: true }>('/whatsapp-router-options', { action: 'delete', option_key: optionKey });
 }
 
+// === Runtime config ======================================================
+
+export interface ActiveHoursConfig {
+  start: string;
+  end: string;
+  timezone: 'Asia/Jerusalem';
+  workingDays: number[];
+}
+
+export async function fetchRuntimeConfig() {
+  return getJson<{ ok: true; activeHours: ActiveHoursConfig }>('/runtime-config');
+}
+
+export async function postUpdateActiveHours(payload: ActiveHoursConfig) {
+  return postJson<{ ok: true; activeHours: ActiveHoursConfig }>('/runtime-config', { action: 'update_active_hours', ...payload });
+}
+
 // === Prompt variants =====================================================
 
 export type PlaybookName =
