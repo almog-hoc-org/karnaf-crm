@@ -13,6 +13,9 @@ import type { AttentionRow } from '@/lib/types';
 
 type WorkLane = 'all' | 'reply' | 'call' | 'risk' | 'ops';
 
+const WHATSAPP_FREEFORM_WINDOW_HOURS = 24;
+const WHATSAPP_FREEFORM_WINDOW_MS = WHATSAPP_FREEFORM_WINDOW_HOURS * 60 * 60 * 1000;
+
 const PRODUCT_LABELS: Record<string, string> = {
   digital_program: 'תוכנית הדרך לדירה',
   investor_mentorship: 'ליווי משקיעים',
@@ -155,6 +158,7 @@ export function InboxPage() {
             const plan = operatingPlan(row, meta);
             const chips = reasonChips(row, meta);
             const talkTrack = repTalkTrack(row, meta);
+            const whatsappWindow = whatsappWindowStatus(row);
             return (
               <article
                 key={`${row.kind}:${row.ref_id}`}
@@ -209,6 +213,13 @@ export function InboxPage() {
                             {chip.label}
                           </span>
                         ))}
+                      </div>
+                    ) : null}
+
+                    {whatsappWindow ? (
+                      <div className={clsx('rounded-2xl border p-3 text-sm leading-6', whatsappWindow.className)}>
+                        <div className="font-semibold">{whatsappWindow.title}</div>
+                        <div className="mt-1">{whatsappWindow.hint}</div>
                       </div>
                     ) : null}
 
@@ -379,6 +390,9 @@ function reasonChips(row: AttentionRow, meta = classifyRow(row)): ReasonChip[] {
   if (row.lead_heat === 'hot') chips.push({ label: 'ליד חם', tone: 'success' });
   if (row.intake_segment === 'hot_sales') chips.push({ label: 'מכירה חמה', tone: 'success' });
   if (row.intake_segment === 'support_or_existing') chips.push({ label: 'לקוח/תמיכה', tone: 'warning' });
+  const whatsappWindow = whatsappWindowStatus(row);
+  if (whatsappWindow?.state === 'open') chips.push({ label: 'WhatsApp פתוח', tone: 'success' });
+  if (whatsappWindow?.state === 'closed') chips.push({ label: 'WhatsApp מחוץ ל-24ש׳', tone: 'warning' });
   if (row.queue_type) chips.push({ label: queueTypeLabel(row.queue_type), tone: queueTypeTone(row.queue_type) });
   if (meta.lane === 'reply') chips.push({ label: 'מחכה למענה אנושי', tone: 'warning' });
   if (meta.lane === 'call') chips.push({ label: 'צריך שיחה', tone: 'info' });
@@ -424,6 +438,52 @@ function queueTypeTone(queueType: string): ReasonChip['tone'] {
   if (queueType.includes('handoff') || queueType.includes('manual')) return 'warning';
   if (queueType.includes('call')) return 'info';
   return 'neutral';
+}
+
+function whatsappWindowStatus(row: AttentionRow): null | {
+  state: 'open' | 'closed' | 'unknown';
+  title: string;
+  hint: string;
+  className: string;
+} {
+  if (!isWhatsAppRelevant(row)) return null;
+  if (!row.last_inbound_at) {
+    return {
+      state: 'unknown',
+      title: 'סטטוס WhatsApp לא ידוע',
+      hint: 'אין הודעת לקוח אחרונה במערכת. לפתוח את הליד ולבדוק את השיחה לפני שליחה.',
+      className: 'border-slate-200 bg-slate-50 text-slate-700',
+    };
+  }
+  const lastInboundMs = Date.parse(row.last_inbound_at);
+  if (!Number.isFinite(lastInboundMs)) return null;
+  const ageMs = Date.now() - lastInboundMs;
+  if (ageMs <= WHATSAPP_FREEFORM_WINDOW_MS) {
+    return {
+      state: 'open',
+      title: 'WhatsApp פתוח למענה חופשי',
+      hint: `הלקוח כתב ב-${WHATSAPP_FREEFORM_WINDOW_HOURS} השעות האחרונות. אפשר לענות חופשי מתוך הכרטיס.`,
+      className: 'border-emerald-100 bg-emerald-50 text-emerald-800',
+    };
+  }
+  return {
+    state: 'closed',
+    title: 'WhatsApp מחוץ לחלון 24 שעות',
+    hint: 'אפשר לכתוב ב-CRM, אבל ההודעה תישמר ותישלח רק כשהלקוח יענה שוב או אחרי אישור תבנית Meta בעברית.',
+    className: 'border-amber-100 bg-amber-50 text-amber-800',
+  };
+}
+
+function isWhatsAppRelevant(row: AttentionRow) {
+  const reason = `${row.kind} ${row.reason ?? ''} ${row.queue_type ?? ''} ${row.queue_summary ?? ''} ${row.ownership_mode} ${row.lead_status}`.toLowerCase();
+  return row.kind === 'mia_reply'
+    || row.ownership_mode === 'mia_active'
+    || row.lead_status === 'human_handoff'
+    || reason.includes('whatsapp')
+    || reason.includes('manual_reply')
+    || reason.includes('pending_manual_reply')
+    || reason.includes('וואטסאפ')
+    || reason.includes('מענה');
 }
 
 function formatDuration(minutes: number) {

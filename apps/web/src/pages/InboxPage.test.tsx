@@ -73,6 +73,8 @@ describe('InboxPage', () => {
         queue_summary: 'ביקשה לדבר עם נציג על התאמת ליווי משקיעים',
         priority_level: 1,
         reason: 'ביקשה שיחת ייעוץ עם נציג',
+        last_inbound_at: '2026-06-07T08:00:00.000Z',
+        last_outbound_at: null,
         due_at: '2026-06-07T08:00:00.000Z',
         created_at: '2026-06-07T08:00:00.000Z',
       },
@@ -95,5 +97,61 @@ describe('InboxPage', () => {
     expect(await screen.findByRole('button', { name: 'הועתק' })).toBeInTheDocument();
     expect(screen.getAllByText('להתקשר ולסגור אבחון קצר').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/מטרת השיחה היא להבין התאמה/).length).toBeGreaterThan(0);
+  });
+
+  it('explains whether WhatsApp can be answered freely from the daily inbox', async () => {
+    mockedFetchAttentionInbox.mockResolvedValue([
+      {
+        kind: 'mia_reply',
+        ref_id: 'open-window',
+        lead_id: '22222222-2222-2222-2222-222222222222',
+        lead_name: 'רוני לוי',
+        lead_phone: '0500000001',
+        lead_status: 'human_handoff',
+        lead_heat: 'warm',
+        ownership_mode: 'mia_active',
+        product_interest: 'digital_program',
+        suggested_next_action: null,
+        intake_segment: 'needs_human',
+        queue_type: null,
+        queue_summary: null,
+        last_inbound_at: '2026-06-07T09:30:00.000Z',
+        last_outbound_at: null,
+        priority_level: 2,
+        reason: 'הלקוח השיב — נדרשת תגובה ידנית',
+        due_at: '2026-06-07T09:30:00.000Z',
+        created_at: '2026-06-07T09:30:00.000Z',
+      },
+      {
+        kind: 'queue',
+        ref_id: 'closed-window',
+        lead_id: '33333333-3333-3333-3333-333333333333',
+        lead_name: 'איתי כהן',
+        lead_phone: '0500000002',
+        lead_status: 'human_handoff',
+        lead_heat: 'warm',
+        ownership_mode: 'mia_active',
+        product_interest: 'investor_mentorship',
+        suggested_next_action: null,
+        intake_segment: 'needs_human',
+        queue_type: 'pending_manual_reply',
+        queue_summary: 'ממתין לשליחת הודעת נציג בוואטסאפ',
+        last_inbound_at: '2026-06-05T09:30:00.000Z',
+        last_outbound_at: null,
+        priority_level: 2,
+        reason: 'הודעה ידנית ממתינה',
+        due_at: '2026-06-07T09:30:00.000Z',
+        created_at: '2026-06-07T09:30:00.000Z',
+      },
+    ]);
+
+    renderInbox('/inbox?lane=reply');
+
+    expect(await screen.findByText('WhatsApp פתוח למענה חופשי')).toBeInTheDocument();
+    expect(screen.getByText(/אפשר לענות חופשי מתוך הכרטיס/)).toBeInTheDocument();
+    expect(screen.getByText('WhatsApp מחוץ לחלון 24 שעות')).toBeInTheDocument();
+    expect(screen.getByText(/ההודעה תישמר ותישלח רק כשהלקוח יענה שוב/)).toBeInTheDocument();
+    expect(screen.getByText('WhatsApp פתוח')).toBeInTheDocument();
+    expect(screen.getByText('WhatsApp מחוץ ל-24ש׳')).toBeInTheDocument();
   });
 });
