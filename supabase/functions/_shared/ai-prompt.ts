@@ -80,9 +80,9 @@ export function buildAiSystemPrompt(
 }
 
 export function buildAiUserPrompt(ctx: AiDecisionContext): string {
+  const latestLeadMessage = ctx.recentMessages.filter((m) => m.senderType === 'lead').slice(-1)[0]?.contentText ?? null;
   const recent = ctx.recentMessages
     .slice()
-    .reverse()
     .map((m) => `${m.senderType}: ${m.contentText ?? ''}`)
     .join('\n');
 
@@ -112,6 +112,8 @@ export function buildAiUserPrompt(ctx: AiDecisionContext): string {
     `  firstInboundSnippet: ${ctx.lead.firstInboundSnippet ?? '(none)'}`,
     `Conversation summary (older context, condensed):`,
     `  ${ctx.lead.conversationSummary ?? '(none)'}`,
+    `Latest lead message that MUST be answered directly:`,
+    `  ${latestLeadMessage ?? '(none)'}`,
     `Recent messages (oldest -> newest):`,
     recent || '(none)',
   ];
@@ -124,6 +126,9 @@ export function buildAiUserPrompt(ctx: AiDecisionContext): string {
 
   lines.push(
     `Operational routing rules:`,
+    `  - First answer the latest lead message directly in context. Do not send a generic intro if the conversation already has history.`,
+    `  - Use details from the recent conversation and summary; avoid repeating questions or claims already covered.`,
+    `  - If the latest lead message is short (e.g. "שלום", "היי"), acknowledge naturally and continue from the known context instead of restarting the funnel.`,
     `  - If intakeSegment=needs_human, do not keep selling in chat; acknowledge briefly and create/keep human handoff.`,
     `  - If intakeSegment=support_or_existing, avoid sales copy; route to Mia/support with a concise note.`,
     `  - If intakeSegment=hot_sales, answer the last blocker and move toward payment or phone sales; do not over-educate.`,
@@ -156,7 +161,9 @@ export function buildAiUserPrompt(ctx: AiDecisionContext): string {
     lines.push(`Topics already covered with this lead (do not repeat unless they ask): ${topicsSummary}`);
   }
 
-  lines.push(`Decide the next CRM action and the next WhatsApp reply. Return JSON only.`);
+  lines.push(
+    `Decide the next CRM action and the next WhatsApp reply. The replyText must be specific to the latest lead message and the conversation history. Return JSON only.`,
+  );
   return lines.join('\n');
 }
 
