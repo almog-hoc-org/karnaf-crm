@@ -72,6 +72,7 @@ export function SourcesPage() {
               <th>Slug</th>
               <th>שם תצוגה</th>
               <th>סדר</th>
+              <th>חוזי intake</th>
               <th>פעיל</th>
               <th>עדכון אחרון</th>
               <th>פעולות</th>
@@ -79,7 +80,7 @@ export function SourcesPage() {
           </thead>
           <tbody>
             {sourcesQ.isLoading ? (
-              <tr><td colSpan={6} className="p-6 text-center text-slate-500">{t('loading')}</td></tr>
+              <tr><td colSpan={7} className="p-6 text-center text-slate-500">{t('loading')}</td></tr>
             ) : sourcesQ.data && sourcesQ.data.length > 0 ? (
               sourcesQ.data.map((s) => (
                 <tr key={s.slug} className={s.is_active ? undefined : 'opacity-60'}>
@@ -105,6 +106,9 @@ export function SourcesPage() {
                         }
                       }}
                     />
+                  </td>
+                  <td data-label="חוזי intake">
+                    <IntakeContractsCell source={s} />
                   </td>
                   <td data-label="פעיל">
                     <label className="inline-flex items-center gap-2 text-sm">
@@ -135,7 +139,7 @@ export function SourcesPage() {
                 </tr>
               ))
             ) : (
-              <tr><td colSpan={6} className="p-10 text-center text-slate-500">אין מקורות.</td></tr>
+              <tr><td colSpan={7} className="p-10 text-center text-slate-500">אין מקורות.</td></tr>
             )}
           </tbody>
         </table>
@@ -155,6 +159,28 @@ export function SourcesPage() {
           setPendingDelete(null);
         }}
       />
+    </div>
+  );
+}
+
+function IntakeContractsCell({ source }: { source: LeadSource }) {
+  const contracts = source.intake_source_contracts ?? [];
+  if (!contracts.length) return <span className="text-xs text-slate-400">אין חוזה מוגדר</span>;
+  return (
+    <div className="flex max-w-xs flex-col gap-1 text-xs">
+      {contracts.map((contract) => (
+        <div key={contract.contract_key} className={contract.is_active ? 'rounded border border-slate-200 bg-white p-2' : 'rounded border border-slate-200 bg-slate-50 p-2 opacity-60'}>
+          <div className="font-medium text-slate-800">{contract.display_name}</div>
+          <code className="mt-0.5 block text-[11px] text-slate-500" dir="ltr">{contract.contract_key}</code>
+          <div className="mt-1 text-slate-500">
+            {contract.default_track ? `מסלול: ${contract.default_track}` : 'מסלול לפי payload'}
+            {contract.default_stage ? ` · שלב: ${contract.default_stage}` : ''}
+          </div>
+          {contract.required_fields?.length ? (
+            <div className="mt-1 text-slate-500">חובה: {contract.required_fields.join(', ')}</div>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }

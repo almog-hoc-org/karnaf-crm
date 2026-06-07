@@ -360,6 +360,16 @@ export interface LeadSource {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  intake_source_contracts?: IntakeSourceContract[];
+}
+
+export interface IntakeSourceContract {
+  contract_key: string;
+  display_name: string;
+  default_track: string | null;
+  default_stage: string | null;
+  required_fields: string[];
+  is_active: boolean;
 }
 
 export async function fetchLeadSources() {

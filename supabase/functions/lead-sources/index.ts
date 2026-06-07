@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
   if (req.method === 'GET') {
     const { data, error } = await supabase
       .from('lead_sources')
-      .select('slug, display_name, is_active, sort_order, created_at, updated_at')
+      .select('slug, display_name, is_active, sort_order, created_at, updated_at, intake_source_contracts(contract_key, display_name, default_track, default_stage, required_fields, is_active)')
       .order('is_active', { ascending: false })
       .order('sort_order', { ascending: true });
     if (error) return jsonResponse(req, { error: error.message }, 500);

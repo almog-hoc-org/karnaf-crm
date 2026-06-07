@@ -24,8 +24,25 @@ const FALLBACK_ALLOWED_SOURCES = new Set([
   'instagram_dm',
   'manual_entry',
   'screenshot_manual',
+  'webinar_registration',
+  'phone_call_request',
+  'presale_form',
+  'investor_mentorship_form',
+  'whatsapp_topic_selection',
   'unknown',
 ]);
+
+interface IntakeContract {
+  contract_key: string;
+  source_slug: string;
+  display_name: string;
+  required_fields: string[];
+  field_aliases: Record<string, string[]>;
+  default_track: string | null;
+  default_stage: string | null;
+  default_interest_topic: string | null;
+  default_tags: string[];
+}
 
 // Edge-function instances are short-lived but reused across invocations
 // while warm. Cache the active source slugs for 5 minutes so the admin
@@ -49,6 +66,77 @@ async function loadAllowedSources(supabase: ReturnType<typeof getServiceSupabase
   slugs.add('unknown');
   cachedSources = { fetchedAt: Date.now(), slugs };
   return slugs;
+}
+
+async function loadIntakeContract(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  source: string,
+  payload: Record<string, unknown>,
+): Promise<IntakeContract | null> {
+  const requestedKey = typeof payload.contract_key === 'string'
+    ? payload.contract_key.trim()
+    : typeof payload.form_type === 'string'
+      ? payload.form_type.trim()
+      : null;
+  let query = supabase
+    .from('intake_source_contracts')
+    .select('contract_key, source_slug, display_name, required_fields, field_aliases, default_track, default_stage, default_interest_topic, default_tags')
+    .eq('is_active', true);
+  if (requestedKey) query = query.eq('contract_key', requestedKey);
+  else query = query.eq('source_slug', source).order('contract_key', { ascending: true }).limit(1);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) {
+    log.warn('intake_contract_lookup_failed', { fn: 'leads-intake', source, contractKey: requestedKey, err: error.message });
+    return null;
+  }
+  if (!data) return null;
+  if (data.source_slug !== source) {
+    log.warn('intake_contract_source_mismatch', { fn: 'leads-intake', source, contractKey: data.contract_key, contractSource: data.source_slug });
+    return null;
+  }
+  return {
+    contract_key: data.contract_key as string,
+    source_slug: data.source_slug as string,
+    display_name: data.display_name as string,
+    required_fields: Array.isArray(data.required_fields) ? data.required_fields.filter((f): f is string => typeof f === 'string') : [],
+    field_aliases: normaliseAliases(data.field_aliases),
+    default_track: typeof data.default_track === 'string' ? data.default_track : null,
+    default_stage: typeof data.default_stage === 'string' ? data.default_stage : null,
+    default_interest_topic: typeof data.default_interest_topic === 'string' ? data.default_interest_topic : null,
+    default_tags: Array.isArray(data.default_tags) ? data.default_tags.filter((t): t is string => typeof t === 'string') : [],
+  };
+}
+
+function normaliseAliases(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [canonical, aliases] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(aliases)) continue;
+    out[canonical] = aliases.filter((alias): alias is string => typeof alias === 'string' && alias.trim().length > 0);
+  }
+  return out;
+}
+
+function applyContractAliases(payload: Record<string, unknown>, contract: IntakeContract): Record<string, unknown> {
+  const out = { ...payload };
+  for (const [canonical, aliases] of Object.entries(contract.field_aliases)) {
+    if (hasValue(out[canonical])) continue;
+    const match = aliases.find((alias) => hasValue(out[alias]));
+    if (match) out[canonical] = out[match];
+  }
+  return out;
+}
+
+function missingRequiredContractFields(payload: Record<string, unknown>, contract: IntakeContract): string[] {
+  return contract.required_fields.filter((field) => !hasValue(payload[field]));
+}
+
+function hasValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
 }
 
 Deno.serve(async (req) => {
@@ -112,37 +200,47 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { ...cached, idempotent: true });
   }
 
-  const phoneRaw = (payload.phone ?? payload.mobile) as string | undefined;
+  const sourceInput = String(payload.source ?? 'unknown').toLowerCase();
+  const allowedSources = await loadAllowedSources(supabase);
+  const source = allowedSources.has(sourceInput) ? sourceInput : 'unknown';
+  const contract = await loadIntakeContract(supabase, source, payload);
+  const normalisedPayload = contract ? applyContractAliases(payload, contract) : payload;
+  const phoneRaw = (normalisedPayload.phone ?? normalisedPayload.mobile) as string | undefined;
   const phone = normalizeIsraeliPhone(phoneRaw ?? null);
-  const emailRaw = typeof payload.email === 'string' ? payload.email.trim() : null;
+  const emailRaw = typeof normalisedPayload.email === 'string' ? normalisedPayload.email.trim() : null;
   const email = emailRaw ? emailRaw.toLowerCase() : null;
 
   if (!phone && !email) {
     return jsonResponse(req, { error: 'Missing phone or email' }, 400);
   }
 
-  const sourceInput = String(payload.source ?? 'unknown').toLowerCase();
-  const allowedSources = await loadAllowedSources(supabase);
-  const source = allowedSources.has(sourceInput) ? sourceInput : 'unknown';
+  const missingContractFields = contract ? missingRequiredContractFields(normalisedPayload, contract) : [];
+  if (missingContractFields.length > 0) {
+    return jsonResponse(req, {
+      error: 'Missing required contract fields',
+      contractKey: contract?.contract_key,
+      missingFields: missingContractFields,
+    }, 400);
+  }
 
   const lead = await upsertLead(supabase, {
     phone: phone ?? null,
     email,
-    fullName: (payload.full_name as string | null) ?? null,
+    fullName: (normalisedPayload.full_name as string | null) ?? null,
     source,
     intakeChannel: source.includes('whatsapp') ? 'whatsapp' : 'form',
-    metadata: payload,
+    metadata: { ...payload, _intake_contract: contract?.contract_key ?? null },
   });
 
-  const sourceDetail = typeof payload.source_detail === 'string' ? payload.source_detail : null;
-  const sourceCampaign = typeof payload.campaign_name === 'string' ? payload.campaign_name : null;
+  const sourceDetail = typeof normalisedPayload.source_detail === 'string' ? normalisedPayload.source_detail : null;
+  const sourceCampaign = typeof normalisedPayload.campaign_name === 'string' ? normalisedPayload.campaign_name : null;
   const firstMessage =
-    typeof payload.message === 'string'
-      ? payload.message
-      : typeof payload.initial_message === 'string'
-        ? payload.initial_message
-        : typeof payload.notes === 'string'
-          ? payload.notes
+    typeof normalisedPayload.message === 'string'
+      ? normalisedPayload.message
+      : typeof normalisedPayload.initial_message === 'string'
+        ? normalisedPayload.initial_message
+        : typeof normalisedPayload.notes === 'string'
+          ? normalisedPayload.notes
           : null;
   const classification = classifyLeadIntake({
     source,
@@ -150,13 +248,13 @@ Deno.serve(async (req) => {
     sourceCampaign,
     firstMessage,
     latestMessage: firstMessage,
-    metadata: payload,
+    metadata: normalisedPayload,
   });
 
-  const prdTrack = resolvePrdTrack(payload, classification.productInterest, source);
-  const prdStage = resolveInitialStage(prdTrack, payload);
-  const interestTopic = resolveInterestTopic(payload, classification.productInterest);
-  const tags = resolveTags(payload, source, prdTrack);
+  const prdTrack = contract?.default_track ?? resolvePrdTrack(normalisedPayload, classification.productInterest, source);
+  const prdStage = contract?.default_stage ?? resolveInitialStage(prdTrack, normalisedPayload);
+  const interestTopic = contract?.default_interest_topic ?? resolveInterestTopic(normalisedPayload, classification.productInterest);
+  const tags = resolveTags(normalisedPayload, source, prdTrack, contract?.default_tags ?? []);
   const currentTracks = Array.isArray(lead.active_tracks) ? lead.active_tracks.filter((t) => typeof t === 'string') as string[] : [];
   const activeTracks = prdTrack ? [...new Set([...currentTracks, prdTrack])] : currentTracks;
 
@@ -175,29 +273,30 @@ Deno.serve(async (req) => {
     interest_topic: interestTopic,
     tags,
   };
-  if (typeof payload.consent_whatsapp === 'boolean') updates.consent_whatsapp = payload.consent_whatsapp;
-  if (typeof payload.consent_email === 'boolean') updates.consent_email = payload.consent_email;
-  if (typeof payload.consent_whatsapp === 'boolean' || typeof payload.consent_email === 'boolean') {
+  if (typeof normalisedPayload.consent_whatsapp === 'boolean') updates.consent_whatsapp = normalisedPayload.consent_whatsapp;
+  if (typeof normalisedPayload.consent_email === 'boolean') updates.consent_email = normalisedPayload.consent_email;
+  if (typeof normalisedPayload.consent_whatsapp === 'boolean' || typeof normalisedPayload.consent_email === 'boolean') {
     updates.consent_updated_at = new Date().toISOString();
   }
   if (sourceDetail) updates.source_detail = sourceDetail;
   if (sourceCampaign) updates.source_campaign = sourceCampaign;
-  if (typeof payload.webinar_name === 'string') updates.webinar_name = payload.webinar_name;
-  if (typeof payload.lead_magnet_name === 'string') updates.lead_magnet_name = payload.lead_magnet_name;
-  if (typeof payload.city === 'string') updates.city = payload.city;
+  if (typeof normalisedPayload.webinar_name === 'string') updates.webinar_name = normalisedPayload.webinar_name;
+  if (typeof normalisedPayload.lead_magnet_name === 'string') updates.lead_magnet_name = normalisedPayload.lead_magnet_name;
+  if (typeof normalisedPayload.city === 'string') updates.city = normalisedPayload.city;
   await supabase.from('leads').update(updates).eq('id', lead.id);
 
   if (prdTrack && prdStage) {
     const dealPatch = {
       stage: prdStage,
       source,
-      presale_project: typeof payload.presale_project === 'string' ? payload.presale_project : null,
-      partner_name: typeof payload.partner_name === 'string' ? payload.partner_name : null,
+      presale_project: typeof normalisedPayload.presale_project === 'string' ? normalisedPayload.presale_project : null,
+      partner_name: typeof normalisedPayload.partner_name === 'string' ? normalisedPayload.partner_name : null,
       metadata: {
         sourceDetail,
         sourceCampaign,
         productInterest: classification.productInterest,
         intakeSegment: classification.intakeSegment,
+        intakeContract: contract?.contract_key ?? null,
       },
     };
     const { data: existingDeal } = await supabase
@@ -226,6 +325,7 @@ Deno.serve(async (req) => {
     classification,
     prd_track: prdTrack,
     prd_stage: prdStage,
+    intake_contract: contract?.contract_key ?? null,
   });
 
   // Source-specific first-response SLA, expressed in minutes for a single
@@ -248,7 +348,7 @@ Deno.serve(async (req) => {
     priorityLevel: source === 'whatsapp_direct' || source === 'instagram_dm' ? 1 : 2,
     reason: classification.handoffReason ?? 'New lead requires first response',
     queueSummary: classification.operatorSummary,
-    payloadJson: { source, correlationId, classification },
+    payloadJson: { source, correlationId, classification, intakeContract: contract?.contract_key ?? null },
     dueAt,
   });
 
@@ -305,8 +405,8 @@ function resolveInterestTopic(payload: Record<string, unknown>, productInterest:
   return productInterest;
 }
 
-function resolveTags(payload: Record<string, unknown>, source: string, track: string | null): string[] {
-  const out = new Set<string>([source]);
+function resolveTags(payload: Record<string, unknown>, source: string, track: string | null, defaults: string[] = []): string[] {
+  const out = new Set<string>([source, ...defaults]);
   if (track) out.add(track);
   const raw = payload.tags;
   if (Array.isArray(raw)) {
