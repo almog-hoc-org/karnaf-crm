@@ -124,6 +124,52 @@ export function SettingsPage() {
           </>
         )}
       </form>
+
+      <WhatsAppTemplateReadiness session={configQ.data?.whatsappSession ?? null} loading={configQ.isLoading} />
     </div>
+  );
+}
+
+function WhatsAppTemplateReadiness({
+  session,
+  loading,
+}: {
+  session: { freeformWindowHours: number; fallbackTemplateName: string; templateConfigured: boolean; templateApprovalRequired: boolean } | null;
+  loading: boolean;
+}) {
+  const hasName = Boolean(session?.fallbackTemplateName);
+  return (
+    <section className="kf-card max-w-3xl space-y-4 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">WhatsApp — פתיחת שיחה אחרי 24 שעות</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            וואטסאפ לא מאפשרת הודעה חופשית אחרי חלון השיחה. כדי ליזום חזרה ללקוח צריך תבנית Meta מאושרת בעברית.
+          </p>
+        </div>
+        <span className={`rounded-full px-3 py-1 text-xs font-medium ${hasName ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>
+          {hasName ? 'דורש אישור Meta' : 'לא מוגדר'}
+        </span>
+      </div>
+
+      {loading ? (
+        <div className="rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500">{t('loading')}</div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl bg-slate-50 p-3 text-sm">
+            <div className="text-slate-500">שם תבנית fallback</div>
+            <code className="mt-1 block text-slate-900" dir="ltr">{session?.fallbackTemplateName || '—'}</code>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-3 text-sm">
+            <div className="text-slate-500">חלון הודעה חופשית</div>
+            <div className="mt-1 font-medium text-slate-900">{session?.freeformWindowHours ?? 24} שעות</div>
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        סטטוס ידוע: הקונפיג מפנה ל־<code dir="ltr">karnaf_followup_v1</code>, אבל Meta החזירה שהתבנית לא קיימת בשפה <code dir="ltr">he</code>. צריך WABA/Meta Business access כדי ליצור ולאשר אותה.
+      </div>
+    </section>
   );
 }

@@ -477,8 +477,15 @@ export interface ActiveHoursConfig {
   workingDays: number[];
 }
 
+export interface WhatsAppSessionConfig {
+  freeformWindowHours: number;
+  fallbackTemplateName: string;
+  templateConfigured: boolean;
+  templateApprovalRequired: boolean;
+}
+
 export async function fetchRuntimeConfig() {
-  return getJson<{ ok: true; activeHours: ActiveHoursConfig }>('/runtime-config');
+  return getJson<{ ok: true; activeHours: ActiveHoursConfig; whatsappSession: WhatsAppSessionConfig }>('/runtime-config');
 }
 
 export async function postUpdateActiveHours(payload: ActiveHoursConfig) {
