@@ -2,7 +2,7 @@ import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { normalizeIsraeliPhone } from '../_shared/phone.ts';
 import { normalizeProviderInbound, sendWhatsAppText } from '../_shared/whatsapp-provider.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
-import { ensureConversation, logLeadEvent, upsertLeadByPhone } from '../_shared/lead-service.ts';
+import { ensureConversation, logLeadEvent, updateLeadFields, upsertLeadByPhone } from '../_shared/lead-service.ts';
 import { messageAlreadyLogged } from '../_shared/idempotency.ts';
 import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
 import { env, optional, safeEqual } from '../_shared/env.ts';
@@ -154,6 +154,28 @@ Deno.serve(async (req) => {
     });
   }
 
+  const routed = await handleWhatsAppRouter(supabase, {
+    leadId: lead.id,
+    conversationId: conversation.id,
+    phone,
+    text: normalized.text,
+    correlationId,
+    hasTrack: !!lead.primary_track,
+  });
+  if (routed.handled) {
+    log.info('whatsapp_router_handled', {
+      fn: 'whatsapp-webhook', correlationId, leadId: lead.id, action: routed.action,
+    });
+    return jsonResponse(req, {
+      ok: true,
+      leadId: lead.id,
+      conversationId: conversation.id,
+      correlationId,
+      routerAction: routed.action,
+      skippedAi: true,
+    });
+  }
+
   // Enqueue an orchestrate-message dispatch instead of fire-and-forget so
   // a crashed orchestrator or network glitch doesn't silently drop the
   // reply. dispatch-outbound (run every minute by pg_cron) drains the
@@ -258,4 +280,209 @@ async function flushPendingManualReplies(
     sent += 1;
   }
   return sent;
+}
+
+async function handleWhatsAppRouter(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  input: { leadId: string; conversationId: string; phone: string; text: string | null; correlationId: string; hasTrack: boolean },
+): Promise<{ handled: boolean; action?: string }> {
+  if (input.hasTrack) return { handled: false };
+
+  const text = (input.text ?? '').trim().toLowerCase();
+  const { data: options, error: optionsErr } = await supabase
+    .from('whatsapp_router_options')
+    .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project')
+    .eq('is_active', true)
+    .order('display_order', { ascending: true });
+  if (optionsErr || !options?.length) return { handled: false };
+
+  const matched = text ? matchRouterOption(text, options as RouterOption[]) : null;
+  if (matched) {
+    if (matched.track === 'human') {
+      await updateLeadFields(supabase, input.leadId, {
+        ownership_mode: 'mia_active',
+        primary_track: null,
+        interest_topic: matched.interest_topic ?? 'נציג אנושי',
+      });
+      await supabase.from('whatsapp_router_state').upsert({
+        lead_id: input.leadId,
+        conversation_id: input.conversationId,
+        status: 'human_requested',
+        selected_option_key: matched.option_key,
+        selected_at: new Date().toISOString(),
+        metadata: { correlationId: input.correlationId, text },
+      }, { onConflict: 'lead_id' });
+      await ensurePendingQueueItem(supabase, {
+        leadId: input.leadId,
+        queueType: 'whatsapp_human_requested',
+        priorityLevel: 1,
+        reason: 'לקוח ביקש מעבר לנציג אנושי בוואטסאפ',
+        queueSummary: input.text,
+        payloadJson: { correlationId: input.correlationId, optionKey: matched.option_key },
+      });
+      await logLeadEvent(supabase, input.leadId, 'whatsapp_router_human_requested', 'system', {
+        correlation_id: input.correlationId,
+        option_key: matched.option_key,
+        text: input.text,
+      }, input.conversationId);
+      await sendRouterText(supabase, input, 'מעולה, העברתי לנציג אנושי. נחזור אליך כאן בהקדם.');
+      return { handled: true, action: 'human_requested' };
+    }
+
+    await routeLeadToOption(supabase, input, matched);
+    await sendRouterText(
+      supabase,
+      input,
+      `קיבלתי — סימנתי אותך למסלול ${matched.label_he}. נמשיך מכאן עם הפרטים הרלוונטיים.`,
+    );
+    return { handled: true, action: `routed:${matched.option_key}` };
+  }
+
+  const { data: state } = await supabase
+    .from('whatsapp_router_state')
+    .select('status, last_prompted_at')
+    .eq('lead_id', input.leadId)
+    .maybeSingle();
+
+  if (!state || state.status === 'awaiting_topic') {
+    const promptedRecently = state?.last_prompted_at && Date.now() - new Date(state.last_prompted_at as string).getTime() < 30 * 60 * 1000;
+    if (!promptedRecently) {
+      await supabase.from('whatsapp_router_state').upsert({
+        lead_id: input.leadId,
+        conversation_id: input.conversationId,
+        status: 'awaiting_topic',
+        last_prompted_at: new Date().toISOString(),
+        metadata: { correlationId: input.correlationId },
+      }, { onConflict: 'lead_id' });
+      await ensurePendingQueueItem(supabase, {
+        leadId: input.leadId,
+        queueType: 'whatsapp_topic_unselected',
+        priorityLevel: 2,
+        reason: 'לקוח נכנס מוואטסאפ ועדיין לא בחר נושא',
+        queueSummary: input.text,
+        dueAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+        payloadJson: { correlationId: input.correlationId },
+      });
+      await logLeadEvent(supabase, input.leadId, 'whatsapp_router_prompted', 'system', {
+        correlation_id: input.correlationId,
+      }, input.conversationId);
+      await sendRouterText(supabase, input, buildRouterPrompt(options as RouterOption[]));
+      return { handled: true, action: 'prompted' };
+    }
+    return { handled: true, action: 'awaiting_topic' };
+  }
+
+  return { handled: false };
+}
+
+interface RouterOption {
+  option_key: string;
+  display_order: number;
+  label_he: string;
+  match_terms: string[];
+  track: string;
+  stage: string | null;
+  interest_topic: string | null;
+  presale_project: string | null;
+}
+
+function matchRouterOption(text: string, options: RouterOption[]): RouterOption | null {
+  return options.find((option) =>
+    option.match_terms.some((term) => {
+      const t = String(term).trim().toLowerCase();
+      return t && (text === t || text.includes(t));
+    })
+  ) ?? null;
+}
+
+function buildRouterPrompt(options: RouterOption[]): string {
+  const lines = options.map((option, idx) => `${idx + 1}. ${option.label_he}`);
+  return `היי, באיזה נושא תרצה/י עזרה?\n${lines.join('\n')}\nאפשר לענות במספר או במילים.`;
+}
+
+async function routeLeadToOption(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  input: { leadId: string; conversationId: string; text: string | null; correlationId: string },
+  option: RouterOption,
+) {
+  const activeTracks = [option.track];
+  await updateLeadFields(supabase, input.leadId, {
+    primary_track: option.track,
+    active_tracks: activeTracks,
+    interest_topic: option.interest_topic ?? option.label_he,
+    ownership_mode: option.track === 'presale' || option.track === 'investor_mentorship' ? 'mia_active' : 'ai_active',
+  });
+
+  const { data: existingDeal } = await supabase
+    .from('deals')
+    .select('id')
+    .eq('lead_id', input.leadId)
+    .eq('track', option.track)
+    .eq('status', 'open')
+    .maybeSingle();
+  const dealPatch = {
+    stage: option.stage ?? 'new',
+    source: 'whatsapp_router',
+    presale_project: option.presale_project,
+    metadata: { optionKey: option.option_key, correlationId: input.correlationId, text: input.text },
+  };
+  if (existingDeal?.id) {
+    await supabase.from('deals').update(dealPatch).eq('id', existingDeal.id);
+  } else {
+    await supabase.from('deals').insert({
+      lead_id: input.leadId,
+      track: option.track,
+      status: 'open',
+      ...dealPatch,
+    });
+  }
+
+  await supabase.from('whatsapp_router_state').upsert({
+    lead_id: input.leadId,
+    conversation_id: input.conversationId,
+    status: 'routed',
+    selected_option_key: option.option_key,
+    selected_at: new Date().toISOString(),
+    metadata: { correlationId: input.correlationId, text: input.text },
+  }, { onConflict: 'lead_id' });
+
+  if (option.track === 'presale' || option.track === 'investor_mentorship') {
+    await ensurePendingQueueItem(supabase, {
+      leadId: input.leadId,
+      queueType: option.track === 'presale' ? 'presale_followup_due' : 'investor_followup_due',
+      priorityLevel: 1,
+      reason: option.track === 'presale' ? 'ליד פריסייל חדש מוואטסאפ' : 'ליד ליווי משקיעים חדש מוואטסאפ',
+      queueSummary: input.text,
+      dueAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      payloadJson: { correlationId: input.correlationId, optionKey: option.option_key },
+    });
+  }
+
+  await logLeadEvent(supabase, input.leadId, 'whatsapp_router_routed', 'system', {
+    correlation_id: input.correlationId,
+    option_key: option.option_key,
+    track: option.track,
+    stage: option.stage,
+  }, input.conversationId);
+}
+
+async function sendRouterText(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  input: { leadId: string; conversationId: string; phone: string; correlationId: string },
+  text: string,
+) {
+  const result = await sendWhatsAppText(input.phone, text);
+  await supabase.from('messages').insert({
+    conversation_id: input.conversationId,
+    lead_id: input.leadId,
+    provider_message_id: result.providerMessageId ?? null,
+    sender_type: 'system',
+    sender_name: 'Karnaf Router',
+    direction: 'outbound',
+    message_type: 'text',
+    content_text: text,
+    provider_status: result.ok ? 'sent' : 'failed',
+    provider_error: result.ok ? null : result.error ?? 'send failed',
+    raw_payload: { source: 'whatsapp_router', correlation_id: input.correlationId },
+  });
 }

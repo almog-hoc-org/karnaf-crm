@@ -153,6 +153,7 @@ export type AdminAction =
   | 'reopen_lead'
   | 'resolve_queue'
   | 'log_phone_call'
+  | 'advance_deal_stage'
   | 'update_lead_meta';
 
 export type ReopenTarget = 'responded' | 'qualified' | 'nurture' | 'human_handoff';
@@ -188,6 +189,8 @@ export async function postAdminAction(payload: {
   queueItemId?: string;
   note?: string | null;
   targetStatus?: ReopenTarget;
+  dealId?: string;
+  targetStage?: string;
   callOutcome?: CallOutcome;
   callDurationMinutes?: number;
   metaUpdates?: LeadMetaUpdates;

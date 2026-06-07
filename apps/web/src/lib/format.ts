@@ -51,6 +51,13 @@ export const QUEUE_LABELS: Record<string, string> = {
   low_fit_cleanup: 'ניקוי לידים לא מתאימים',
   manual_review_required: 'בדיקה ידנית',
   ai_stuck: 'AI תקוע',
+  whatsapp_topic_unselected: 'וואטסאפ — לא בחר נושא',
+  whatsapp_human_requested: 'וואטסאפ — ביקש נציג',
+  presale_followup_due: 'פריסייל — טיפול נציג',
+  investor_followup_due: 'ליווי משקיעים — טיפול שחר',
+  webinar_registered: 'נרשם לוובינר',
+  webinar_attended_not_purchased: 'וובינר — השתתף ולא רכש',
+  webinar_no_show: 'וובינר — לא השתתף',
 };
 
 export function heatBadgeClass(heat: LeadHeat | string): string {

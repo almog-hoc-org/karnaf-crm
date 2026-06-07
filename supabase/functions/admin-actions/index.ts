@@ -16,6 +16,7 @@ type ActionName =
   | 'reopen_lead'
   | 'resolve_queue'
   | 'log_phone_call'
+  | 'advance_deal_stage'
   | 'update_lead_meta';
 
 const REOPEN_TARGETS = new Set(['responded', 'qualified', 'nurture', 'human_handoff']);
@@ -36,6 +37,7 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   reopen_lead: ['owner', 'admin'],
   resolve_queue: ['owner', 'admin', 'mia', 'sales_rep'],
   log_phone_call: ['owner', 'admin', 'mia', 'sales_rep'],
+  advance_deal_stage: ['owner', 'admin', 'mia', 'sales_rep'],
   update_lead_meta: ['owner', 'admin', 'mia'],
 };
 
@@ -46,6 +48,8 @@ interface ActionPayload {
   queueItemId?: string;
   note?: string | null;
   targetStatus?: string;
+  dealId?: string;
+  targetStage?: string;
   callOutcome?: 'connected' | 'no_answer' | 'voicemail' | 'declined' | 'callback_requested';
   callDurationMinutes?: number;
   metaUpdates?: {
@@ -445,6 +449,21 @@ Deno.serve(async (req) => {
         conversationId ?? undefined,
         staff.userId,
       );
+      break;
+    }
+    case 'advance_deal_stage': {
+      if (!body.dealId || !body.targetStage) {
+        return jsonResponse(req, { error: 'Missing dealId or targetStage' }, 400);
+      }
+      const { error: stageErr } = await supabase.rpc('advance_deal_stage', {
+        p_deal_id: body.dealId,
+        p_to_stage: body.targetStage,
+        p_actor_type: staff.role,
+        p_reason: note ?? 'manual_stage_change',
+        p_actor_id: staff.userId,
+        p_metadata: { correlation_id: correlationId },
+      });
+      if (stageErr) return jsonResponse(req, { error: stageErr.message }, 400);
       break;
     }
     case 'log_phone_call': {

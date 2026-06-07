@@ -14,6 +14,8 @@ import { computeSlaState, slaRowClass } from '@/lib/queue-sla';
 const QUEUE_TYPES = [
   '', 'first_response_due', 'hot_lead', 'sla_risk', 'ai_stuck', 'human_handoff',
   'payment_pending', 'phone_escalation', 'nurture_due', 'dormant_review',
+  'whatsapp_topic_unselected', 'whatsapp_human_requested', 'presale_followup_due', 'investor_followup_due',
+  'webinar_registered', 'webinar_attended_not_purchased', 'webinar_no_show',
   'failed_automation', 'weekend_carryover', 'low_fit_cleanup',
 ];
 

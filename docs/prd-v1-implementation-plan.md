@@ -57,14 +57,22 @@ The CRM should remain one unified system, not three separate CRMs. The existing 
 7. No-show/cancellation automation rules.
 8. Multi-product conflict rules when a contact has several open Deals.
 
-## Recommended Phase 2
+## Phase 2 shipped routing/capture foundation
 
-Build capture and routing surfaces:
-- intake payload contract per form/source
-- WhatsApp topic router config
-- explicit Deal stage transitions per track
-- webinar registration and attendance import/update endpoint
-- queue views for “לא בחר נושא” and “מבקש נציג”
+- Added configurable WhatsApp router options in `whatsapp_router_options`.
+- Added `whatsapp_router_state` so new WhatsApp contacts can be prompted for a topic and routed once they reply.
+- `whatsapp-webhook` now prompts untracked WhatsApp leads with a simple text menu, routes replies to `program` / `presale` / `investor_mentorship`, and queues human follow-up where needed.
+- Added `deal_stage_history` and `advance_deal_stage(...)` RPC for audited Deal stage transitions.
+- Added operator buttons in Lead Detail to advance Deal stages by track.
+- Added `webinar-events` webhook for webinar registration/attendance/purchase signals, updating `webinars`, `webinar_registrations`, Deals, and follow-up queue items.
+- Added queue labels/filters for WhatsApp router and webinar follow-up lists.
+
+## Still recommended for Phase 2b
+
+- Finalize dynamic presale option management instead of static seeded defaults.
+- Add working-hours logic for human handoff.
+- Add exact external payload examples for each landing-page/form provider.
+- Submit/approve WhatsApp templates before using proactive out-of-window router messages.
 
 ## Recommended Phase 3
 
