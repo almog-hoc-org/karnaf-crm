@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fetchAttentionInbox } from '@/lib/api';
@@ -27,6 +27,10 @@ describe('InboxPage', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date('2026-06-07T10:00:00.000Z'));
     mockedFetchAttentionInbox.mockResolvedValue([]);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(async () => undefined) },
+    });
   });
 
   afterEach(() => {
@@ -86,6 +90,9 @@ describe('InboxPage', () => {
     expect(screen.getByText('ביקשה לדבר עם נציג על התאמת ליווי משקיעים')).toBeInTheDocument();
     expect(screen.getByText('מה להגיד עכשיו')).toBeInTheDocument();
     expect(screen.getByText(/דנה, ראיתי שפנית לגבי ליווי משקיעים/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'העתקת נוסח' }));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('דנה, ראיתי שפנית לגבי ליווי משקיעים'));
+    expect(await screen.findByRole('button', { name: 'הועתק' })).toBeInTheDocument();
     expect(screen.getAllByText('להתקשר ולסגור אבחון קצר').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/מטרת השיחה היא להבין התאמה/).length).toBeGreaterThan(0);
   });

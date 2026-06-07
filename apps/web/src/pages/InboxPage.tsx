@@ -47,6 +47,7 @@ export function InboxPage() {
   const [lane, setLane] = useState<WorkLane>(initialLane);
   const [pendingClose, setPendingClose] = useState<AttentionRow | null>(null);
   const [closeNote, setCloseNote] = useState('');
+  const [copiedTalkTrackId, setCopiedTalkTrackId] = useState<string | null>(null);
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -212,7 +213,21 @@ export function InboxPage() {
                     ) : null}
 
                     <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-3">
-                      <div className="text-xs font-semibold text-brand-700">מה להגיד עכשיו</div>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs font-semibold text-brand-700">מה להגיד עכשיו</div>
+                        <button
+                          type="button"
+                          className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-100 transition hover:bg-brand-50"
+                          onClick={() => {
+                            void copyTalkTrack(talkTrack).then(() => {
+                              setCopiedTalkTrackId(row.ref_id);
+                              window.setTimeout(() => setCopiedTalkTrackId((current) => (current === row.ref_id ? null : current)), 1800);
+                            });
+                          }}
+                        >
+                          {copiedTalkTrackId === row.ref_id ? 'הועתק' : 'העתקת נוסח'}
+                        </button>
+                      </div>
                       <p className="mt-1 text-sm leading-6 text-slate-800">{talkTrack}</p>
                     </div>
 
@@ -554,6 +569,22 @@ function repTalkTrack(row: AttentionRow, meta = classifyRow(row)): string {
 function firstNameFromLead(name: string | null): string | null {
   const first = name?.trim().split(/\s+/)[0];
   return first || null;
+}
+
+async function copyTalkTrack(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
 }
 
 function sortRows(rows: AttentionRow[]): AttentionRow[] {
