@@ -87,6 +87,26 @@ describe('QueuePage', () => {
     );
   });
 
+  it('renders missed meeting follow-up queue items with contextual Hebrew labels', async () => {
+    vi.mocked(fetchQueueList).mockResolvedValueOnce([
+      makeRow({
+        queue_type: 'phone_escalation',
+        reason: 'פולואפ אחרי לקוח שלא הגיע לפגישה',
+        payload_json: {
+          meeting_id: 'meeting-1',
+          status: 'no_show',
+          meeting_type: 'zoom',
+          starts_at: '2026-06-09T10:30:00Z',
+        },
+      }),
+    ]);
+    renderQueue();
+
+    await waitFor(() => expect(screen.getByText('פולואפ פגישה')).toBeInTheDocument());
+    expect(screen.getByText('פולואפ אחרי לקוח שלא הגיע לפגישה')).toBeInTheDocument();
+    expect(screen.getByText(/לא הגיע · זום/)).toBeInTheDocument();
+  });
+
   it('hydrates state from URL search params', async () => {
     renderQueue('/queue?type=hot_lead&status=resolved');
     await waitFor(() =>

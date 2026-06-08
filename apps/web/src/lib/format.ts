@@ -1,6 +1,6 @@
 // Display helpers. Hebrew labels for enum values used across the operator UI.
 
-import type { LeadHeat, LeadStatus, OwnershipMode } from './types';
+import type { LeadHeat, LeadStatus, MeetingRow, OwnershipMode } from './types';
 
 export const STATUS_LABELS: Record<LeadStatus, string> = {
   new: 'חדש',
@@ -35,6 +35,19 @@ export const OWNERSHIP_LABELS: Record<OwnershipMode, string> = {
   phone_sales_pending: 'ממתין לשיחת טלפון',
   shared_watch: 'במעקב משותף',
   suppressed: 'מושתק',
+};
+
+export const MEETING_TYPE_LABELS: Record<MeetingRow['meeting_type'], string> = {
+  phone: 'טלפון',
+  zoom: 'זום',
+  office: 'משרד',
+};
+
+export const MEETING_STATUS_LABELS: Record<MeetingRow['status'], string> = {
+  scheduled: 'מתוכננת',
+  held: 'התקיימה',
+  cancelled: 'בוטלה',
+  no_show: 'לא הגיע',
 };
 
 export const QUEUE_LABELS: Record<string, string> = {
