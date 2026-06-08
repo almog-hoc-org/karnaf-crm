@@ -43,6 +43,20 @@ describe('label catalogs', () => {
     expect(QUEUE_LABELS.payment_pending).toBeTruthy();
     expect(QUEUE_LABELS.manual_review_required).toBeTruthy();
   });
+
+  it('keeps displayed Hebrew labels readable and not mojibake', () => {
+    const labels = [
+      ...Object.values(STATUS_LABELS),
+      ...Object.values(HEAT_LABELS),
+      ...Object.values(OWNERSHIP_LABELS),
+      ...Object.values(QUEUE_LABELS),
+    ];
+
+    for (const label of labels) {
+      expect(label).toMatch(/[א-ת]/);
+      expect(label).not.toMatch(new RegExp(`${String.fromCharCode(0xfffd)}|\\?{2,}|\\?[Tcx~]\\?`));
+    }
+  });
 });
 
 describe('heatBadgeClass', () => {
