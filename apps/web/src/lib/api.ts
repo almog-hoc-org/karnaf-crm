@@ -154,6 +154,7 @@ export type AdminAction =
   | 'resolve_queue'
   | 'log_phone_call'
   | 'schedule_meeting'
+  | 'update_meeting_status'
   | 'advance_deal_stage'
   | 'update_lead_meta';
 
@@ -199,6 +200,8 @@ export async function postAdminAction(payload: {
   meetingEndsAt?: string | null;
   meetingSummary?: string | null;
   meetingUrl?: string | null;
+  meetingId?: string;
+  meetingStatus?: MeetingRow['status'];
   metaUpdates?: LeadMetaUpdates;
 }) {
   return postJson<{ ok: true; action: string }>('/admin-actions', payload);

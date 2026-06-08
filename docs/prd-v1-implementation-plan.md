@@ -140,11 +140,12 @@ Started with low-risk rep-execution improvements before heavier scheduling/calen
 - Call cards can record `אין מענה` directly from `היום שלי` through the audited `log_phone_call` admin action, after confirmation.
 - Lead Detail PRD pipeline cards can schedule a CRM-only meeting through the audited `schedule_meeting` admin action.
 - Meeting scheduling updates `meetings`, `next_action_type`, `next_action_due_at`, `last_human_touch_at`, and logs a `meeting_scheduled` event.
+- Scheduled meetings can be marked from Lead Detail as `התקיימה`, `לא הגיע`, or `בוטלה` through the audited `update_meeting_status` admin action.
 - These are internal CRM actions only: no customer message is sent and no external Calendar event is created yet.
 
 Still recommended for Phase 3c:
 - calendar integration for meetings after the CRM-only scheduling path is stable.
-- meeting status/no-show automation.
+- follow-up automation after no-show/cancellation.
 - program onboarding tasks and keep-alive state.
 
 ## Recommended Phase 4

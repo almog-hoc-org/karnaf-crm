@@ -131,6 +131,22 @@ export function LeadDetailPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
+  const updateMeetingStatus = useMutation({
+    mutationFn: (input: { meetingId: string; status: MeetingRow['status']; note: string | null }) =>
+      postAdminAction({
+        action: 'update_meeting_status',
+        leadId,
+        meetingId: input.meetingId,
+        meetingStatus: input.status,
+        note: input.note,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lead-detail', leadId] });
+      toast.success('סטטוס הפגישה עודכן');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
   const conversationId = detailQ.data?.conversations[0]?.id;
 
   const sendReply = useMutation({
@@ -482,7 +498,9 @@ export function LeadDetailPage() {
             advancing={action.isPending}
             canSchedule={auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia' || auth.role === 'sales_rep'}
             scheduling={scheduleMeeting.isPending}
+            updatingMeeting={updateMeetingStatus.isPending}
             onSchedule={(input) => scheduleMeeting.mutate(input)}
+            onUpdateMeetingStatus={(input) => updateMeetingStatus.mutate(input)}
             onAdvance={(deal, targetStage) =>
               action.mutate({
                 action: 'advance_deal_stage',
@@ -897,7 +915,9 @@ function PipelineOverviewCard({
   advancing,
   canSchedule,
   scheduling,
+  updatingMeeting,
   onSchedule,
+  onUpdateMeetingStatus,
   onAdvance,
 }: {
   lead: LeadDetailType;
@@ -908,6 +928,7 @@ function PipelineOverviewCard({
   advancing: boolean;
   canSchedule: boolean;
   scheduling: boolean;
+  updatingMeeting: boolean;
   onSchedule: (input: {
     meetingType: MeetingRow['meeting_type'];
     startsAt: string;
@@ -916,6 +937,7 @@ function PipelineOverviewCard({
     meetingUrl: string | null;
     dealId: string | null;
   }) => void;
+  onUpdateMeetingStatus: (input: { meetingId: string; status: MeetingRow['status']; note: string | null }) => void;
   onAdvance: (deal: DealRow, targetStage: string) => void;
 }) {
   const nextMeeting = [...meetings]
@@ -946,6 +968,10 @@ function PipelineOverviewCard({
 
       {canSchedule ? (
         <ScheduleMeetingForm deals={deals.filter((deal) => deal.status === 'open')} submitting={scheduling} onSubmit={onSchedule} />
+      ) : null}
+
+      {meetings.length ? (
+        <MeetingsList meetings={meetings} canUpdate={canSchedule} updating={updatingMeeting} onUpdate={onUpdateMeetingStatus} />
       ) : null}
 
       {deals.length ? (
@@ -1056,6 +1082,51 @@ function ScheduleMeetingForm({
   );
 }
 
+function MeetingsList({
+  meetings,
+  canUpdate,
+  updating,
+  onUpdate,
+}: {
+  meetings: MeetingRow[];
+  canUpdate: boolean;
+  updating: boolean;
+  onUpdate: (input: { meetingId: string; status: MeetingRow['status']; note: string | null }) => void;
+}) {
+  return (
+    <div className="mt-3 rounded-2xl border border-slate-100 bg-white p-3">
+      <div className="text-sm font-semibold text-slate-800">פגישות</div>
+      <ul className="mt-2 space-y-2 text-sm">
+        {[...meetings]
+          .sort((a, b) => new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime())
+          .map((meeting) => (
+            <li key={meeting.id} className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="font-medium text-slate-800">
+                    {MEETING_TYPE_LABELS[meeting.meeting_type] ?? meeting.meeting_type} · {formatDateTime(meeting.starts_at)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    סטטוס: {MEETING_STATUS_LABELS[meeting.status] ?? meeting.status}
+                    {meeting.meeting_url ? ` · ${meeting.meeting_url}` : ''}
+                  </div>
+                  {meeting.summary ? <div className="mt-1 text-xs text-slate-600">{meeting.summary}</div> : null}
+                </div>
+                {canUpdate && meeting.status === 'scheduled' ? (
+                  <div className="flex flex-wrap gap-1">
+                    <button type="button" className="kf-btn kf-btn-ghost text-xs" disabled={updating} onClick={() => onUpdate({ meetingId: meeting.id, status: 'held', note: 'הפגישה התקיימה' })}>התקיימה</button>
+                    <button type="button" className="kf-btn kf-btn-ghost text-xs" disabled={updating} onClick={() => onUpdate({ meetingId: meeting.id, status: 'no_show', note: 'הלקוח לא הגיע לפגישה' })}>לא הגיע</button>
+                    <button type="button" className="kf-btn kf-btn-ghost text-xs" disabled={updating} onClick={() => onUpdate({ meetingId: meeting.id, status: 'cancelled', note: 'הפגישה בוטלה' })}>בוטלה</button>
+                  </div>
+                ) : null}
+              </div>
+            </li>
+          ))}
+      </ul>
+    </div>
+  );
+}
+
 function DealStageActions({
   deal,
   busy,
@@ -1140,6 +1211,13 @@ const MEETING_TYPE_LABELS: Record<string, string> = {
   phone: 'טלפון',
   zoom: 'זום',
   office: 'משרד',
+};
+
+const MEETING_STATUS_LABELS: Record<string, string> = {
+  scheduled: 'מתוכננת',
+  held: 'התקיימה',
+  cancelled: 'בוטלה',
+  no_show: 'לא הגיע',
 };
 
 const PROGRAM_PROGRESS_LABELS: Record<string, string> = {
