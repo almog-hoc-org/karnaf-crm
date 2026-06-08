@@ -508,6 +508,21 @@ Deno.serve(async (req) => {
         conversationId ?? undefined,
         staff.userId,
       );
+      if (meetingStatus === 'no_show' || meetingStatus === 'cancelled') {
+        const followupReason = meetingStatus === 'no_show'
+          ? 'פולואפ אחרי לקוח שלא הגיע לפגישה'
+          : 'פולואפ אחרי פגישה שבוטלה';
+        await ensurePendingQueueItem(supabase, {
+          leadId,
+          queueType: 'phone_escalation',
+          priorityLevel: meetingStatus === 'no_show' ? 1 : 2,
+          reason: followupReason,
+          queueSummary: followupReason,
+          dueAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          payloadJson: { ...statusMeta, meeting_type: meeting.meeting_type, starts_at: meeting.starts_at },
+          createdByActorType: staff.role,
+        });
+      }
       break;
     }
     case 'schedule_meeting': {
