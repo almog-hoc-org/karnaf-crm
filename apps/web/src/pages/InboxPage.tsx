@@ -7,7 +7,7 @@ import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
-import { formatRelative } from '@/lib/format';
+import { MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import type { AttentionRow } from '@/lib/types';
 
@@ -455,7 +455,8 @@ function reasonChips(row: AttentionRow, meta = classifyRow(row)): ReasonChip[] {
   const whatsappWindow = whatsappWindowStatus(row);
   if (whatsappWindow?.state === 'open') chips.push({ label: 'WhatsApp פתוח', tone: 'success' });
   if (whatsappWindow?.state === 'closed') chips.push({ label: 'WhatsApp מחוץ ל-24ש׳', tone: 'warning' });
-  if (row.queue_type) chips.push({ label: queueTypeLabel(row.queue_type), tone: queueTypeTone(row.queue_type) });
+  if (isMeetingFollowup(row)) chips.push({ label: 'פולואפ פגישה', tone: 'info' });
+  else if (row.queue_type) chips.push({ label: queueTypeLabel(row.queue_type), tone: queueTypeTone(row.queue_type) });
   if (meta.lane === 'reply') chips.push({ label: 'מחכה למענה אנושי', tone: 'warning' });
   if (meta.lane === 'call') chips.push({ label: 'צריך שיחה', tone: 'info' });
   if (meta.lane === 'risk') chips.push({ label: 'סיכון נפילה', tone: 'danger' });
@@ -480,6 +481,27 @@ function chipClass(tone: ReasonChip['tone']) {
     case 'success': return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100';
     default: return 'bg-slate-100 text-slate-700';
   }
+}
+
+function meetingFollowupDetail(row: AttentionRow): string | null {
+  if (!isMeetingFollowup(row)) return null;
+  const payload = row.payload_json ?? {};
+  const status = typeof payload.status === 'string' ? payload.status : null;
+  const meetingType = typeof payload.meeting_type === 'string' ? payload.meeting_type : null;
+  const startsAt = typeof payload.starts_at === 'string' ? payload.starts_at : null;
+  const parts = [
+    status && status in MEETING_STATUS_LABELS ? MEETING_STATUS_LABELS[status as keyof typeof MEETING_STATUS_LABELS] : null,
+    meetingType && meetingType in MEETING_TYPE_LABELS ? MEETING_TYPE_LABELS[meetingType as keyof typeof MEETING_TYPE_LABELS] : null,
+    startsAt ? formatDateTime(startsAt) : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+function isMeetingFollowup(row: AttentionRow): boolean {
+  const payload = row.payload_json ?? {};
+  return row.queue_type === 'phone_escalation'
+    && typeof payload.meeting_id === 'string'
+    && (payload.status === 'no_show' || payload.status === 'cancelled');
 }
 
 function queueTypeLabel(queueType: string) {
@@ -647,6 +669,10 @@ function classifyRow(row: AttentionRow): {
 }
 
 function humanReason(row: AttentionRow): string {
+  if (isMeetingFollowup(row)) {
+    const detail = meetingFollowupDetail(row);
+    return detail ? `${row.queue_summary ?? row.reason ?? 'פולואפ פגישה'} — ${detail}` : (row.queue_summary ?? row.reason ?? 'פולואפ פגישה');
+  }
   if (row.queue_summary) return row.queue_summary;
   if (row.reason) return row.reason;
   if (row.kind === 'mia_reply') return 'הלקוח השיב ומחכה למענה אנושי';
@@ -660,6 +686,12 @@ function operatingPlan(row: AttentionRow, meta = classifyRow(row)): { nextAction
     return { nextAction: row.suggested_next_action.trim(), why: humanReason(row) };
   }
   const product = row.product_interest ? PRODUCT_LABELS[row.product_interest] ?? row.product_interest : null;
+  if (isMeetingFollowup(row)) {
+    return {
+      nextAction: 'להתקשר לפולואפ פגישה',
+      why: humanReason(row),
+    };
+  }
   if (meta.lane === 'call') {
     return {
       nextAction: 'להתקשר ולסגור אבחון קצר',
@@ -687,6 +719,9 @@ function operatingPlan(row: AttentionRow, meta = classifyRow(row)): { nextAction
 function repTalkTrack(row: AttentionRow, meta = classifyRow(row)): string {
   const firstName = firstNameFromLead(row.lead_name) ?? 'היי';
   const product = row.product_interest ? PRODUCT_LABELS[row.product_interest] ?? row.product_interest : null;
+  if (isMeetingFollowup(row)) {
+    return `${firstName}, ראיתי שהפגישה האחרונה לא הושלמה. רציתי לתאם איתך מועד קצר חדש ולהבין מה הכי נכון לעשות מכאן.`;
+  }
   if (meta.lane === 'call') {
     return product
       ? `${firstName}, ראיתי שפנית לגבי ${product}. אני רוצה להבין איפה אתה עומד היום ומה הכי חשוב לך לפתור, ואז אגיד אם זה בכלל מתאים.`

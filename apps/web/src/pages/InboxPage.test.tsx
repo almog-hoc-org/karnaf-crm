@@ -114,6 +114,46 @@ describe('InboxPage', () => {
     }));
   });
 
+  it('shows missed meeting follow-up context in the call lane', async () => {
+    mockedFetchAttentionInbox.mockResolvedValue([
+      {
+        kind: 'queue',
+        ref_id: 'queue-meeting-1',
+        lead_id: '44444444-4444-4444-4444-444444444444',
+        lead_name: 'נועה ישראלי',
+        lead_phone: '0501112222',
+        lead_status: 'qualified',
+        lead_heat: 'warm',
+        ownership_mode: 'phone_sales_pending',
+        product_interest: 'digital_program',
+        suggested_next_action: null,
+        intake_segment: 'hot_sales',
+        queue_type: 'phone_escalation',
+        queue_summary: 'פולואפ אחרי לקוח שלא הגיע לפגישה',
+        payload_json: {
+          meeting_id: 'meeting-1',
+          status: 'no_show',
+          meeting_type: 'zoom',
+          starts_at: '2026-06-09T10:30:00.000Z',
+        },
+        priority_level: 1,
+        reason: 'פולואפ אחרי לקוח שלא הגיע לפגישה',
+        last_inbound_at: '2026-06-07T08:00:00.000Z',
+        last_outbound_at: null,
+        due_at: '2026-06-08T08:00:00.000Z',
+        created_at: '2026-06-08T08:00:00.000Z',
+      },
+    ]);
+
+    renderInbox('/inbox?lane=call');
+
+    expect(await screen.findByText('נועה ישראלי')).toBeInTheDocument();
+    expect(screen.getAllByText('פולואפ פגישה').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('להתקשר לפולואפ פגישה').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/לא הגיע · זום/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/ראיתי שהפגישה האחרונה לא הושלמה/)).toBeInTheDocument();
+  });
+
   it('explains whether WhatsApp can be answered freely from the daily inbox', async () => {
     mockedFetchAttentionInbox.mockResolvedValue([
       {
