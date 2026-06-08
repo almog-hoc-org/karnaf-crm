@@ -353,6 +353,32 @@ describe('LeadDetailPage', () => {
     });
   });
 
+  it('schedules a CRM-only meeting from the PRD pipeline card', async () => {
+    renderDetail('sales_rep');
+    expect(await screen.findByText('תיאום פגישה')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('סוג'), { target: { value: 'zoom' } });
+    fireEvent.change(screen.getByLabelText('מועד'), { target: { value: '2026-06-09T10:30' } });
+    fireEvent.change(screen.getByLabelText('משך בדקות'), { target: { value: '45' } });
+    fireEvent.change(screen.getByPlaceholderText('Zoom / Calendly / כתובת'), { target: { value: 'https://example.com/zoom' } });
+    fireEvent.change(screen.getByPlaceholderText('סיכום קצר או מטרת הפגישה...'), { target: { value: 'שיחת התאמה ראשונה' } });
+    fireEvent.click(screen.getByRole('button', { name: 'שמירת פגישה' }));
+
+    await waitFor(() => {
+      expect(postAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'schedule_meeting',
+          leadId: 'lead-1',
+          meetingType: 'zoom',
+          meetingStartsAt: expect.any(String),
+          meetingEndsAt: expect.any(String),
+          meetingSummary: 'שיחת התאמה ראשונה',
+          meetingUrl: 'https://example.com/zoom',
+          dealId: null,
+        }),
+      );
+    });
+  });
+
   it('hides the phone-call form for the viewer role', async () => {
     renderDetail('viewer');
     await screen.findByRole('heading', { name: 'דנה כהן' });
