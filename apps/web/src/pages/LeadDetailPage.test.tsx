@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthContext, type AuthState, type Role } from '@/auth/auth-context';
-import type { ConversationRow, LeadDetail, MessageRow, QueueRow, TaskRow, EventRow } from '@/lib/types';
+import type { ConversationRow, LeadDetail, MeetingRow, MessageRow, QueueRow, TaskRow, EventRow } from '@/lib/types';
 import { LeadDetailPage } from './LeadDetailPage';
 
 vi.mock('@/lib/api', () => ({
@@ -140,6 +140,24 @@ const tasks: TaskRow[] = [
   },
 ];
 
+const meetings: MeetingRow[] = [
+  {
+    id: 'meeting-1',
+    lead_id: 'lead-1',
+    deal_id: null,
+    meeting_type: 'zoom',
+    starts_at: '2026-06-09T10:30:00Z',
+    ends_at: '2026-06-09T11:00:00Z',
+    assigned_to_user_id: 'admin-1',
+    status: 'scheduled',
+    summary: 'שיחת התאמה ראשונה',
+    calendar_event_id: null,
+    meeting_url: 'https://example.com/zoom',
+    created_at: '2026-06-08T08:00:00Z',
+    updated_at: '2026-06-08T08:00:00Z',
+  },
+];
+
 const events: EventRow[] = [
   {
     id: 'e1',
@@ -195,6 +213,7 @@ beforeEach(() => {
     queueItems,
     tasks,
     events,
+    meetings,
     humanOwnerProfile: null,
   });
   vi.mocked(postAdminAction).mockResolvedValue({ ok: true, action: 'noop' });
@@ -374,6 +393,24 @@ describe('LeadDetailPage', () => {
           meetingSummary: 'שיחת התאמה ראשונה',
           meetingUrl: 'https://example.com/zoom',
           dealId: null,
+        }),
+      );
+    });
+  });
+
+  it('updates a scheduled meeting status from the PRD pipeline card', async () => {
+    renderDetail('sales_rep');
+    expect(await screen.findByText('פגישות')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'לא הגיע' }));
+
+    await waitFor(() => {
+      expect(postAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'update_meeting_status',
+          leadId: 'lead-1',
+          meetingId: 'meeting-1',
+          meetingStatus: 'no_show',
+          note: 'הלקוח לא הגיע לפגישה',
         }),
       );
     });

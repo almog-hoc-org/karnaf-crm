@@ -17,6 +17,7 @@ type ActionName =
   | 'resolve_queue'
   | 'log_phone_call'
   | 'schedule_meeting'
+  | 'update_meeting_status'
   | 'advance_deal_stage'
   | 'update_lead_meta';
 
@@ -39,6 +40,7 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   resolve_queue: ['owner', 'admin', 'mia', 'sales_rep'],
   log_phone_call: ['owner', 'admin', 'mia', 'sales_rep'],
   schedule_meeting: ['owner', 'admin', 'mia', 'sales_rep'],
+  update_meeting_status: ['owner', 'admin', 'mia', 'sales_rep'],
   advance_deal_stage: ['owner', 'admin', 'mia', 'sales_rep'],
   update_lead_meta: ['owner', 'admin', 'mia'],
 };
@@ -59,6 +61,8 @@ interface ActionPayload {
   meetingEndsAt?: string | null;
   meetingSummary?: string | null;
   meetingUrl?: string | null;
+  meetingId?: string;
+  meetingStatus?: 'scheduled' | 'held' | 'cancelled' | 'no_show';
   metaUpdates?: {
     goal_summary?: string | null;
     pain_point_summary?: string | null;
@@ -471,6 +475,39 @@ Deno.serve(async (req) => {
         p_metadata: { correlation_id: correlationId },
       });
       if (stageErr) return jsonResponse(req, { error: stageErr.message }, 400);
+      break;
+    }
+    case 'update_meeting_status': {
+      if (!body.meetingId) return jsonResponse(req, { error: 'Missing meetingId' }, 400);
+      const meetingStatus = body.meetingStatus;
+      if (!meetingStatus || !['scheduled', 'held', 'cancelled', 'no_show'].includes(meetingStatus)) {
+        return jsonResponse(req, { error: 'Invalid meetingStatus' }, 400);
+      }
+      const { data: meeting, error: meetingLoadErr } = await supabase
+        .from('meetings')
+        .select('id, lead_id, meeting_type, starts_at')
+        .eq('id', body.meetingId)
+        .eq('lead_id', leadId)
+        .maybeSingle();
+      if (meetingLoadErr) return jsonResponse(req, { error: meetingLoadErr.message }, 400);
+      if (!meeting) return jsonResponse(req, { error: 'Meeting not found for lead' }, 404);
+      const statusMeta = { ...meta, meeting_id: body.meetingId, status: meetingStatus };
+      const { error: meetingUpdateErr } = await supabase
+        .from('meetings')
+        .update({ status: meetingStatus, summary: note ?? undefined, metadata: statusMeta })
+        .eq('id', body.meetingId)
+        .eq('lead_id', leadId);
+      if (meetingUpdateErr) return jsonResponse(req, { error: meetingUpdateErr.message }, 400);
+      await updateLeadFields(supabase, leadId, { last_human_touch_at: ts });
+      await logLeadEvent(
+        supabase,
+        leadId,
+        `meeting_${meetingStatus}`,
+        staff.role,
+        { ...statusMeta, meeting_type: meeting.meeting_type, starts_at: meeting.starts_at },
+        conversationId ?? undefined,
+        staff.userId,
+      );
       break;
     }
     case 'schedule_meeting': {
