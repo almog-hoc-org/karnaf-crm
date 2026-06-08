@@ -31,7 +31,6 @@ describe('Hebrew text encoding guard', () => {
     const offenders: string[] = [];
     for (const root of SCAN_ROOTS) {
       for (const file of walk(root)) {
-        if (file.endsWith('.test.ts') || file.endsWith('.test.tsx')) continue;
         const content = readFileSync(file, 'utf8');
         for (const marker of BAD_TEXT_MARKERS) {
           if (content.includes(marker)) offenders.push(`${file}: contains ${JSON.stringify(marker)}`);
