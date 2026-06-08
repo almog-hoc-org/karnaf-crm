@@ -18,7 +18,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@/components/EmptyState';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
 import { t } from '@/lib/i18n';
-import { QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
+import { MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
 import type {
   DealRow,
   IntakeSegment,
@@ -1205,19 +1205,6 @@ const DEAL_STAGE_LABELS: Record<string, string> = {
   paid_program_member: 'שילם — חבר תכנית',
   closed_won: 'נסגר',
   not_relevant: 'לא רלוונטי',
-};
-
-const MEETING_TYPE_LABELS: Record<string, string> = {
-  phone: 'טלפון',
-  zoom: 'זום',
-  office: 'משרד',
-};
-
-const MEETING_STATUS_LABELS: Record<string, string> = {
-  scheduled: 'מתוכננת',
-  held: 'התקיימה',
-  cancelled: 'בוטלה',
-  no_show: 'לא הגיע',
 };
 
 const PROGRAM_PROGRESS_LABELS: Record<string, string> = {

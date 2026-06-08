@@ -205,6 +205,7 @@ export interface QueueRow {
   queue_summary: string | null;
   due_at: string | null;
   created_at: string;
+  payload_json?: Record<string, unknown> | null;
   resolution_note: string | null;
   leads?: {
     id: string;

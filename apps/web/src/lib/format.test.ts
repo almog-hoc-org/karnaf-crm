@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   HEAT_LABELS,
+  MEETING_STATUS_LABELS,
+  MEETING_TYPE_LABELS,
   OWNERSHIP_LABELS,
   QUEUE_LABELS,
   STATUS_LABELS,
@@ -37,6 +39,12 @@ describe('label catalogs', () => {
     expect(OWNERSHIP_LABELS.suppressed).toBeTruthy();
   });
 
+  it('covers meeting labels used by scheduling and follow-up queues', () => {
+    expect(MEETING_TYPE_LABELS.zoom).toBe('זום');
+    expect(MEETING_STATUS_LABELS.no_show).toBe('לא הגיע');
+    expect(MEETING_STATUS_LABELS.cancelled).toBe('בוטלה');
+  });
+
   it('covers the operator queue types we surface in the UI', () => {
     expect(QUEUE_LABELS.first_response_due).toBeTruthy();
     expect(QUEUE_LABELS.hot_lead).toBeTruthy();
@@ -49,6 +57,8 @@ describe('label catalogs', () => {
       ...Object.values(STATUS_LABELS),
       ...Object.values(HEAT_LABELS),
       ...Object.values(OWNERSHIP_LABELS),
+      ...Object.values(MEETING_TYPE_LABELS),
+      ...Object.values(MEETING_STATUS_LABELS),
       ...Object.values(QUEUE_LABELS),
     ];
 

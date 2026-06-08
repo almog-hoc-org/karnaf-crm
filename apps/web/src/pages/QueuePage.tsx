@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { fetchQueueList, postQueueResolve } from '@/lib/api';
-import { QUEUE_LABELS, formatRelative } from '@/lib/format';
+import { MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
 import { HeatBadge, OwnershipBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import { t } from '@/lib/i18n';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
+import type { QueueRow } from '@/lib/types';
 
 import { computeSlaState, slaRowClass } from '@/lib/queue-sla';
 
@@ -109,7 +110,7 @@ export function QueuePage() {
                 return (
                 <tr key={row.id} className={slaRowClass(sla.state)} title={slaTitle}>
                   <td data-primary>
-                    <strong>{QUEUE_LABELS[row.queue_type] ?? row.queue_type}</strong>
+                    <strong>{queueDisplayLabel(row)}</strong>
                     {sla.state === 'overdue' ? (
                       <span className="ms-2 inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">SLA</span>
                     ) : sla.state === 'warning' ? (
@@ -131,14 +132,17 @@ export function QueuePage() {
                   <td data-label="חום"><HeatBadge heat={row.leads?.lead_heat ?? null} /></td>
                   <td data-label="בעלות"><OwnershipBadge ownership={row.leads?.ownership_mode ?? null} /></td>
                   <td data-label="עדיפות"><PriorityPill priority={row.priority_level} /></td>
-                  <td data-label="סיבה" className="md:max-w-xs md:truncate" title={row.reason ?? ''}>{row.reason || '—'}</td>
+                  <td data-label="סיבה" className="md:max-w-xs" title={queueReasonTitle(row)}>
+                    <span className="block truncate">{row.reason || '—'}</span>
+                    {queueDetailLine(row) ? <span className="block truncate text-xs text-slate-500">{queueDetailLine(row)}</span> : null}
+                  </td>
                   <td data-label="נוצר" className="text-slate-500" title={row.created_at}>{formatRelative(row.created_at)}</td>
                   <td data-actions>
                     {status === 'pending' || status === 'claimed' ? (
                       <button
                         type="button" className="kf-btn text-xs"
                         onClick={() => {
-                          setPendingClose({ id: row.id, label: QUEUE_LABELS[row.queue_type] ?? row.queue_type });
+                          setPendingClose({ id: row.id, label: queueDisplayLabel(row) });
                           setCloseNote('');
                         }}
                         disabled={resolve.isPending}
@@ -194,6 +198,37 @@ export function QueuePage() {
       </ConfirmDialog>
     </div>
   );
+}
+
+function queueDisplayLabel(row: QueueRow): string {
+  if (isMeetingFollowup(row)) return 'פולואפ פגישה';
+  return QUEUE_LABELS[row.queue_type] ?? row.queue_type;
+}
+
+function queueDetailLine(row: QueueRow): string | null {
+  if (!isMeetingFollowup(row)) return null;
+  const payload = row.payload_json ?? {};
+  const status = typeof payload.status === 'string' ? payload.status : null;
+  const meetingType = typeof payload.meeting_type === 'string' ? payload.meeting_type : null;
+  const startsAt = typeof payload.starts_at === 'string' ? payload.starts_at : null;
+  const parts = [
+    status && status in MEETING_STATUS_LABELS ? MEETING_STATUS_LABELS[status as keyof typeof MEETING_STATUS_LABELS] : null,
+    meetingType && meetingType in MEETING_TYPE_LABELS ? MEETING_TYPE_LABELS[meetingType as keyof typeof MEETING_TYPE_LABELS] : null,
+    startsAt ? formatDateTime(startsAt) : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+function queueReasonTitle(row: QueueRow): string {
+  const detail = queueDetailLine(row);
+  return [row.reason, detail].filter(Boolean).join(' — ');
+}
+
+function isMeetingFollowup(row: QueueRow): boolean {
+  const payload = row.payload_json ?? {};
+  return row.queue_type === 'phone_escalation'
+    && typeof payload.meeting_id === 'string'
+    && (payload.status === 'no_show' || payload.status === 'cancelled');
 }
 
 function StatusTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
