@@ -133,10 +133,14 @@ Continued improving rep execution before adding heavier workflows:
 - This action only opens WhatsApp and never sends a customer message automatically.
 - The blocker remains visible: proactive reopen after 24h still requires an approved Hebrew Meta template.
 
-## Recommended Phase 3c
+## Phase 3c in progress — daily inbox call actions
 
-Next rep-execution improvements before heavy reporting:
-- richer direct safe actions on daily inbox cards where policy allows.
+Started with low-risk rep-execution improvements before heavier scheduling/calendar work:
+- Daily inbox call cards now expose a clear `חיוג עכשיו` tel action when a phone number exists.
+- Call cards can record `אין מענה` directly from `היום שלי` through the audited `log_phone_call` admin action, after confirmation.
+- This is an internal CRM action only: it logs a call attempt and does not contact the customer or send any external message.
+
+Still recommended for Phase 3c:
 - meeting scheduling endpoint and calendar integration.
 - meeting status/no-show automation.
 - program onboarding tasks and keep-alive state.

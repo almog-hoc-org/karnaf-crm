@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
-import { fetchAttentionInbox, postQueueResolve } from '@/lib/api';
+import { fetchAttentionInbox, postAdminAction, postQueueResolve } from '@/lib/api';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -49,6 +49,7 @@ export function InboxPage() {
   const initialLane = parseLane(searchParams.get('lane'));
   const [lane, setLane] = useState<WorkLane>(initialLane);
   const [pendingClose, setPendingClose] = useState<AttentionRow | null>(null);
+  const [pendingNoAnswer, setPendingNoAnswer] = useState<AttentionRow | null>(null);
   const [closeNote, setCloseNote] = useState('');
   const [copiedTalkTrackId, setCopiedTalkTrackId] = useState<string | null>(null);
   const qc = useQueryClient();
@@ -78,6 +79,22 @@ export function InboxPage() {
       qc.invalidateQueries({ queryKey: ['attention-inbox'] });
       qc.invalidateQueries({ queryKey: ['queue'] });
       toast.success('המשימה נסגרה');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
+  const logNoAnswer = useMutation({
+    mutationFn: (row: AttentionRow) =>
+      postAdminAction({
+        action: 'log_phone_call',
+        leadId: row.lead_id,
+        callOutcome: 'no_answer',
+        callDurationMinutes: 0,
+        note: 'סומן אין מענה מתוך היום שלי',
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['attention-inbox'] });
+      toast.success('נרשם ניסיון שיחה ללא מענה');
     },
     onError: (err) => toast.error((err as Error).message),
   });
@@ -255,6 +272,25 @@ export function InboxPage() {
                     <Link to={`/leads/${row.lead_id}`} className="kf-btn justify-center">
                       פתיחת ליד
                     </Link>
+                    {row.lead_phone && meta.lane === 'call' ? (
+                      <a
+                        href={`tel:${row.lead_phone}`}
+                        className="kf-btn kf-btn-ghost justify-center"
+                        aria-label={`חיוג אל ${row.lead_name || row.lead_phone}`}
+                      >
+                        חיוג עכשיו
+                      </a>
+                    ) : null}
+                    {row.lead_phone && meta.lane === 'call' ? (
+                      <button
+                        type="button"
+                        className="kf-btn kf-btn-ghost justify-center"
+                        disabled={logNoAnswer.isPending}
+                        onClick={() => setPendingNoAnswer(row)}
+                      >
+                        סימון אין מענה
+                      </button>
+                    ) : null}
                     {whatsappUrl ? (
                       <a
                         href={whatsappUrl}
@@ -286,6 +322,20 @@ export function InboxPage() {
           })
         )}
       </section>
+
+      <ConfirmDialog
+        open={!!pendingNoAnswer}
+        title="סימון אין מענה"
+        description={pendingNoAnswer ? `לרשום ניסיון שיחה ללא מענה עבור ${pendingNoAnswer.lead_name || 'הליד'}?` : 'נרשום ניסיון שיחה ללא מענה.'}
+        confirmLabel="רישום אין מענה"
+        busy={logNoAnswer.isPending}
+        onCancel={() => setPendingNoAnswer(null)}
+        onConfirm={() => {
+          if (!pendingNoAnswer) return;
+          logNoAnswer.mutate(pendingNoAnswer);
+          setPendingNoAnswer(null);
+        }}
+      />
 
       <ConfirmDialog
         open={!!pendingClose}
