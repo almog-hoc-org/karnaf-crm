@@ -16,6 +16,7 @@ type ActionName =
   | 'reopen_lead'
   | 'resolve_queue'
   | 'log_phone_call'
+  | 'schedule_meeting'
   | 'advance_deal_stage'
   | 'update_lead_meta';
 
@@ -37,6 +38,7 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   reopen_lead: ['owner', 'admin'],
   resolve_queue: ['owner', 'admin', 'mia', 'sales_rep'],
   log_phone_call: ['owner', 'admin', 'mia', 'sales_rep'],
+  schedule_meeting: ['owner', 'admin', 'mia', 'sales_rep'],
   advance_deal_stage: ['owner', 'admin', 'mia', 'sales_rep'],
   update_lead_meta: ['owner', 'admin', 'mia'],
 };
@@ -52,6 +54,11 @@ interface ActionPayload {
   targetStage?: string;
   callOutcome?: 'connected' | 'no_answer' | 'voicemail' | 'declined' | 'callback_requested';
   callDurationMinutes?: number;
+  meetingType?: 'phone' | 'zoom' | 'office';
+  meetingStartsAt?: string;
+  meetingEndsAt?: string | null;
+  meetingSummary?: string | null;
+  meetingUrl?: string | null;
   metaUpdates?: {
     goal_summary?: string | null;
     pain_point_summary?: string | null;
@@ -464,6 +471,54 @@ Deno.serve(async (req) => {
         p_metadata: { correlation_id: correlationId },
       });
       if (stageErr) return jsonResponse(req, { error: stageErr.message }, 400);
+      break;
+    }
+    case 'schedule_meeting': {
+      const meetingType = body.meetingType ?? 'phone';
+      if (!['phone', 'zoom', 'office'].includes(meetingType)) {
+        return jsonResponse(req, { error: 'Invalid meetingType' }, 400);
+      }
+      if (!body.meetingStartsAt) return jsonResponse(req, { error: 'Missing meetingStartsAt' }, 400);
+      const startsAt = new Date(body.meetingStartsAt);
+      if (!Number.isFinite(startsAt.getTime())) return jsonResponse(req, { error: 'Invalid meetingStartsAt' }, 400);
+      const endsAt = body.meetingEndsAt ? new Date(body.meetingEndsAt) : null;
+      if (endsAt && !Number.isFinite(endsAt.getTime())) return jsonResponse(req, { error: 'Invalid meetingEndsAt' }, 400);
+      if (endsAt && endsAt.getTime() <= startsAt.getTime()) return jsonResponse(req, { error: 'meetingEndsAt must be after meetingStartsAt' }, 400);
+      const summary = typeof body.meetingSummary === 'string' && body.meetingSummary.trim()
+        ? body.meetingSummary.trim().slice(0, 500)
+        : note ?? null;
+      const meetingMeta = {
+        ...meta,
+        source: 'manual_admin_action',
+        correlation_id: correlationId,
+      };
+      const { data: meeting, error: meetingErr } = await supabase.from('meetings').insert({
+        lead_id: leadId,
+        deal_id: body.dealId ?? null,
+        meeting_type: meetingType,
+        starts_at: startsAt.toISOString(),
+        ends_at: endsAt ? endsAt.toISOString() : null,
+        assigned_to_user_id: staff.userId,
+        status: 'scheduled',
+        summary,
+        meeting_url: body.meetingUrl ?? null,
+        metadata: meetingMeta,
+      }).select('id').single();
+      if (meetingErr) return jsonResponse(req, { error: meetingErr.message }, 400);
+      await updateLeadFields(supabase, leadId, {
+        next_action_type: 'scheduled_meeting',
+        next_action_due_at: startsAt.toISOString(),
+        last_human_touch_at: ts,
+      });
+      await logLeadEvent(
+        supabase,
+        leadId,
+        'meeting_scheduled',
+        staff.role,
+        { ...meetingMeta, meeting_id: meeting?.id ?? null, meeting_type: meetingType, starts_at: startsAt.toISOString() },
+        conversationId ?? undefined,
+        staff.userId,
+      );
       break;
     }
     case 'log_phone_call': {

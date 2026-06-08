@@ -153,6 +153,7 @@ export type AdminAction =
   | 'reopen_lead'
   | 'resolve_queue'
   | 'log_phone_call'
+  | 'schedule_meeting'
   | 'advance_deal_stage'
   | 'update_lead_meta';
 
@@ -189,10 +190,15 @@ export async function postAdminAction(payload: {
   queueItemId?: string;
   note?: string | null;
   targetStatus?: ReopenTarget;
-  dealId?: string;
+  dealId?: string | null;
   targetStage?: string;
   callOutcome?: CallOutcome;
   callDurationMinutes?: number;
+  meetingType?: MeetingRow['meeting_type'];
+  meetingStartsAt?: string;
+  meetingEndsAt?: string | null;
+  meetingSummary?: string | null;
+  meetingUrl?: string | null;
   metaUpdates?: LeadMetaUpdates;
 }) {
   return postJson<{ ok: true; action: string }>('/admin-actions', payload);

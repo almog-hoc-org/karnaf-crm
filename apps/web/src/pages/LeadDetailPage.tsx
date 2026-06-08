@@ -105,6 +105,32 @@ export function LeadDetailPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
+  const scheduleMeeting = useMutation({
+    mutationFn: (input: {
+      meetingType: MeetingRow['meeting_type'];
+      startsAt: string;
+      endsAt: string | null;
+      summary: string | null;
+      meetingUrl: string | null;
+      dealId: string | null;
+    }) =>
+      postAdminAction({
+        action: 'schedule_meeting',
+        leadId,
+        meetingType: input.meetingType,
+        meetingStartsAt: input.startsAt,
+        meetingEndsAt: input.endsAt,
+        meetingSummary: input.summary,
+        meetingUrl: input.meetingUrl,
+        dealId: input.dealId,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lead-detail', leadId] });
+      toast.success('הפגישה תועדה');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
   const conversationId = detailQ.data?.conversations[0]?.id;
 
   const sendReply = useMutation({
@@ -454,6 +480,9 @@ export function LeadDetailPage() {
             programMember={programMember}
             canAdvance={auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia' || auth.role === 'sales_rep'}
             advancing={action.isPending}
+            canSchedule={auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia' || auth.role === 'sales_rep'}
+            scheduling={scheduleMeeting.isPending}
+            onSchedule={(input) => scheduleMeeting.mutate(input)}
             onAdvance={(deal, targetStage) =>
               action.mutate({
                 action: 'advance_deal_stage',
@@ -866,6 +895,9 @@ function PipelineOverviewCard({
   programMember,
   canAdvance,
   advancing,
+  canSchedule,
+  scheduling,
+  onSchedule,
   onAdvance,
 }: {
   lead: LeadDetailType;
@@ -874,6 +906,16 @@ function PipelineOverviewCard({
   programMember: ProgramMemberRow | null;
   canAdvance: boolean;
   advancing: boolean;
+  canSchedule: boolean;
+  scheduling: boolean;
+  onSchedule: (input: {
+    meetingType: MeetingRow['meeting_type'];
+    startsAt: string;
+    endsAt: string | null;
+    summary: string | null;
+    meetingUrl: string | null;
+    dealId: string | null;
+  }) => void;
   onAdvance: (deal: DealRow, targetStage: string) => void;
 }) {
   const nextMeeting = [...meetings]
@@ -902,6 +944,10 @@ function PipelineOverviewCard({
         />
       </dl>
 
+      {canSchedule ? (
+        <ScheduleMeetingForm deals={deals.filter((deal) => deal.status === 'open')} submitting={scheduling} onSubmit={onSchedule} />
+      ) : null}
+
       {deals.length ? (
         <ul className="mt-3 space-y-2">
           {deals.map((deal) => (
@@ -925,6 +971,88 @@ function PipelineOverviewCard({
         <p className="mt-3 text-sm text-slate-500">עדיין אין Deal פתוח/היסטורי לליד הזה.</p>
       )}
     </div>
+  );
+}
+
+function ScheduleMeetingForm({
+  deals,
+  submitting,
+  onSubmit,
+}: {
+  deals: DealRow[];
+  submitting: boolean;
+  onSubmit: (input: {
+    meetingType: MeetingRow['meeting_type'];
+    startsAt: string;
+    endsAt: string | null;
+    summary: string | null;
+    meetingUrl: string | null;
+    dealId: string | null;
+  }) => void;
+}) {
+  const [meetingType, setMeetingType] = useState<MeetingRow['meeting_type']>('phone');
+  const [startsAt, setStartsAt] = useState('');
+  const [duration, setDuration] = useState('30');
+  const [dealId, setDealId] = useState('');
+  const [meetingUrl, setMeetingUrl] = useState('');
+  const [summary, setSummary] = useState('');
+
+  function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!startsAt) return;
+    const start = new Date(startsAt);
+    const minutes = Math.max(5, Math.min(240, Number(duration) || 30));
+    const end = Number.isFinite(start.getTime()) ? new Date(start.getTime() + minutes * 60_000).toISOString() : null;
+    onSubmit({
+      meetingType,
+      startsAt: start.toISOString(),
+      endsAt: end,
+      summary: summary.trim() || null,
+      meetingUrl: meetingUrl.trim() || null,
+      dealId: dealId || null,
+    });
+    setSummary('');
+    setMeetingUrl('');
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 text-sm">
+      <div className="mb-2 font-semibold text-slate-800">תיאום פגישה</div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="block">
+          <span className="text-slate-600">סוג</span>
+          <select className="kf-input mt-1" value={meetingType} onChange={(e) => setMeetingType(e.target.value as MeetingRow['meeting_type'])}>
+            <option value="phone">טלפון</option>
+            <option value="zoom">זום</option>
+            <option value="office">משרד</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-slate-600">מועד</span>
+          <input className="kf-input mt-1" type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} required />
+        </label>
+        <label className="block">
+          <span className="text-slate-600">משך בדקות</span>
+          <input className="kf-input mt-1" type="number" min={5} max={240} value={duration} onChange={(e) => setDuration(e.target.value)} />
+        </label>
+        <label className="block">
+          <span className="text-slate-600">Deal לקישור</span>
+          <select className="kf-input mt-1" value={dealId} onChange={(e) => setDealId(e.target.value)}>
+            <option value="">ללא קישור</option>
+            {deals.map((deal) => (
+              <option key={deal.id} value={deal.id}>{PRD_TRACK_LABELS[deal.track] ?? deal.track} · {DEAL_STAGE_LABELS[deal.stage] ?? deal.stage}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <label className="mt-2 block">
+        <span className="text-slate-600">קישור פגישה</span>
+        <input className="kf-input mt-1" value={meetingUrl} onChange={(e) => setMeetingUrl(e.target.value)} placeholder="Zoom / Calendly / כתובת" />
+      </label>
+      <textarea className="kf-input mt-2 min-h-[64px]" value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="סיכום קצר או מטרת הפגישה..." />
+      <p className="mt-2 text-xs leading-5 text-slate-500">הפעולה מתעדת פגישה ב-CRM בלבד. אין יצירת אירוע Calendar או שליחת הודעה ללקוח.</p>
+      <button type="submit" className="kf-btn kf-btn-primary mt-2" disabled={submitting || !startsAt}>{submitting ? 'שומר...' : 'שמירת פגישה'}</button>
+    </form>
   );
 }
 

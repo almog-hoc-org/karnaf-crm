@@ -133,15 +133,17 @@ Continued improving rep execution before adding heavier workflows:
 - This action only opens WhatsApp and never sends a customer message automatically.
 - The blocker remains visible: proactive reopen after 24h still requires an approved Hebrew Meta template.
 
-## Phase 3c in progress — daily inbox call actions
+## Phase 3c in progress — rep execution actions
 
 Started with low-risk rep-execution improvements before heavier scheduling/calendar work:
 - Daily inbox call cards now expose a clear `חיוג עכשיו` tel action when a phone number exists.
 - Call cards can record `אין מענה` directly from `היום שלי` through the audited `log_phone_call` admin action, after confirmation.
-- This is an internal CRM action only: it logs a call attempt and does not contact the customer or send any external message.
+- Lead Detail PRD pipeline cards can schedule a CRM-only meeting through the audited `schedule_meeting` admin action.
+- Meeting scheduling updates `meetings`, `next_action_type`, `next_action_due_at`, `last_human_touch_at`, and logs a `meeting_scheduled` event.
+- These are internal CRM actions only: no customer message is sent and no external Calendar event is created yet.
 
 Still recommended for Phase 3c:
-- meeting scheduling endpoint and calendar integration.
+- calendar integration for meetings after the CRM-only scheduling path is stable.
 - meeting status/no-show automation.
 - program onboarding tasks and keep-alive state.
 
