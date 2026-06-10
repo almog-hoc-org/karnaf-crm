@@ -96,7 +96,9 @@ interface ActionResult {
   detail?: Record<string, unknown> | string;
 }
 
-async function dispatchAction(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+// Exported so journey-runner.ts can reuse the same action dispatcher
+// for per-step actions. Keeps a single switch-per-type, one truth.
+export async function dispatchAction(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
   const type = action.type as string | undefined;
   if (!type) return { type: 'unknown', status: 'skipped', detail: 'missing type' };
 
@@ -106,6 +108,7 @@ async function dispatchAction(action: Record<string, unknown>, ctx: ActionContex
       case 'notify_internal': return await actionNotifyInternal(action, ctx);
       case 'create_task': return await actionCreateTask(action, ctx);
       case 'set_field': return await actionSetField(action, ctx);
+      case 'journey_start': return await actionJourneyStart(action, ctx);
       default:
         return { type, status: 'skipped', detail: `unknown action type: ${type}` };
     }
@@ -221,6 +224,22 @@ async function actionCreateTask(action: Record<string, unknown>, ctx: ActionCont
   if (error) return { type: 'create_task', status: 'failed', detail: error.message };
 
   return { type: 'create_task', status: 'ok', detail: { task_id: data?.id, due_at: due } };
+}
+
+// journey_start delegates to the journey-runner — kept here as a thin
+// wrapper so engine remains the single dispatch entry point and the
+// runner stays the single owner of journey state.
+async function actionJourneyStart(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const code = action.code as string | undefined;
+  if (!code) return { type: 'journey_start', status: 'skipped', detail: 'missing code' };
+  if (!ctx.contactId) return { type: 'journey_start', status: 'skipped', detail: 'no contactId' };
+
+  // Late-import to avoid the runner ↔ engine cycle at module load.
+  const { startJourney } = await import('./journey-runner.ts');
+  const r = await startJourney(ctx.supabase, {
+    code, contactId: ctx.contactId, context: ctx.context, correlationId: ctx.correlationId,
+  });
+  return { type: 'journey_start', status: r.status, detail: { code, run_id: r.run_id, reason: r.reason } };
 }
 
 async function actionSetField(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {

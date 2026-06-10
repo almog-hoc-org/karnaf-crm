@@ -227,6 +227,49 @@ export interface ReportsBundle {
   retention: { stages: RetentionStageRow[] };
 }
 
+// Tier 4.B — customer journeys.
+export type JourneyRunStatus = 'active' | 'completed' | 'cancelled' | 'failed';
+
+export interface JourneyStepDef {
+  name?: string;
+  delay_hours?: number;
+  conditions?: Record<string, unknown>;
+  actions?: Array<Record<string, unknown>>;
+}
+
+export interface JourneyDefinitionRow {
+  id: string;
+  code: string;
+  name_he: string;
+  description: string | null;
+  trigger_event: string;
+  trigger_conditions: Record<string, unknown>;
+  steps: JourneyStepDef[];
+  enabled: boolean;
+  allow_concurrent: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JourneyRunRow {
+  id: string;
+  definition_id: string;
+  definition_code: string;
+  contact_id: string;
+  current_step: number;
+  state: Record<string, unknown>;
+  scheduled_next_at: string;
+  status: JourneyRunStatus;
+  started_at: string;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  last_error: string | null;
+  // Optional join surface for /journeys listings.
+  definition?: { code: string; name_he: string };
+}
+
 // Tier 2.B — automation rule catalog. Each row documents one of the
 // spec's 19 automations + any custom rules the admin adds later.
 // source: 'code' means the rule lives in an edge function today;

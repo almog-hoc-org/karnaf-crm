@@ -24,6 +24,7 @@ import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
+import { advanceDueRuns } from '../_shared/journey-runner.ts';
 
 const TRIGGER = 'time.elapsed';
 // Hard cap so a runaway query doesn't burn all our function time.
@@ -123,6 +124,21 @@ Deno.serve(async (req) => {
     fired++;
   }
 
-  log.info('tick_done', { fn: 'automation-tick', correlationId, scanned: fired, rules: ruleCount });
-  return jsonResponse(req, { ok: true, scanned: fired, rules: ruleCount });
+  // Tier 4.B — second pass: advance any due journey_runs. Independent
+  // from the rule scan above, so a slow journeys step can't block
+  // time.elapsed rules and vice versa. The runner already caps work
+  // (MAX_RUNS_PER_TICK) so the combined budget is bounded.
+  const journeySummary = await advanceDueRuns(supabase, correlationId);
+
+  log.info('tick_done', {
+    fn: 'automation-tick', correlationId,
+    scanned: fired, rules: ruleCount,
+    journeys_processed: journeySummary.processed,
+    journeys_completed: journeySummary.completed,
+    journeys_failed: journeySummary.failed,
+  });
+  return jsonResponse(req, {
+    ok: true, scanned: fired, rules: ruleCount,
+    journeys: journeySummary,
+  });
 });

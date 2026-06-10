@@ -4,6 +4,9 @@ import type {
   AttentionRow,
   AutomationRuleRow,
   AutomationRunRow,
+  JourneyDefinitionRow,
+  JourneyRunRow,
+  JourneyStepDef,
   ReportsBundle,
   CommissionRow,
   ConversationRow,
@@ -257,6 +260,38 @@ export async function postAutomationUpdateDsl(
 
 export async function fetchReports() {
   return getJson<{ ok: true } & ReportsBundle>('/reports');
+}
+
+// === Journeys (Tier 4.B) ==================================================
+
+export async function fetchJourneys(includeRuns = true) {
+  return getJson<{
+    ok: true;
+    definitions: JourneyDefinitionRow[];
+    counts: Record<string, Record<string, number>>;
+    runs: JourneyRunRow[];
+  }>('/journeys', includeRuns ? { runs: 1 } : undefined);
+}
+
+export async function fetchJourneyRunsForContact(contactId: string) {
+  return getJson<{ ok: true; runs: JourneyRunRow[] }>('/journeys', { contact_id: contactId });
+}
+
+export async function postCancelJourneyRun(id: string, reason?: string) {
+  return postJson<{ ok: true; run: JourneyRunRow }>('/journeys', { action: 'cancel_run', id, reason });
+}
+
+export async function postUpdateJourneyDef(
+  id: string,
+  patch: Partial<{
+    name_he: string; description: string; enabled: boolean;
+    allow_concurrent: boolean; steps: JourneyStepDef[];
+    trigger_conditions: Record<string, unknown>;
+  }>,
+) {
+  return postJson<{ ok: true; definition: JourneyDefinitionRow }>(
+    '/journeys', { action: 'update_def', id, ...patch },
+  );
 }
 
 // === Writes ===============================================================
