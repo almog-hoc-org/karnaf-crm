@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import type {
   ActivityRow,
   AttentionRow,
+  CommissionRow,
   ConversationRow,
   DashboardSummary,
   DealRow,
@@ -186,6 +187,21 @@ export type ProjectAction =
 
 export async function postProjectAction(payload: ProjectAction) {
   return postJson<{ ok: true; project: ProjectRow }>('/projects', payload as unknown as Record<string, unknown>);
+}
+
+// === Commissions (Tier 1.D) ===============================================
+
+export async function fetchCommissions(status?: 'pending' | 'to_bill' | 'paid' | 'cancelled') {
+  return getJson<{ ok: true; commissions: CommissionRow[] }>('/commissions', status ? { status } : undefined);
+}
+
+export type CommissionAction =
+  | { action: 'mark_paid'; id: string; amount_received?: number; payment_method?: string;
+      payment_reference?: string; notes?: string }
+  | { action: 'cancel'; id: string; cancellation_reason: string };
+
+export async function postCommissionAction(payload: CommissionAction) {
+  return postJson<{ ok: true; commission: CommissionRow }>('/commissions', payload as unknown as Record<string, unknown>);
 }
 
 // === Writes ===============================================================

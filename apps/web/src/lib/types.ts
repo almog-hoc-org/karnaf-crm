@@ -161,6 +161,38 @@ export interface ProjectFundingRow {
   funding_pct: number | null;
 }
 
+// Tier 1.D — Commission ledger. One row per partner-mediated deal,
+// created automatically by trigger when deals.seriousness_deposit_paid_at
+// gets set. status walks pending → to_bill → paid; either of the first
+// two can also walk to cancelled.
+export type CommissionStatus = 'pending' | 'to_bill' | 'paid' | 'cancelled';
+
+export interface CommissionRow {
+  id: string;
+  deal_id: string;
+  partner_id: string;
+  pct_snapshot: number;
+  deal_value_snapshot: number;
+  amount_due: number;
+  currency: string;
+  status: CommissionStatus;
+  pending_at: string;
+  to_bill_at: string | null;
+  paid_at: string | null;
+  cancelled_at: string | null;
+  amount_received: number | null;
+  payment_method: string | null;
+  payment_reference: string | null;
+  cancellation_reason: string | null;
+  notes: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  // Joined when fetched via /commissions endpoint.
+  partners?: { id: string; full_name: string; domain: PartnerDomain };
+  deals?: { id: string; track: PrdTrack; value: number | null; status: string };
+}
+
 export interface MeetingRow {
   id: string;
   lead_id: string;
