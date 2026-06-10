@@ -25,7 +25,16 @@ Deno.serve(async (req) => {
     supabase.from('work_queue').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(50),
     supabase.from('lead_tasks').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(50),
     supabase.from('lead_events').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(100),
-    supabase.from('deals').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(20),
+    // Tier 1.E — join Partner + Project so the sidebar shows real
+    // names instead of UUIDs (and the legacy text shadows can be
+    // dropped in a Tier 2 cleanup). Also pull the commission state
+    // so the deal card shows "ממתינה / לחיוב / שולמה" inline.
+    supabase
+      .from('deals')
+      .select('*, partner:partners(id, full_name, domain), project:projects(id, name, city), commission:commissions(id, status, amount_due, amount_received, currency, to_bill_at, paid_at)')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(20),
     supabase.from('meetings').select('*').eq('lead_id', leadId).order('starts_at', { ascending: false }).limit(20),
     supabase.from('program_members').select('*').eq('lead_id', leadId).maybeSingle(),
     // Tier 0.A: unified activities feed. Migration 054 mirrors all four

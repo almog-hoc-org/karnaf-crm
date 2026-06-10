@@ -90,6 +90,24 @@ export interface DealRow {
   created_at: string;
   updated_at: string;
   closed_at: string | null;
+  // Tier 1.D — workflow-trigger timestamps. seriousness_deposit_paid_at
+  // is the B11 trigger (creates commission); contract_signed_at is B12
+  // (moves commission to to_bill).
+  seriousness_deposit_paid_at?: string | null;
+  contract_signed_at?: string | null;
+  // Tier 1.E — joins from lead-detail. Each is null on deal rows from
+  // endpoints that don't request the embed (leads-list, dashboard).
+  partner?: { id: string; full_name: string; domain: PartnerDomain } | null;
+  project?: { id: string; name: string; city: string | null } | null;
+  commission?: {
+    id: string;
+    status: CommissionStatus;
+    amount_due: number;
+    amount_received: number | null;
+    currency: string;
+    to_bill_at: string | null;
+    paid_at: string | null;
+  } | null;
 }
 
 // Tier 1.A — Partner = freelancer / external service provider that

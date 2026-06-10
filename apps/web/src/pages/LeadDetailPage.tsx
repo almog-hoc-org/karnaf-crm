@@ -987,22 +987,60 @@ function PipelineOverviewCard({
 
       {deals.length ? (
         <ul className="mt-3 space-y-2">
-          {deals.map((deal) => (
-            <li key={deal.id} className="rounded-md bg-slate-50 p-2 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <strong>{PRD_TRACK_LABELS[deal.track] ?? deal.track}</strong>
-                <span className="text-xs text-slate-500">{DEAL_STATUS_LABELS[deal.status] ?? deal.status}</span>
-              </div>
-              <div className="mt-1 text-slate-600">
-                שלב: {DEAL_STAGE_LABELS[deal.stage] ?? deal.stage}
-                {deal.presale_project ? ` · פרויקט: ${deal.presale_project}` : ''}
-                {deal.partner_name ? ` · שותף: ${deal.partner_name}` : ''}
-              </div>
-              {canAdvance && deal.status === 'open' ? (
-                <DealStageActions deal={deal} busy={advancing} onAdvance={onAdvance} />
-              ) : null}
-            </li>
-          ))}
+          {deals.map((deal) => {
+            // Tier 1.E — track-adaptive deal card. Each track surfaces
+            // the entity that matters for it: investor_mentorship shows
+            // the partner + their commission stripe, presale shows the
+            // project + funding context, program shows just the stage.
+            // Falls back to the legacy partner_name / presale_project
+            // text shadows when the FKs aren't populated yet.
+            const partnerLabel = deal.partner?.full_name ?? deal.partner_name;
+            const projectLabel = deal.project?.name ?? deal.presale_project;
+            const commission = deal.commission;
+            return (
+              <li key={deal.id} className="rounded-md bg-slate-50 p-2 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <strong>{PRD_TRACK_LABELS[deal.track] ?? deal.track}</strong>
+                  <span className="text-xs text-slate-500">{DEAL_STATUS_LABELS[deal.status] ?? deal.status}</span>
+                </div>
+                <div className="mt-1 text-slate-600">
+                  שלב: {DEAL_STAGE_LABELS[deal.stage] ?? deal.stage}
+                  {deal.value ? ` · ${deal.value.toLocaleString('he-IL')} ${deal.currency}` : ''}
+                </div>
+                {deal.track === 'investor_mentorship' && partnerLabel ? (
+                  <div className="mt-1 text-xs text-slate-500">
+                    שותף: {partnerLabel}
+                    {deal.partner?.domain ? ` · ${PARTNER_DOMAIN_LABELS[deal.partner.domain] ?? deal.partner.domain}` : ''}
+                  </div>
+                ) : null}
+                {deal.track === 'presale' && projectLabel ? (
+                  <div className="mt-1 text-xs text-slate-500">
+                    פרויקט: {projectLabel}
+                    {deal.project?.city ? ` · ${deal.project.city}` : ''}
+                  </div>
+                ) : null}
+                {commission ? (
+                  <div className={clsx(
+                    'mt-2 flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs',
+                    commission.status === 'pending' && 'bg-amber-50 text-amber-800',
+                    commission.status === 'to_bill' && 'bg-rose-50 text-rose-800',
+                    commission.status === 'paid' && 'bg-emerald-50 text-emerald-800',
+                    commission.status === 'cancelled' && 'bg-slate-100 text-slate-600',
+                  )}>
+                    <span>
+                      עמלה: {COMMISSION_STATUS_LABELS[commission.status] ?? commission.status}
+                    </span>
+                    <span className="tabular-nums font-medium">
+                      {(commission.amount_received ?? commission.amount_due).toLocaleString('he-IL')} {commission.currency}
+                    </span>
+                  </div>
+                ) : null}
+                {canAdvance && deal.status === 'open' ? (
+                  <DealStageActions deal={deal} busy={advancing} onAdvance={onAdvance} />
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <p className="mt-3 text-sm text-slate-500">עדיין אין Deal פתוח/היסטורי לליד הזה.</p>
@@ -1198,6 +1236,21 @@ const DEAL_STATUS_LABELS: Record<string, string> = {
   won: 'נסגר בהצלחה',
   lost: 'לא רלוונטי',
   cancelled: 'בוטל',
+};
+
+const PARTNER_DOMAIN_LABELS: Record<string, string> = {
+  investor_mentorship: 'ליווי משקיעים',
+  appraisal: 'שמאות',
+  legal: 'משפטי',
+  financing: 'מימון',
+  other: 'אחר',
+};
+
+const COMMISSION_STATUS_LABELS: Record<string, string> = {
+  pending: 'ממתינה',
+  to_bill: 'לחיוב',
+  paid: 'שולמה',
+  cancelled: 'בוטלה',
 };
 
 const DEAL_STAGE_LABELS: Record<string, string> = {
