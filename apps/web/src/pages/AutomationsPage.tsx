@@ -1,8 +1,8 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { fetchAutomations, postAutomationToggle, postAutomationUpdateDsl } from '@/lib/api';
-import type { AutomationRuleRow, AutomationRunRow, AutomationSource } from '@/lib/types';
+import { fetchAutomations, fetchLeadsList, postAutomationToggle, postAutomationUpdateDsl } from '@/lib/api';
+import type { AutomationRuleRow, AutomationRunRow, AutomationSource, LeadRow } from '@/lib/types';
 import { evaluateConditionsWithTrace, sampleContextForTrigger, type EvalResult } from '@/lib/automation-dsl';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
@@ -233,17 +233,63 @@ function EditRuleDialog({
   const [actions, setActions] = useState(() => JSON.stringify(rule.actions ?? [], null, 2));
   const [parseError, setParseError] = useState<string | null>(null);
 
-  // Tier 5.D.4 — in-browser "test against this lead". evaluateConditions
+  // Tier 5.D.4 / 5.F — in-browser "test against this lead". evaluateConditions
   // is pure (mirrored from the server's automation-engine.ts). The
   // editor admin clicks "בחן" → sees pass/fail + per-leaf trace.
   // sampleContextForTrigger prefills a realistic context object for
   // the rule's trigger_event so the admin doesn't have to invent
-  // JSON from scratch.
+  // JSON from scratch. 5.F adds a real-lead picker that builds a
+  // context from a live DB row (no fakery), so "passes preview"
+  // really means "would pass when this trigger fires for this lead".
   const [testContext, setTestContext] = useState(() =>
     JSON.stringify(sampleContextForTrigger(rule.trigger_event), null, 2),
   );
   const [testResult, setTestResult] = useState<EvalResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
+
+  // Lazy: fetch the 50 most-recent leads only when the picker opens,
+  // so the dialog's initial paint stays cheap. Once Mia uses it, the
+  // result caches under react-query's staleTime defaults.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const leadsQ = useQuery({
+    queryKey: ['automations-test-leads'],
+    queryFn: () => fetchLeadsList({ limit: 50 }),
+    enabled: pickerOpen,
+  });
+
+  function loadContextFromLead(lead: LeadRow) {
+    const firstName = lead.full_name?.split(/\s+/u)[0] ?? '';
+    // Mirror the context shape the server emits per trigger event so
+    // the test agrees with prod. lead.created path: leads-intake.
+    // deal.won path: admin-actions/mark_won. time.elapsed: cron tick.
+    // City isn't on LeadRow (the list endpoint omits it). The full
+    // detail page provides it. Test panel can live without it; rules
+    // that condition on city need a /leads/:id fetch — defer.
+    const leadCtx: Record<string, unknown> = {
+      id: lead.id,
+      full_name: lead.full_name,
+      first_name: firstName,
+      phone: lead.phone,
+      email: lead.email,
+      product_interest: lead.product_interest,
+      intake_segment: lead.intake_segment,
+      do_not_contact: lead.do_not_contact,
+      primary_track: lead.primary_track,
+      lead_status: lead.lead_status,
+      ownership_mode: lead.ownership_mode,
+    };
+    // For time.elapsed rules we add the derived fields the cron tick
+    // computes. has_won_program is unknown without a separate query;
+    // default to false so a "no purchase yet" rule passes for testing.
+    if (rule.trigger_event === 'time.elapsed') {
+      const hours = (Date.now() - Date.parse(lead.created_at)) / 3600000;
+      leadCtx.hours_since_intake = Math.round(hours * 10) / 10;
+      leadCtx.has_won_program = false;
+    }
+    setTestContext(JSON.stringify({ lead: leadCtx }, null, 2));
+    setPickerOpen(false);
+    setTestResult(null);
+  }
 
   function runTest() {
     setTestError(null);
@@ -334,13 +380,41 @@ function EditRuleDialog({
             <textarea className="kf-input mt-1 min-h-[140px] font-mono text-xs leading-5" dir="ltr"
               value={testContext} onChange={(e) => setTestContext(e.target.value)} />
           </label>
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <button type="button" className="kf-btn text-xs" onClick={runTest}>בחן</button>
             <button type="button" className="kf-btn text-xs"
               onClick={() => setTestContext(JSON.stringify(sampleContextForTrigger(rule.trigger_event), null, 2))}>
               טען דוגמה מחדש
             </button>
+            {/* Tier 5.F — pick an actual lead from prod */}
+            <button type="button" className="kf-btn text-xs"
+              onClick={() => setPickerOpen((open) => !open)}>
+              {pickerOpen ? 'סגור בחירת ליד' : 'בחר ליד אמיתי'}
+            </button>
           </div>
+          {pickerOpen ? (
+            <div className="mt-2 max-h-56 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2">
+              {leadsQ.isLoading ? <p className="text-xs text-slate-500">טוען לידים...</p> :
+                leadsQ.data?.leads.length ? (
+                  <ul className="space-y-1 text-sm">
+                    {leadsQ.data.leads.map((lead) => (
+                      <li key={lead.id}>
+                        <button type="button" className="w-full rounded-md p-2 text-right hover:bg-white"
+                          onClick={() => loadContextFromLead(lead)}>
+                          <div className="flex items-baseline justify-between gap-2">
+                            <strong className="truncate">{lead.full_name || lead.phone || lead.email || lead.id.slice(0, 8)}</strong>
+                            <span className="text-xs text-slate-500">{lead.lead_status}</span>
+                          </div>
+                          <div className="truncate text-xs text-slate-500">
+                            {lead.product_interest ?? '—'} · {lead.primary_track ?? 'ללא מסלול'}
+                          </div>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="text-xs text-slate-500">אין לידים. צור אחד ב-/leads.</p>}
+            </div>
+          ) : null}
           {testError ? <p className="mt-2 text-sm text-rose-600">{testError}</p> : null}
           {testResult ? (
             <div className="mt-3 space-y-1 text-sm">

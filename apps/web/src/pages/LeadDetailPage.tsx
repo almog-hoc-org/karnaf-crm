@@ -22,7 +22,11 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
 import { UnifiedTimeline } from '@/components/UnifiedTimeline';
 import { t } from '@/lib/i18n';
-import { MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
+import {
+  AI_PLAYBOOK_STAGE_LABELS,
+  MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, PRODUCT_LABELS, QUEUE_LABELS,
+  formatDateTime, formatRelative,
+} from '@/lib/format';
 import type {
   DealRow,
   IntakeSegment,
@@ -268,7 +272,7 @@ export function LeadDetailPage() {
           <p className="mt-1 text-xs text-slate-500">
             <span className="opacity-70">שלב AI:</span>{' '}
             <span className="font-medium text-slate-700">
-              {PLAYBOOK_LABELS[lead.ai_playbook_stage] ?? lead.ai_playbook_stage}
+              {AI_PLAYBOOK_STAGE_LABELS[lead.ai_playbook_stage] ?? lead.ai_playbook_stage}
             </span>
             {lead.ai_playbook_stage_at ? (
               <span> · עודכן {formatRelative(lead.ai_playbook_stage_at)}</span>
@@ -1825,17 +1829,6 @@ const PRODUCT_OPTIONS: Array<{ value: ProductInterest; label: string }> = [
   { value: 'unknown', label: 'לא ידוע' },
 ];
 
-const PRODUCT_LABELS: Record<string, string> = {
-  digital_program: 'תוכנית הדרך לדירה',
-  investor_mentorship: 'ליווי משקיעים',
-  contractor_group_purchase: 'קבוצת רכישה מקבלן',
-  personal_consultation: 'שיחת ייעוץ אישית',
-  // Legacy labels from the first classifier version.
-  mentorship: 'ליווי משקיעים',
-  student_tools: 'כלי תלמידים / לקוח קיים',
-  financing_guidance: 'הכוונת מימון',
-  unknown: 'לא ידוע',
-};
 
 const PRODUCT_OPERATOR_HINTS: Record<string, string> = {
   digital_program: 'מוצר הליבה: מסלול הדרך לדירה. לכוון לאבחון התאמה, ערך ותהליך הצטרפות.',
@@ -1863,17 +1856,6 @@ const CLASSIFICATION_CONFIDENCE_LABELS: Record<'high' | 'medium' | 'low', string
   low: 'נמוך',
 };
 
-const PLAYBOOK_LABELS: Record<string, string> = {
-  first_contact_whatsapp_inbound: 'מענה ראשון — WhatsApp/IG',
-  first_contact_form_lead: 'מענה ראשון — טופס',
-  qualification: 'איתור צרכים',
-  price_objection: 'התנגדות מחיר',
-  free_advice_boundary: 'גבול ייעוץ חינמי',
-  checkout_push: 'דחיפה לרכישה',
-  payment_pending_rescue: 'חילוץ תשלום ממתין',
-  phone_request: 'בקשה לשיחה',
-  opt_out: 'בקשת הסרה',
-};
 
 function waLink(phone: string): string {
   const digits = phone.replace(/[^\d+]/g, '').replace(/^\+/, '');

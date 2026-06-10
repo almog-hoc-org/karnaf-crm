@@ -7,7 +7,7 @@ import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
-import { formatRelative } from '@/lib/format';
+import { formatRelative, PRODUCT_LABELS } from '@/lib/format';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import type { AttentionRow } from '@/lib/types';
 
@@ -15,17 +15,6 @@ type WorkLane = 'all' | 'reply' | 'call' | 'risk' | 'ops';
 
 const WHATSAPP_FREEFORM_WINDOW_HOURS = 24;
 const WHATSAPP_FREEFORM_WINDOW_MS = WHATSAPP_FREEFORM_WINDOW_HOURS * 60 * 60 * 1000;
-
-const PRODUCT_LABELS: Record<string, string> = {
-  digital_program: 'תוכנית הדרך לדירה',
-  investor_mentorship: 'ליווי משקיעים',
-  contractor_group_purchase: 'קבוצת רכישה מקבלן',
-  personal_consultation: 'שיחת ייעוץ אישית',
-  mentorship: 'ליווי משקיעים',
-  student_tools: 'כלי תלמידים',
-  financing_guidance: 'הכוונת מימון',
-  unknown: 'מוצר לא ברור',
-};
 
 const LANE_FILTERS: Array<{ key: WorkLane; label: string; hint: string }> = [
   { key: 'all', label: 'הכל', hint: 'כל מה שדורש טיפול' },

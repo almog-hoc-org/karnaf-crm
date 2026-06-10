@@ -50,6 +50,41 @@ export const MEETING_STATUS_LABELS: Record<MeetingRow['status'], string> = {
   no_show: 'לא הגיע',
 };
 
+// Tier 5.E.2 — single source for product labels. Was duplicated
+// (with minor copy drift) in LeadDetailPage + InboxPage. Drift here
+// is silent: a value used in one place might display as "כלי
+// תלמידים" and in another as "כלי תלמידים / לקוח קיים". This map
+// is the truth; pages import from here.
+export const PRODUCT_LABELS: Record<string, string> = {
+  digital_program: 'תוכנית הדרך לדירה',
+  investor_mentorship: 'ליווי משקיעים',
+  contractor_group_purchase: 'קבוצת רכישה מקבלן',
+  personal_consultation: 'שיחת ייעוץ אישית',
+  // Legacy keys from the first classifier version, kept so old DB
+  // rows still render with a Hebrew label.
+  mentorship: 'ליווי משקיעים',
+  student_tools: 'כלי תלמידים / לקוח קיים',
+  financing_guidance: 'הכוונת מימון',
+  unknown: 'לא ידוע',
+};
+
+// AI playbook stage → Hebrew label. The 9 names come from
+// supabase/functions/_shared/playbooks.ts (the source of truth that
+// orchestrate-message writes to lead.ai_playbook_stage). If you add
+// a playbook there, add a label here — otherwise the raw English
+// snake_case leaks to the operator UI on LeadDetailPage.
+export const AI_PLAYBOOK_STAGE_LABELS: Record<string, string> = {
+  first_contact_whatsapp_inbound: 'מענה ראשון — WhatsApp/IG',
+  first_contact_form_lead: 'מענה ראשון — טופס',
+  qualification: 'איתור צרכים',
+  price_objection: 'התנגדות מחיר',
+  free_advice_boundary: 'גבול ייעוץ חינמי',
+  checkout_push: 'דחיפה לרכישה',
+  payment_pending_rescue: 'חילוץ תשלום ממתין',
+  phone_request: 'בקשה לשיחה',
+  opt_out: 'בקשת הסרה',
+};
+
 export const QUEUE_LABELS: Record<string, string> = {
   first_response_due: 'מענה ראשוני',
   hot_lead: 'ליד חם',

@@ -128,8 +128,11 @@ describe('DashboardPage', () => {
 
   it('renders the today command center with a clear next action', async () => {
     renderDashboard();
-    expect(await screen.findByText('להתחיל מ-3 לידים שמחכים למענה')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'לטפל בממתינים למענה' })).toHaveAttribute('href', '/inbox?lane=reply');
+    // Tier 5.E.1 — CTA copy + link updated. The pill now matches
+    // the count's actual derivation (leads.status in new/first_contact_sent),
+    // not the inbox attention-queue lane.
+    expect(await screen.findByText('3 לידים חדשים שלא נענו')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'לפתוח את רשימת הלידים החדשים' })).toHaveAttribute('href', '/leads?status=new');
     expect(screen.getByText('דנה כהן')).toBeInTheDocument();
   });
 

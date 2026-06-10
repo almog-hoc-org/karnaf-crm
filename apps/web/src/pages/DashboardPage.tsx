@@ -42,7 +42,7 @@ export function DashboardPage() {
       <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <KpiCard label={t('kpi_leads_today')} value={s.leadsToday} icon={<IconSparkles />} />
         <KpiCard label={t('kpi_unanswered')} value={s.unansweredNow} tone={s.unansweredNow > 0 ? 'warn' : 'normal'}
-                 to="/inbox?lane=reply" icon={<IconClock />} />
+                 to="/leads?status=new" icon={<IconClock />} />
         <KpiCard label={t('kpi_hot_leads')} value={s.hotLeadsNow} tone={s.hotLeadsNow > 0 ? 'hot' : 'normal'}
                  to="/leads?heat=hot" icon={<IconFlame />} />
         <KpiCard label={t('kpi_payment_pending')} value={s.paymentPendingNow}
@@ -163,12 +163,18 @@ function TodayCommandCenter({
 
 function todayPriority(summary: DashboardSummary, queues: QueueRow[]) {
   const first = queues[0];
+  // Tier 5.E.1 — `summary.unansweredNow` is a *status*-based count
+  // (leads in new / first_contact_sent). The Inbox `lane=reply`
+  // filter is *attention-queue*-based — a different set entirely.
+  // Pointing the CTA at /inbox?lane=reply made the numbers diverge
+  // (audit-flagged). Link to /leads?status=new which matches what
+  // unansweredNow actually counts.
   if (summary.unansweredNow > 0) {
     return {
-      title: `להתחיל מ-${summary.unansweredNow} לידים שמחכים למענה`,
-      detail: 'זה המקום שבו הכי קל לאבד לקוח. עברי לפי הסדר, עני או העבירי לשיחה, וסגרי כל פריט שטופל.',
-      cta: 'לטפל בממתינים למענה',
-      href: '/inbox?lane=reply',
+      title: `${summary.unansweredNow} לידים חדשים שלא נענו`,
+      detail: 'אלה לידים שעוד לא קיבלו תגובה ראשונה — נקודת הכשל הראשונה במסע הליד. עברי עליהם לפי סדר ועני / העבירי לשיחה.',
+      cta: 'לפתוח את רשימת הלידים החדשים',
+      href: '/leads?status=new',
     };
   }
   if (summary.slaRiskCount > 0) {
