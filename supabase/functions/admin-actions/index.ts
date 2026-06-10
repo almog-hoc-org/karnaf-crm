@@ -5,6 +5,7 @@ import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared
 import { AuthError, requireStaff, type StaffRole } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { env } from '../_shared/env.ts';
+import { runMatchingRules } from '../_shared/automation-engine.ts';
 
 type ActionName =
   | 'assign_to_mia'
@@ -368,6 +369,36 @@ Deno.serve(async (req) => {
         conversationId ?? undefined,
         staff.userId,
       );
+      // Tier 4.C — emit deal.won so engine rules + journey starters
+      // listening on that trigger can act (e.g. start program_14d for
+      // a won program deal). Pull the deal so the rule's condition
+      // can gate on track/value. Errors here don't block the won
+      // marking — automations are best-effort.
+      const { data: wonDeal } = await supabase
+        .from('deals')
+        .select('id, track, value, currency, partner_id, project_id')
+        .eq('lead_id', leadId)
+        .eq('status', 'won')
+        .order('won_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const { data: leadForCtx } = await supabase
+        .from('leads')
+        .select('id, full_name, phone, email, city, product_interest, do_not_contact, lead_status')
+        .eq('id', leadId)
+        .maybeSingle();
+      if (leadForCtx) {
+        const firstName = leadForCtx.full_name?.split(/\s+/u)[0] ?? '';
+        await runMatchingRules(supabase, {
+          triggerEvent: 'deal.won',
+          context: {
+            lead: { ...leadForCtx, first_name: firstName },
+            deal: wonDeal ?? null,
+          },
+          contactId: leadId,
+          correlationId,
+        });
+      }
       break;
     }
     case 'reopen_lead': {

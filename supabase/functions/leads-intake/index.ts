@@ -14,6 +14,7 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { classifyLeadIntake } from '../_shared/lead-classifier.ts';
+import { runMatchingRules } from '../_shared/automation-engine.ts';
 
 const FALLBACK_ALLOWED_SOURCES = new Set([
   'landing_page',
@@ -350,6 +351,32 @@ Deno.serve(async (req) => {
     queueSummary: classification.operatorSummary,
     payloadJson: { source, correlationId, classification, intakeContract: contract?.contract_key ?? null },
     dueAt,
+  });
+
+  // Tier 4.C — emit lead.created for the engine. Any engine rule
+  // listening on this trigger gets evaluated against a context that
+  // includes lead.* + the classification (so a rule can gate on
+  // product_interest / intake_segment without re-querying).
+  const firstName = (lead.full_name as string | null | undefined)?.split(/\s+/u)[0] ?? '';
+  await runMatchingRules(supabase, {
+    triggerEvent: 'lead.created',
+    context: {
+      lead: {
+        id: lead.id,
+        full_name: lead.full_name,
+        first_name: firstName,
+        phone: lead.phone,
+        email: lead.email,
+        city: lead.city,
+        product_interest: classification.productInterest,
+        intake_segment: classification.intakeSegment,
+        do_not_contact: lead.do_not_contact,
+        primary_track: prdTrack,
+        source,
+      },
+    },
+    contactId: lead.id,
+    correlationId,
   });
 
   log.info('lead_intake_accepted', { fn: 'leads-intake', correlationId, leadId: lead.id, source });

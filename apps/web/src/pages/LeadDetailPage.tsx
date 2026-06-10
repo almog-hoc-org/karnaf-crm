@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import clsx from 'clsx';
 import {
+  fetchAutomationRunsForContact,
+  fetchJourneyRunsForContact,
   fetchLeadDetail,
   fetchMessageTemplates,
   postAdminAction,
@@ -699,6 +701,12 @@ export function LeadDetailPage() {
               ))}
             </ul>
           </div>
+
+          {/* Tier 4.C — per-contact automation + journey history. Mia
+              uses this when investigating "did the engine do anything
+              with this lead?". Lazy-loaded queries so the lead detail
+              first paint stays fast. */}
+          <AutomationHistoryCard contactId={lead.id} />
         </aside>
       </section>
 
@@ -2056,6 +2064,80 @@ function CurrentOwnerLine({
     <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${bg}`}>
       <div className="font-medium">{label}</div>
       {detail ? <div className="text-xs opacity-80">{detail}</div> : null}
+    </div>
+  );
+}
+
+// ── Tier 4.C — per-contact automation + journey history ─────────────────
+//
+// Two lazy queries: automation_runs and journey_runs scoped to this
+// contact. Renders a compact summary so Mia can quickly check
+// "what did the engine do for this person?" without opening
+// /automations and filtering.
+function AutomationHistoryCard({ contactId }: { contactId: string }) {
+  const runsQ = useQuery({
+    queryKey: ['automation-runs', contactId],
+    queryFn: () => fetchAutomationRunsForContact(contactId),
+    staleTime: 60_000,
+  });
+  const journeysQ = useQuery({
+    queryKey: ['journey-runs', contactId],
+    queryFn: () => fetchJourneyRunsForContact(contactId),
+    staleTime: 60_000,
+  });
+
+  const runs = runsQ.data?.runs ?? [];
+  const journeys = journeysQ.data?.runs ?? [];
+
+  if (runs.length === 0 && journeys.length === 0 && !runsQ.isLoading && !journeysQ.isLoading) {
+    // Don't render the card at all if neither pane has anything to show —
+    // the sidebar already has enough chrome.
+    return null;
+  }
+
+  return (
+    <div className="kf-card p-4">
+      <h2 className="font-semibold">היסטוריית אוטומציה</h2>
+      {journeys.length > 0 ? (
+        <div className="mt-2">
+          <h3 className="text-xs font-medium text-slate-500">מסעות לקוח</h3>
+          <ul className="mt-1 space-y-1 text-sm">
+            {journeys.map((j) => (
+              <li key={j.id} className="flex items-baseline justify-between gap-2">
+                <span className="truncate">
+                  <strong>{j.definition?.name_he ?? j.definition_code}</strong>
+                  <span className="text-slate-500"> · שלב {j.current_step + 1}</span>
+                </span>
+                <span className={
+                  j.status === 'active' ? 'text-xs text-sky-700' :
+                  j.status === 'completed' ? 'text-xs text-emerald-700' :
+                  j.status === 'failed' ? 'text-xs text-rose-700' : 'text-xs text-slate-500'
+                }>{j.status}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {runs.length > 0 ? (
+        <div className="mt-3">
+          <h3 className="text-xs font-medium text-slate-500">הרצות אחרונות ({runs.length})</h3>
+          <ul className="mt-1 max-h-44 overflow-auto text-xs">
+            {runs.slice(0, 12).map((r) => (
+              <li key={r.id} className="flex items-baseline justify-between gap-2 py-0.5">
+                <code className="truncate text-slate-700">{r.rule_code}</code>
+                <span className="flex items-center gap-1 text-slate-500">
+                  <span className={
+                    r.status === 'success' ? 'text-emerald-700' :
+                    r.status === 'failed' ? 'text-rose-700' :
+                    r.status === 'partial' ? 'text-amber-700' : 'text-slate-500'
+                  }>{r.status}</span>
+                  <span title={r.created_at}>{formatRelative(r.created_at)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }
