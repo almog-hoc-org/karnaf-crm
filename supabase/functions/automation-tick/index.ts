@@ -64,13 +64,18 @@ Deno.serve(async (req) => {
 
   // Scan leads that could plausibly match any time-based rule. The
   // engine re-checks per-rule conditions; this query is just the
-  // coarse filter. Skip muted leads + leads that have moved on.
+  // coarse filter. Skip muted leads + leads that have moved on +
+  // leads currently in a human-owned handback or pending-phone state
+  // — an automation that fires while Mia is mid-conversation would
+  // step on her with an "AI" message the customer would attribute
+  // to her. Audit Tier 5.B flagged this as critical.
   const { data: leads, error } = await supabase
     .from('leads')
     .select('id, full_name, phone, email, city, product_interest, do_not_contact, removed_by_request, created_at, lead_status, ownership_mode')
     .eq('do_not_contact', false)
     .eq('removed_by_request', false)
     .not('lead_status', 'in', '(won,lost,suppressed)')
+    .not('ownership_mode', 'in', '(mia_active,phone_sales_pending)')
     .order('created_at', { ascending: true })
     .limit(MAX_LEADS_PER_TICK);
 

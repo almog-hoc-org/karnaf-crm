@@ -230,7 +230,11 @@ export function LeadDetailPage() {
     );
   if (!detailQ.data) return null;
 
-  const { lead, messages, queueItems, tasks, events, humanOwnerProfile } = detailQ.data;
+  // Tier 5.C — tasks + events are now rendered exclusively in UnifiedTimeline
+  // (Tier 0.F merged them into the unified activities feed). The detail
+  // response still ships them for back-compat, but consumers should read
+  // from `activities`. Drop the unused destructured fields.
+  const { lead, messages, queueItems, humanOwnerProfile } = detailQ.data;
   // Tier 0.F.1 — UnifiedTimeline reads from the new activities feed
   // when the migration-054 server is live; falls back to nothing so
   // the empty state renders gracefully if the field is missing during
@@ -624,20 +628,27 @@ export function LeadDetailPage() {
             </dl>
           </div>
 
-          <div className="kf-card p-4">
-            <h2 className="font-semibold">תורי עבודה</h2>
-            {queueItems.length === 0 ? (
-              <p className="mt-2 text-sm text-slate-500">אין פריטים פתוחים.</p>
-            ) : (
+          {/* Tier 5.C — sidebar slimming. The earlier "תורי עבודה" /
+              "משימות" / "היסטוריית אירועים" cards listed the same rows
+              the UnifiedTimeline already renders chronologically. The
+              only unique value was the queue-close button — kept here
+              as a compact action list of *pending* items only, so Mia
+              can resolve a queue item without scrolling the timeline.
+              Done items are read in the timeline. */}
+          {queueItems.filter((q) => q.status === 'pending' || q.status === 'claimed').length > 0 ? (
+            <div className="kf-card p-4">
+              <h2 className="font-semibold">פעולות פתוחות</h2>
+              <p className="text-xs text-slate-500">פריטים שמחכים לסגירה ידנית. ההיסטוריה המלאה בציר הזמן.</p>
               <ul className="mt-2 space-y-2">
-                {queueItems.map((q) => (
-                  <li key={q.id} className="rounded-md bg-slate-50 p-2 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <strong>{QUEUE_LABELS[q.queue_type] ?? q.queue_type}</strong>
-                      <span className="text-xs text-slate-500">{q.status}</span>
-                    </div>
-                    <div className="text-slate-600">{q.reason || '—'}</div>
-                    {q.status === 'pending' || q.status === 'claimed' ? (
+                {queueItems
+                  .filter((q) => q.status === 'pending' || q.status === 'claimed')
+                  .map((q) => (
+                    <li key={q.id} className="rounded-md bg-slate-50 p-2 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <strong>{QUEUE_LABELS[q.queue_type] ?? q.queue_type}</strong>
+                        <span className="text-xs text-slate-500">{q.status}</span>
+                      </div>
+                      {q.reason ? <div className="text-slate-600">{q.reason}</div> : null}
                       <button
                         type="button"
                         className="kf-btn mt-2 text-xs"
@@ -651,12 +662,11 @@ export function LeadDetailPage() {
                       >
                         סגירה
                       </button>
-                    ) : null}
-                  </li>
-                ))}
+                    </li>
+                  ))}
               </ul>
-            )}
-          </div>
+            </div>
+          ) : null}
 
           {auth.role === 'sales_rep' ||
           auth.role === 'mia' ||
@@ -673,34 +683,6 @@ export function LeadDetailPage() {
               />
             </div>
           ) : null}
-
-          <div className="kf-card p-4">
-            <h2 className="font-semibold">משימות</h2>
-            {tasks.length === 0 ? (
-              <p className="mt-2 text-sm text-slate-500">אין משימות.</p>
-            ) : (
-              <ul className="mt-2 space-y-1 text-sm">
-                {tasks.slice(0, 8).map((t) => (
-                  <li key={t.id} className="flex items-center justify-between">
-                    <span>{t.title}</span>
-                    <span className="text-xs text-slate-500">{t.task_status}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="kf-card p-4">
-            <h2 className="font-semibold">היסטוריית אירועים</h2>
-            <ul className="mt-2 max-h-72 space-y-1 overflow-auto text-xs text-slate-600">
-              {events.slice(0, 30).map((e) => (
-                <li key={e.id}>
-                  <span className="text-slate-400">{formatRelative(e.created_at)}</span>{' '}
-                  <strong>{e.event_type}</strong> <span className="text-slate-500">{e.actor_type}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
 
           {/* Tier 4.C — per-contact automation + journey history. Mia
               uses this when investigating "did the engine do anything

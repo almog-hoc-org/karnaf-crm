@@ -378,9 +378,38 @@ export function InboxPage() {
   );
 }
 
+// Dismissible via localStorage. After day 3 the same training card
+// reads as noise; Tier 5.B audit flagged it. Once dismissed, never
+// re-shown for this user/browser (intentional — re-show would be
+// patronising).
+const INBOX_GUIDE_DISMISSED_KEY = 'karnaf_inbox_guide_dismissed_v1';
+
 function InboxTrainingGuide() {
+  const [dismissed, setDismissed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(INBOX_GUIDE_DISMISSED_KEY) === '1';
+  });
+  if (dismissed) return null;
+
+  function dismiss() {
+    try { window.localStorage.setItem(INBOX_GUIDE_DISMISSED_KEY, '1'); }
+    catch { /* private mode etc — accept the loss */ }
+    setDismissed(true);
+  }
+
   return (
-    <section className="kf-card p-4 sm:p-5" aria-label="איך לעבוד במסך לטיפול עכשיו">
+    <section className="kf-card relative p-4 sm:p-5" aria-label="איך לעבוד במסך לטיפול עכשיו">
+      <button
+        type="button"
+        onClick={dismiss}
+        className="absolute left-3 top-3 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+        aria-label="הסתר את ההדרכה"
+        title="הסתר"
+      >
+        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
+          <path strokeLinecap="round" d="M4 4l8 8M12 4l-8 8" />
+        </svg>
+      </button>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">הדרך הקצרה לעבודה נכונה</p>

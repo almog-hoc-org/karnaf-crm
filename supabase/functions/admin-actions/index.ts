@@ -358,6 +358,31 @@ Deno.serve(async (req) => {
       break;
     }
     case 'mark_won': {
+      // Tier 5.B/C — refuse mark_won when no open deal exists.
+      // Without an open deal we have no track to start a journey for
+      // and no commission to create; the post-sale chain silently
+      // breaks. Better to fail loud at the API level and force the
+      // operator to create the deal first.
+      const { data: openDeal } = await supabase
+        .from('deals')
+        .select('id, track')
+        .eq('lead_id', leadId)
+        .eq('status', 'open')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!openDeal) {
+        return jsonResponse(req, {
+          error: 'אין עסקה פתוחה לליד הזה. צור עסקה לפני סימון כסגירה כדי שהאוטומציות (מסע אונבורדינג, עמלות) יעבדו.',
+          code: 'no_open_deal',
+        }, 400);
+      }
+      // The deal needs to be marked won *first* so the downstream
+      // engine context picks it up via the .eq('status','won') filter.
+      await supabase.from('deals').update({
+        status: 'won',
+        won_at: ts,
+      }).eq('id', openDeal.id);
       await updateLeadFields(supabase, leadId, { won_at: ts });
       await transitionLeadStatus(supabase, leadId, 'won', staff.role, 'manual_mark_won');
       await logLeadEvent(
