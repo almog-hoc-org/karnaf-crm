@@ -24,11 +24,24 @@ import { dispatchAction, evaluateConditions } from './automation-engine.ts';
 import { logAutomationRun } from './automation-log.ts';
 import { log } from './logger.ts';
 
+interface RetryPolicy {
+  // Maximum retries before the run is marked failed. Default 0 (no
+  // retries; keeps existing journeys behaving exactly as before).
+  max_retries?: number;
+  // Minutes to wait before the next retry attempt. Default 60.
+  retry_delay_minutes?: number;
+}
+
 interface JourneyStep {
   name?: string;
   delay_hours?: number;
   conditions?: Record<string, unknown>;
   actions?: Array<Record<string, unknown>>;
+  // Tier 4.D.4 — per-step retry config. When set, an all-failed step
+  // bumps a retry counter in journey_runs.state and reschedules
+  // instead of failing the run. Without this field, behaviour is
+  // identical to pre-4.D.4 (one failed pass halts).
+  retry_policy?: RetryPolicy;
 }
 
 interface JourneyDefinition {
@@ -240,8 +253,43 @@ async function advanceOneRun(
   const allFailed = actionResults.length > 0 && actionResults.every((r) => r.status === 'failed');
   const anySucceeded = actionResults.some((r) => r.status === 'ok');
 
-  // A step that explicitly fails every action halts the run.
+  // A step that explicitly fails every action either retries (when
+  // retry_policy is set and there are attempts left) or halts the run.
   if (allFailed && !anySucceeded) {
+    const policy = step.retry_policy;
+    const maxRetries = policy?.max_retries ?? 0;
+    if (maxRetries > 0) {
+      const state = (run.state as Record<string, unknown>) ?? {};
+      const stepRetries = (state.step_retries as Record<string, number>) ?? {};
+      const stepKey = String(run.current_step);
+      const usedRetries = stepRetries[stepKey] ?? 0;
+      if (usedRetries < maxRetries) {
+        // Reschedule the *same* step for retry. current_step doesn't
+        // advance; scheduled_next_at moves forward by retry_delay_minutes.
+        const delayMs = (policy?.retry_delay_minutes ?? 60) * 60 * 1000;
+        const nextAttempt = new Date(Date.now() + delayMs).toISOString();
+        const nextState = {
+          ...state,
+          step_retries: { ...stepRetries, [stepKey]: usedRetries + 1 },
+        };
+        await supabase.from('journey_runs').update({
+          state: nextState,
+          scheduled_next_at: nextAttempt,
+        }).eq('id', run.id);
+        await logAutomationRun(supabase, {
+          ruleCode: `journey:${def.code}:step:${step.name ?? run.current_step}`,
+          triggerEvent: 'journey.advance',
+          contactId: run.contact_id,
+          context,
+          actionResults,
+          status: 'partial',
+          reason: `retry ${usedRetries + 1}/${maxRetries} scheduled in ${policy?.retry_delay_minutes ?? 60} min`,
+          correlationId,
+        });
+        return 'advanced';
+      }
+    }
+    // No retry budget left (or no policy) → halt the run.
     await failRun(supabase, run.id, 'all step actions failed');
     await logAutomationRun(supabase, {
       ruleCode: `journey:${def.code}:step:${step.name ?? run.current_step}`,
@@ -250,7 +298,7 @@ async function advanceOneRun(
       context,
       actionResults,
       status: 'failed',
-      reason: 'all step actions failed',
+      reason: 'all step actions failed' + (maxRetries > 0 ? ` (after ${maxRetries} retries)` : ''),
       correlationId,
     });
     return 'failed';

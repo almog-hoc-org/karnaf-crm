@@ -355,6 +355,46 @@ Deno.serve(async (req) => {
         conversationId ?? undefined,
         staff.userId,
       );
+      // Tier 4.D.2 — emit deal.lost to the engine. Symmetric to
+      // deal.won emit from mark_won. Context includes the most-
+      // recent open deal (now flipped to lost) so a bridge rule can
+      // condition on its track / value / partner. Errors here don't
+      // block the lost marking — automations are best-effort.
+      const { data: lostDeal } = await supabase
+        .from('deals')
+        .select('id, track, value, currency, partner_id, project_id, status')
+        .eq('lead_id', leadId)
+        .eq('status', 'open')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lostDeal?.id) {
+        // Flip the open deal to lost — keeps engine context truthful
+        // and stops the deal from appearing in "open" lists. Won deals
+        // are left intact (analytics keeps the conversion record).
+        await supabase.from('deals').update({
+          status: 'lost',
+          lost_at: ts,
+        }).eq('id', lostDeal.id);
+      }
+      const { data: leadForCtx } = await supabase
+        .from('leads')
+        .select('id, full_name, phone, email, city, product_interest, do_not_contact, lead_status, primary_track')
+        .eq('id', leadId)
+        .maybeSingle();
+      if (leadForCtx) {
+        const firstName = leadForCtx.full_name?.split(/\s+/u)[0] ?? '';
+        await runMatchingRules(supabase, {
+          triggerEvent: 'deal.lost',
+          context: {
+            lead: { ...leadForCtx, first_name: firstName },
+            deal: lostDeal ?? null,
+            lost_reason: note ?? null,
+          },
+          contactId: leadId,
+          correlationId,
+        });
+      }
       break;
     }
     case 'mark_won': {

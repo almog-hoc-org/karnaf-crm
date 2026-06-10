@@ -14,6 +14,7 @@
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { logAutomationRun } from './automation-log.ts';
+import { notifyTelegram } from './notify-telegram.ts';
 import { log } from './logger.ts';
 
 // ── Conditions DSL ────────────────────────────────────────────────────
@@ -185,24 +186,47 @@ async function actionNotifyInternal(action: Record<string, unknown>, ctx: Action
   // fields the same way customer-facing templates do.
   const { text: rendered } = renderBody(text, ctx.context);
 
-  // Write to lead_events as the canonical internal-audit channel.
-  // Future enhancement: a worker can scan lead_events for
-  // event_type='engine_internal_note' and forward to Telegram.
-  if (!ctx.contactId) {
-    return { type: 'notify_internal', status: 'skipped', detail: 'no contactId for lead_events insert' };
+  // Two channels in parallel:
+  //   1. lead_events row (audit log; always written when contactId present).
+  //   2. Telegram message (operator-visible) when env is configured.
+  // Telegram failure does not fail the action — audit row is the
+  // source of truth. Logs the Telegram outcome for ops debugging.
+  let auditWritten = false;
+  if (ctx.contactId) {
+    const { error } = await ctx.supabase.from('lead_events').insert({
+      lead_id: ctx.contactId,
+      event_type: 'engine_internal_note',
+      actor_type: 'system',
+      event_payload: {
+        text: rendered,
+        source: 'automation_engine',
+        correlation_id: ctx.correlationId ?? null,
+      },
+    });
+    if (error) return { type: 'notify_internal', status: 'failed', detail: error.message };
+    auditWritten = true;
   }
-  const { error } = await ctx.supabase.from('lead_events').insert({
-    lead_id: ctx.contactId,
-    event_type: 'engine_internal_note',
-    actor_type: 'system',
-    event_payload: {
-      text: rendered,
-      source: 'automation_engine',
-      correlation_id: ctx.correlationId ?? null,
-    },
+
+  // Tier 4.D.3 — forward to Telegram if configured. The notifier
+  // silently no-ops when env vars are missing (NotifyResult.sent=false,
+  // skipped='no_token' / 'no_chat'), so this is safe-by-default.
+  const tg = await notifyTelegram({
+    source: 'automation_engine',
+    severity: 'info',
+    title: rendered,
+    correlationId: ctx.correlationId,
   });
-  if (error) return { type: 'notify_internal', status: 'failed', detail: error.message };
-  return { type: 'notify_internal', status: 'ok', detail: { chars: rendered.length } };
+
+  return {
+    type: 'notify_internal',
+    status: auditWritten || tg.sent ? 'ok' : 'skipped',
+    detail: {
+      chars: rendered.length,
+      audit_written: auditWritten,
+      telegram_sent: tg.sent,
+      telegram_skipped: tg.skipped ?? null,
+    },
+  };
 }
 
 async function actionCreateTask(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
