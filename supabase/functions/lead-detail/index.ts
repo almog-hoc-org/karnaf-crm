@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
 
   const supabase = getServiceSupabase();
 
-  const [leadRes, conversationsRes, messagesRes, queueRes, tasksRes, eventsRes, dealsRes, meetingsRes, programMemberRes] = await Promise.all([
+  const [leadRes, conversationsRes, messagesRes, queueRes, tasksRes, eventsRes, dealsRes, meetingsRes, programMemberRes, activitiesRes] = await Promise.all([
     supabase.from('leads').select('*').eq('id', leadId).single(),
     supabase.from('conversations').select('*').eq('lead_id', leadId),
     supabase.from('messages').select('*').eq('lead_id', leadId).order('created_at', { ascending: true }).limit(200),
@@ -28,6 +28,11 @@ Deno.serve(async (req) => {
     supabase.from('deals').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(20),
     supabase.from('meetings').select('*').eq('lead_id', leadId).order('starts_at', { ascending: false }).limit(20),
     supabase.from('program_members').select('*').eq('lead_id', leadId).maybeSingle(),
+    // Tier 0.A: unified activities feed. Migration 054 mirrors all four
+    // legacy source tables into this one. Returned alongside the legacy
+    // arrays for one release so the new feed can be A/B verified before
+    // the frontend cuts over (Tier 0.F) and the legacy arrays go away.
+    supabase.from('activities').select('*').eq('contact_id', leadId).order('occurred_at', { ascending: false }).limit(400),
   ]);
 
   if (leadRes.error) return jsonResponse(req, { error: leadRes.error.message }, 404);
@@ -44,6 +49,7 @@ Deno.serve(async (req) => {
     { label: 'deals', err: dealsRes.error },
     { label: 'meetings', err: meetingsRes.error },
     { label: 'programMember', err: programMemberRes.error },
+    { label: 'activities', err: activitiesRes.error },
   ].find((r) => r.err);
   if (secondary) {
     return jsonResponse(req, { error: `${secondary.label}: ${secondary.err!.message}` }, 500);
@@ -74,6 +80,7 @@ Deno.serve(async (req) => {
     deals: dealsRes.data ?? [],
     meetings: meetingsRes.data ?? [],
     programMember: programMemberRes.data ?? null,
+    activities: activitiesRes.data ?? [],
     humanOwnerProfile,
   });
 });

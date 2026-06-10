@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type {
+  ActivityRow,
   AttentionRow,
   ConversationRow,
   DashboardSummary,
@@ -124,6 +125,10 @@ export async function fetchLeadDetail(leadId: string) {
     deals?: DealRow[];
     meetings?: MeetingRow[];
     programMember?: ProgramMemberRow | null;
+    // Tier 0.A — unified activity feed (will replace the 4 legacy arrays
+    // once Tier 0.F lands the new Universal Record Screen). Marked optional
+    // for the one release that the old + new endpoints coexist.
+    activities?: ActivityRow[];
     humanOwnerProfile: HumanOwnerProfile | null;
   }>('/lead-detail', { leadId });
 }

@@ -240,6 +240,35 @@ export interface EventRow {
   created_at: string;
 }
 
+// Tier 0.A — unified activity feed (migration 054). Mirror of messages /
+// lead_events / lead_tasks / work_queue into one chronologically-sortable
+// stream that the Universal Record Screen reads. Discriminator is
+// `activity_type`; other fields are populated per type.
+export type ActivityType = 'message' | 'event' | 'task' | 'queue_item' | 'note' | 'call_log' | 'meeting';
+
+export interface ActivityRow {
+  id: string;
+  contact_id: string;
+  occurred_at: string;
+  activity_type: ActivityType;
+  actor_type: string;
+  conversation_id: string | null;
+  deal_id: string | null;
+  meeting_id: string | null;
+  actor_user_id: string | null;
+  title: string | null;
+  body: string | null;
+  status: string | null;
+  priority_level: number | null;
+  due_at: string | null;
+  completed_at: string | null;
+  direction: 'inbound' | 'outbound' | 'internal' | null;
+  source_table: 'messages' | 'lead_events' | 'lead_tasks' | 'work_queue' | 'native';
+  source_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface DashboardSummary {
   leadsToday: number;
   unansweredNow: number;
