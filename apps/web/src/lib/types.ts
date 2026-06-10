@@ -179,6 +179,29 @@ export interface ProjectFundingRow {
   funding_pct: number | null;
 }
 
+// Tier 2.A — message templates for WhatsApp / SMS / email. The 16
+// from spec Appendix C are seeded by migration 062; admins can add
+// more via the /templates page. The body uses {{var}} markers that
+// the application's render helper expands against context.
+export type TemplateChannel = 'whatsapp' | 'sms' | 'email';
+export type TemplateStatus = 'draft' | 'active' | 'deprecated';
+
+export interface MessageTemplateRow {
+  id: string;
+  key: string;
+  channel: TemplateChannel;
+  name_he: string;
+  description: string | null;
+  body: string;
+  variables_used: string[];
+  tags: string[];
+  status: TemplateStatus;
+  notes: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 // Tier 1.D — Commission ledger. One row per partner-mediated deal,
 // created automatically by trigger when deals.seriousness_deposit_paid_at
 // gets set. status walks pending → to_bill → paid; either of the first

@@ -23,6 +23,7 @@ const HE = {
   nav_partners: 'שותפים',
   nav_projects: 'פרויקטים',
   nav_commissions: 'עמלות',
+  nav_templates: 'תבניות הודעה',
   nav_whatsapp_router: 'ראוטר WhatsApp',
   nav_settings: 'הגדרות',
 
@@ -189,6 +190,7 @@ const EN: Partial<Record<keyof typeof HE, string>> = {
   nav_partners: 'Partners',
   nav_projects: 'Projects',
   nav_commissions: 'Commissions',
+  nav_templates: 'Templates',
   nav_whatsapp_router: 'WhatsApp Router',
   nav_settings: 'Settings',
   queue_title: 'Queues',

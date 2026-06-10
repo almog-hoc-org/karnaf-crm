@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import clsx from 'clsx';
 import {
   fetchLeadDetail,
+  fetchMessageTemplates,
   postAdminAction,
   postSendReply,
   postQueueResolve,
@@ -13,6 +14,7 @@ import {
   type ReopenTarget,
   type HumanOwnerProfile,
 } from '@/lib/api';
+import { contextFromLead, renderTemplate } from '@/lib/template-render';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
@@ -28,6 +30,7 @@ import type {
   LeadHeat,
   MeetingRow,
   MessageRow,
+  MessageTemplateRow,
   ProductInterest,
   ProgramMemberRow,
   QueueRow,
@@ -427,6 +430,7 @@ export function LeadDetailPage() {
             onSend={(text) => sendReply.mutate(text)}
             sending={sendReply.isPending}
             errorMessage={sendReply.error ? (sendReply.error as Error).message : null}
+            lead={lead}
           />
         </div>
 
@@ -1920,19 +1924,40 @@ function ReplyBox({
   onSend,
   sending,
   errorMessage,
+  lead,
 }: {
   disabled: boolean;
   onSend: (text: string) => void;
   sending: boolean;
   errorMessage: string | null;
+  // Tier 2.D — needed so the template renderer can expand
+  // {{first_name}} and other markers against the actual contact
+  // when Mia inserts a template into the reply.
+  lead: { full_name: string | null; phone: string | null; email: string | null; city: string | null };
 }) {
   const [text, setText] = useState('');
+
+  // Lazy fetch active WA templates only when the picker drawer opens.
+  // Keeps the lead detail page's initial render light.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const templatesQ = useQuery({
+    queryKey: ['templates', 'whatsapp', 'active'],
+    queryFn: () => fetchMessageTemplates({ channel: 'whatsapp', status: 'active' }),
+    enabled: pickerOpen,
+  });
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!text.trim() || disabled) return;
     onSend(text.trim());
     setText('');
+  }
+
+  function insertTemplate(template: MessageTemplateRow) {
+    const ctx = contextFromLead(lead);
+    const { text: rendered } = renderTemplate(template.body, ctx);
+    setText(rendered);
+    setPickerOpen(false);
   }
 
   return (
@@ -1945,9 +1970,15 @@ function ReplyBox({
         disabled={disabled}
       />
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-        <p className="text-xs text-slate-500">
-          ייצא דרך WhatsApp באופן אוטומטי. מחוץ לחלון 24 שעות תישלח תבנית.
-        </p>
+        <div className="flex items-center gap-2 text-xs">
+          <button type="button" className="kf-btn text-xs" disabled={disabled}
+            onClick={() => setPickerOpen((open) => !open)}>
+            {pickerOpen ? 'סגור תבניות' : '+ הכנס תבנית'}
+          </button>
+          <span className="text-slate-500">
+            ייצא דרך WhatsApp. מחוץ לחלון 24 שעות תישלח תבנית.
+          </span>
+        </div>
         <button
           type="submit"
           className="kf-btn kf-btn-primary w-full sm:w-auto"
@@ -1956,6 +1987,24 @@ function ReplyBox({
           {sending ? 'שולח...' : 'שליחה'}
         </button>
       </div>
+      {pickerOpen ? (
+        <div className="max-h-64 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2">
+          {templatesQ.isLoading ? <p className="text-xs text-slate-500">טוען תבניות...</p> :
+            templatesQ.data?.templates.length ? (
+              <ul className="space-y-1">
+                {templatesQ.data.templates.map((tpl) => (
+                  <li key={tpl.id}>
+                    <button type="button" className="w-full rounded-md p-2 text-right text-sm hover:bg-white"
+                      onClick={() => insertTemplate(tpl)}>
+                      <div className="font-medium">{tpl.name_he}</div>
+                      <div className="mt-0.5 truncate text-xs text-slate-500">{tpl.body}</div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="text-xs text-slate-500">אין תבניות פעילות. אפשר להוסיף ב-/templates.</p>}
+        </div>
+      ) : null}
       {errorMessage ? <p className="text-sm text-rose-600">{errorMessage}</p> : null}
     </form>
   );

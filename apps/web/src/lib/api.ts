@@ -15,9 +15,12 @@ import type {
   LeadRow,
   MeetingRow,
   MessageRow,
+  MessageTemplateRow,
   PartnerDomain,
   PartnerRow,
   PartnerWorkloadRow,
+  TemplateChannel,
+  TemplateStatus,
   ProductInterest,
   ProgramMemberRow,
   ProjectFundingRow,
@@ -202,6 +205,22 @@ export type CommissionAction =
 
 export async function postCommissionAction(payload: CommissionAction) {
   return postJson<{ ok: true; commission: CommissionRow }>('/commissions', payload as unknown as Record<string, unknown>);
+}
+
+// === Message templates (Tier 2.A) =========================================
+
+export async function fetchMessageTemplates(filters?: { channel?: TemplateChannel; status?: TemplateStatus }) {
+  return getJson<{ ok: true; templates: MessageTemplateRow[] }>('/message-templates', filters);
+}
+
+export type MessageTemplateAction =
+  | { action: 'create'; key: string; channel: TemplateChannel; name_he: string; body: string;
+      description?: string; variables_used?: string[]; tags?: string[]; notes?: string }
+  | { action: 'update'; id: string; name_he?: string; body?: string; description?: string;
+      variables_used?: string[]; tags?: string[]; status?: TemplateStatus; notes?: string };
+
+export async function postMessageTemplateAction(payload: MessageTemplateAction) {
+  return postJson<{ ok: true; template: MessageTemplateRow }>('/message-templates', payload as unknown as Record<string, unknown>);
 }
 
 // === Writes ===============================================================

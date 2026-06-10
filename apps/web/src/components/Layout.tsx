@@ -25,6 +25,7 @@ const NAV: NavItem[] = [
   { to: '/queue', labelKey: 'nav_queue', adminOnly: true, icon: <IconInbox /> },
   { to: '/team', labelKey: 'nav_team', adminOnly: true, icon: <IconUsers /> },
   { to: '/admin/sources', labelKey: 'nav_sources', adminOnly: true, icon: <IconChart /> },
+  { to: '/templates', labelKey: 'nav_templates', adminOnly: true, icon: <IconSparkles /> },
   { to: '/admin/whatsapp-router', labelKey: 'nav_whatsapp_router', adminOnly: true, icon: <IconInbox /> },
   { to: '/admin/settings', labelKey: 'nav_settings', adminOnly: true, icon: <IconShield /> },
   { to: '/users', labelKey: 'nav_users', adminOnly: true, icon: <IconShield /> },
