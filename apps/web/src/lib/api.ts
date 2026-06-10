@@ -2,6 +2,8 @@ import { supabase } from './supabase';
 import type {
   ActivityRow,
   AttentionRow,
+  AutomationRuleRow,
+  AutomationRunRow,
   CommissionRow,
   ConversationRow,
   DashboardSummary,
@@ -221,6 +223,23 @@ export type MessageTemplateAction =
 
 export async function postMessageTemplateAction(payload: MessageTemplateAction) {
   return postJson<{ ok: true; template: MessageTemplateRow }>('/message-templates', payload as unknown as Record<string, unknown>);
+}
+
+// === Automations catalog + runs (Tier 2.B + 2.C) ==========================
+
+export async function fetchAutomations(includeRuns = true) {
+  return getJson<{ ok: true; rules: AutomationRuleRow[]; runs?: AutomationRunRow[] }>(
+    '/automations',
+    includeRuns ? { runs: 1 } : undefined,
+  );
+}
+
+export async function fetchAutomationRunsForContact(contactId: string) {
+  return getJson<{ ok: true; runs: AutomationRunRow[] }>('/automations', { contact_id: contactId });
+}
+
+export async function postAutomationToggle(id: string, enabled: boolean) {
+  return postJson<{ ok: true; rule: AutomationRuleRow }>('/automations', { action: 'toggle', id, enabled });
 }
 
 // === Writes ===============================================================

@@ -9,6 +9,7 @@ import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { notifyTelegram } from '../_shared/notify-telegram.ts';
+import { logAutomationRun } from '../_shared/automation-log.ts';
 
 // Hebrew label for each attention kind. Keep in sync with the RPC's
 // case dispatch in migration 055 — adding a new kind there means adding
@@ -114,6 +115,14 @@ Deno.serve(async (req) => {
 
     log.info('daily_inbox_sent', {
       fn: 'daily-sales-inbox', correlationId, total, critical, byLane,
+    });
+    await logAutomationRun(supabase, {
+      ruleCode: 'b19_daily_recap',
+      triggerEvent: 'cron.daily',
+      context: { total, critical, byLane },
+      actionResults: [{ kind: 'telegram_digest_sent', items: total, lanes: byLane }],
+      status: 'success',
+      correlationId,
     });
     return jsonResponse(req, { ok: true, total, critical, byLane, correlationId });
   } catch (err) {

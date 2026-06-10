@@ -7,6 +7,7 @@ import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { notifyTelegram } from '../_shared/notify-telegram.ts';
+import { logAutomationRun } from '../_shared/automation-log.ts';
 
 // Designed to be invoked by pg_cron via the Supabase scheduler. Every run
 // emits operational queue items for leads that have crossed an SLA boundary
@@ -276,6 +277,19 @@ Deno.serve(async (req) => {
       payloadJson: { correlationId },
     });
     counters.dormant++;
+    // Wire to automation catalog so the admin UI shows per-lead
+    // "automation history". B8 is the spec name for dormant
+    // resurrection — at this point the lead has *become* dormant,
+    // and the resurrection nudge will be queued for human follow-up.
+    await logAutomationRun(supabase, {
+      ruleCode: 'b8_dormant_resurrect_14d',
+      triggerEvent: 'sla_tick',
+      contactId: lead.id,
+      context: { previousStatus: lead.lead_status, dormantBreach },
+      actionResults: [{ kind: 'queue_item_created', queue_type: 'dormant_review' }],
+      status: 'success',
+      correlationId,
+    });
   }
 
   const hasUrgent = counters.sla_breach > 0 || counters.payment_pending > 0

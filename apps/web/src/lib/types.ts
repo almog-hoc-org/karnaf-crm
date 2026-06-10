@@ -179,6 +179,49 @@ export interface ProjectFundingRow {
   funding_pct: number | null;
 }
 
+// Tier 2.B — automation rule catalog. Each row documents one of the
+// spec's 19 automations + any custom rules the admin adds later.
+// source: 'code' means the rule lives in an edge function today;
+// 'engine' means the configurable engine drives it (Tier 4);
+// 'planned' marks spec rules not yet implemented.
+export type AutomationSource = 'code' | 'engine' | 'planned';
+export type AutomationCategory = 'intake' | 'nurture' | 'sales' | 'commission' | 'retention' | 'presale' | 'control' | 'partner';
+
+export interface AutomationRuleRow {
+  id: string;
+  code: string;
+  name_he: string;
+  description: string | null;
+  trigger_event: string;
+  category: AutomationCategory | string;
+  enabled: boolean;
+  source: AutomationSource;
+  implementation_ref: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+// Tier 2.C — automation run log.
+export type AutomationRunStatus = 'success' | 'skipped' | 'failed' | 'partial';
+
+export interface AutomationRunRow {
+  id: string;
+  rule_id: string | null;
+  rule_code: string;
+  trigger_event: string;
+  contact_id: string | null;
+  context: Record<string, unknown>;
+  action_results: Array<Record<string, unknown>>;
+  status: AutomationRunStatus;
+  reason: string | null;
+  duration_ms: number | null;
+  correlation_id: string | null;
+  created_at: string;
+  // Optional join from /automations endpoint.
+  rule?: { code: string; name_he: string; category: string };
+}
+
 // Tier 2.A — message templates for WhatsApp / SMS / email. The 16
 // from spec Appendix C are seeded by migration 062; admins can add
 // more via the /templates page. The body uses {{var}} markers that
