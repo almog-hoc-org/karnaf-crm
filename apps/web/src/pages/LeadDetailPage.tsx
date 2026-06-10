@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import clsx from 'clsx';
@@ -15,8 +15,8 @@ import {
 } from '@/lib/api';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { EmptyState } from '@/components/EmptyState';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
+import { UnifiedTimeline } from '@/components/UnifiedTimeline';
 import { t } from '@/lib/i18n';
 import { MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
 import type {
@@ -226,6 +226,13 @@ export function LeadDetailPage() {
   if (!detailQ.data) return null;
 
   const { lead, messages, queueItems, tasks, events, humanOwnerProfile } = detailQ.data;
+  // Tier 0.F.1 — UnifiedTimeline reads from the new activities feed
+  // when the migration-054 server is live; falls back to nothing so
+  // the empty state renders gracefully if the field is missing during
+  // a partial rollout. Once the rollout settles, the `?? []` becomes
+  // the only path and the legacy messages/events/tasks/queueItems
+  // arrays can drop from this destructuring (Tier 1).
+  const activities = detailQ.data.activities ?? [];
   const deals = detailQ.data.deals ?? [];
   const meetings = detailQ.data.meetings ?? [];
   const programMember = detailQ.data.programMember ?? null;
@@ -410,7 +417,11 @@ export function LeadDetailPage() {
             ) : null}
           </div>
           <HandlerBanner ownership={lead.ownership_mode} lastHumanTouchAt={lead.last_human_touch_at} />
-          <Transcript messages={messages} />
+          {/* Tier 0.F.1 — Universal Record Screen feed. UnifiedTimeline
+              replaces the legacy Transcript with one chronological pane
+              that absorbs messages + events + tasks + queue items into
+              the same scroll surface, matching the v4 spec § ג'. */}
+          <UnifiedTimeline activities={activities} />
           <ReplyBox
             disabled={!conversationId || lead.do_not_contact || lead.removed_by_request}
             onSend={(text) => sendReply.mutate(text)}
@@ -1712,13 +1723,6 @@ function ContactRow({
   );
 }
 
-const dayFormatter = new Intl.DateTimeFormat('he-IL', {
-  weekday: 'long',
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-});
-
 const INQUIRY_OPTIONS: Array<{ value: InquiryType; label: string }> = [
   { value: 'program_details', label: 'פרטי תוכנית' },
   { value: 'pricing', label: 'מחיר' },
@@ -1788,125 +1792,6 @@ const PLAYBOOK_LABELS: Record<string, string> = {
   phone_request: 'בקשה לשיחה',
   opt_out: 'בקשת הסרה',
 };
-
-function Transcript({ messages }: { messages: MessageRow[] }) {
-  const grouped = useMemo(() => groupByDay(messages), [messages]);
-  const bottomRef = useRef<HTMLLIElement | null>(null);
-  // Stick the conversation viewport to the most recent message — operators
-  // expect WhatsApp-style behavior where new inbound + their own outbound
-  // both park them at the bottom. Triggers on mount and whenever messages
-  // grow (realtime invalidation re-renders this with a new array length).
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
-  }, [messages.length]);
-  if (messages.length === 0) {
-    return (
-      <EmptyState icon="💬" title="אין עדיין הודעות בשיחה" hint="כשהלקוח ישלח הודעה ראשונה, היא תופיע כאן." />
-    );
-  }
-  return (
-    <ol className="mt-3 max-h-[60vh] space-y-3 overflow-auto pr-1 sm:max-h-[28rem]">
-      {grouped.map(({ day, items }) => (
-        <li key={day}>
-          <div className="my-1 flex items-center gap-3">
-            <span className="h-px flex-1 bg-slate-200" />
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">{day}</span>
-            <span className="h-px flex-1 bg-slate-200" />
-          </div>
-          <ul className="space-y-2">
-            {items.map((m) => (
-              <li key={m.id} className={messageBubbleClass(m)}>
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <span className="font-medium text-slate-700">{senderLabel(m.sender_type)}</span>
-                  <span>·</span>
-                  <span title={m.created_at}>{formatRelative(m.created_at)}</span>
-                  <ProviderStatusBadge status={m.provider_status} error={m.provider_error} />
-                </div>
-                <div className="mt-1 whitespace-pre-wrap text-sm">
-                  {m.content_text || (m.message_type === 'media' ? '[מדיה]' : '—')}
-                </div>
-                {m.provider_status === 'failed' && m.provider_error ? (
-                  <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-800">
-                    שגיאת ספק: {m.provider_error}
-                  </div>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </li>
-      ))}
-      <li ref={bottomRef} aria-hidden="true" className="h-px" />
-    </ol>
-  );
-}
-
-function groupByDay(messages: MessageRow[]): Array<{ day: string; items: MessageRow[] }> {
-  const groups = new Map<string, MessageRow[]>();
-  for (const m of messages) {
-    const ts = Date.parse(m.created_at);
-    const key = Number.isFinite(ts) ? dayFormatter.format(new Date(ts)) : '—';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(m);
-  }
-  return Array.from(groups.entries()).map(([day, items]) => ({ day, items }));
-}
-
-function senderLabel(t: MessageRow['sender_type']): string {
-  switch (t) {
-    case 'lead':
-      return 'ליד';
-    case 'ai':
-      return 'AI';
-    case 'mia':
-      return 'מיה';
-    case 'sales_rep':
-      return 'איש מכירות';
-    case 'system':
-      return 'מערכת';
-    case 'admin':
-      return 'אדמין';
-    default:
-      return t;
-  }
-}
-
-function messageBubbleClass(m: MessageRow): string {
-  const base = 'rounded-2xl p-3 max-w-[85%] shadow-sm';
-  const failedRing = m.provider_status === 'failed' ? ' ring-1 ring-rose-300' : '';
-  if (m.direction === 'inbound') return `${base} bg-slate-100 mr-auto${failedRing}`;
-  if (m.sender_type === 'ai') return `${base} bg-brand-50 ms-auto${failedRing}`;
-  return `${base} bg-amber-50 ms-auto${failedRing}`;
-}
-
-const PROVIDER_STATUS_LABELS: Record<NonNullable<MessageRow['provider_status']>, string> = {
-  queued: 'בתור',
-  sent: 'נשלח',
-  delivered: 'התקבל',
-  read: 'נקרא',
-  failed: 'נכשל',
-};
-
-function ProviderStatusBadge({
-  status,
-  error,
-}: {
-  status: MessageRow['provider_status'];
-  error: string | null;
-}) {
-  if (!status) return null;
-  if (status === 'failed') {
-    return (
-      <span
-        className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700"
-        title={error || 'נכשל בשליחה'}
-      >
-        <span aria-hidden="true">⚠</span>
-        {PROVIDER_STATUS_LABELS[status]}
-      </span>
-    );
-  }
-  return <span className="kf-badge kf-badge-mute">{PROVIDER_STATUS_LABELS[status]}</span>;
-}
 
 function waLink(phone: string): string {
   const digits = phone.replace(/[^\d+]/g, '').replace(/^\+/, '');

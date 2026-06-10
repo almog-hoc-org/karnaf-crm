@@ -110,6 +110,56 @@ const messages: MessageRow[] = [
   },
 ];
 
+// Tier 0.F.1 — UnifiedTimeline reads from `activities` rather than the
+// individual messages/events/tasks/queue arrays. Mirror the test's two
+// outbound/inbound messages into activities so the timeline can render.
+const activities: import('@/lib/types').ActivityRow[] = [
+  {
+    id: 'a1',
+    contact_id: 'lead-1',
+    occurred_at: '2026-04-28T09:30:00Z',
+    activity_type: 'message',
+    actor_type: 'lead',
+    conversation_id: 'conv-1',
+    deal_id: null,
+    meeting_id: null,
+    actor_user_id: null,
+    title: 'דנה',
+    body: 'שלום, אשמח לפרטים',
+    status: null,
+    priority_level: null,
+    due_at: null,
+    completed_at: null,
+    direction: 'inbound',
+    source_table: 'messages',
+    source_id: 'm1',
+    payload: {},
+    created_at: '2026-04-28T09:30:00Z',
+  },
+  {
+    id: 'a2',
+    contact_id: 'lead-1',
+    occurred_at: '2026-04-28T09:31:00Z',
+    activity_type: 'message',
+    actor_type: 'ai',
+    conversation_id: 'conv-1',
+    deal_id: null,
+    meeting_id: null,
+    actor_user_id: null,
+    title: 'AI',
+    body: 'היי דנה, נשמח לעזור.',
+    status: null,
+    priority_level: null,
+    due_at: null,
+    completed_at: null,
+    direction: 'outbound',
+    source_table: 'messages',
+    source_id: 'm2',
+    payload: { provider_message_id: 'wa-1', provider_status: 'delivered' },
+    created_at: '2026-04-28T09:31:00Z',
+  },
+];
+
 const queueItems: QueueRow[] = [
   {
     id: 'q1',
@@ -210,6 +260,7 @@ beforeEach(() => {
     lead,
     conversations: [conversation],
     messages,
+    activities,
     queueItems,
     tasks,
     events,
@@ -301,6 +352,7 @@ describe('LeadDetailPage', () => {
       lead: { ...lead, do_not_contact: true },
       conversations: [conversation],
       messages,
+    activities,
       queueItems,
       tasks,
       events,
@@ -318,6 +370,7 @@ describe('LeadDetailPage', () => {
       lead: { ...lead, lead_status: 'do_not_contact', do_not_contact: true },
       conversations: [conversation],
       messages,
+    activities,
       queueItems,
       tasks,
       events,
