@@ -291,7 +291,20 @@ export interface DashboardSummary {
   sourceHealth?: Record<string, { h24: number; d7: number }>;
 }
 
-export type AttentionKind = 'queue' | 'mia_reply' | 'overdue_action';
+// Extended in Tier 0.C to include the new fall-through kinds emitted by
+// the sla-worker watchers (deal_stalled / meeting_outcome_pending /
+// phone_overdue) and the pre-existing ai_stuck / phone_escalation that
+// were previously lumped under 'queue'. Anything not enumerated falls
+// back to 'queue' at the RPC layer.
+export type AttentionKind =
+  | 'queue'
+  | 'mia_reply'
+  | 'overdue_action'
+  | 'deal_stalled'
+  | 'meeting_outcome_pending'
+  | 'phone_overdue'
+  | 'ai_stuck'
+  | 'phone_escalation';
 
 export interface AttentionRow {
   kind: AttentionKind;

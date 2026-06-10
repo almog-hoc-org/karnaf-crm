@@ -622,6 +622,33 @@ function classifyRow(row: AttentionRow): {
   const dueMs = row.due_at ? Date.parse(row.due_at) : NaN;
   const overdue = row.kind === 'overdue_action' || (Number.isFinite(dueMs) && dueMs < Date.now());
 
+  // Tier 0.C kinds — explicit dispatch BEFORE keyword fallbacks so the
+  // sla-worker watchers route to the right lane regardless of free-text.
+  if (row.kind === 'phone_overdue' || row.kind === 'phone_escalation') {
+    return {
+      lane: 'call', actionLabel: 'להתקשר עכשיו', urgency: 'critical',
+      pillClass: 'bg-indigo-100 text-indigo-800', borderClass: 'border-s-indigo-500',
+    };
+  }
+  if (row.kind === 'ai_stuck') {
+    return {
+      lane: 'risk', actionLabel: 'בדיקת תקלת AI', urgency: 'critical',
+      pillClass: 'bg-rose-100 text-rose-800', borderClass: 'border-s-rose-500',
+    };
+  }
+  if (row.kind === 'deal_stalled') {
+    return {
+      lane: 'risk', actionLabel: 'להזיז עסקה', urgency: row.priority_level <= 1 ? 'critical' : 'normal',
+      pillClass: 'bg-amber-100 text-amber-800', borderClass: 'border-s-amber-500',
+    };
+  }
+  if (row.kind === 'meeting_outcome_pending') {
+    return {
+      lane: 'ops', actionLabel: 'לסכם פגישה', urgency: 'normal',
+      pillClass: 'bg-violet-100 text-violet-800', borderClass: 'border-s-violet-400',
+    };
+  }
+
   if (row.kind === 'mia_reply' || row.ownership_mode === 'mia_active' || row.lead_status === 'human_handoff') {
     return {
       lane: 'reply', actionLabel: 'לענות עכשיו', urgency: overdue ? 'critical' : 'normal',
@@ -651,6 +678,11 @@ function humanReason(row: AttentionRow): string {
   if (row.reason) return row.reason;
   if (row.kind === 'mia_reply') return 'הלקוח השיב ומחכה למענה אנושי';
   if (row.kind === 'overdue_action') return 'הפעולה הבאה באיחור';
+  if (row.kind === 'deal_stalled') return 'עסקה פתוחה ללא פעילות זמן רב';
+  if (row.kind === 'meeting_outcome_pending') return 'פגישה עברה ללא תיעוד תוצאה';
+  if (row.kind === 'phone_overdue') return 'שיחת טלפון באיחור — עברו 24 שעות';
+  if (row.kind === 'phone_escalation') return 'הוסלם לשיחת מכירה';
+  if (row.kind === 'ai_stuck') return 'AI לא הגיב בזמן — נדרשת בדיקה';
   if (row.kind === 'queue') return 'משימה פתוחה לטיפול';
   return 'דורש בדיקה';
 }
