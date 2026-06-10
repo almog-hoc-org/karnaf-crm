@@ -245,6 +245,10 @@ export interface AutomationRuleRow {
   enabled: boolean;
   source: AutomationSource;
   implementation_ref: string | null;
+  // Tier 4.A — DSL fields. Engine-source rules use these; code/planned
+  // rows usually have empty {} and [] respectively.
+  conditions: Record<string, unknown>;
+  actions: Array<Record<string, unknown>>;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;

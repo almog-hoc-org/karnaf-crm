@@ -73,7 +73,10 @@ Deno.serve(async (req) => {
 
   if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
 
-  const body = (await req.json().catch(() => ({}))) as { action?: string; id?: string; enabled?: boolean };
+  const body = (await req.json().catch(() => ({}))) as {
+    action?: string; id?: string; enabled?: boolean;
+    conditions?: unknown; actions?: unknown;
+  };
 
   if (body.action === 'toggle') {
     if (!body.id || typeof body.enabled !== 'boolean') {
@@ -87,6 +90,30 @@ Deno.serve(async (req) => {
       .single();
     if (error) return jsonResponse(req, { error: error.message }, 400);
     log.info('automation_toggled', { fn: 'automations', correlationId, by: staff.userId, id: body.id, enabled: body.enabled });
+    return jsonResponse(req, { ok: true, rule: data });
+  }
+
+  // Tier 4.A.4 — owner/admin can edit conditions+actions DSL inline.
+  // Validation is structural only — engine handles unknown ops/types
+  // gracefully (logs as skipped) so we don't enforce a strict schema
+  // at the API layer.
+  if (body.action === 'update_dsl') {
+    if (!body.id) return jsonResponse(req, { error: 'id required' }, 400);
+    if (body.conditions !== undefined && (typeof body.conditions !== 'object' || body.conditions === null)) {
+      return jsonResponse(req, { error: 'conditions must be an object' }, 400);
+    }
+    if (body.actions !== undefined && !Array.isArray(body.actions)) {
+      return jsonResponse(req, { error: 'actions must be an array' }, 400);
+    }
+    const patch: Record<string, unknown> = {};
+    if (body.conditions !== undefined) patch.conditions = body.conditions;
+    if (body.actions !== undefined) patch.actions = body.actions;
+    if (Object.keys(patch).length === 0) return jsonResponse(req, { error: 'nothing to update' }, 400);
+
+    const { data, error } = await supabase
+      .from('automation_rules').update(patch).eq('id', body.id).select('*').single();
+    if (error) return jsonResponse(req, { error: error.message }, 400);
+    log.info('automation_dsl_updated', { fn: 'automations', correlationId, by: staff.userId, id: body.id });
     return jsonResponse(req, { ok: true, rule: data });
   }
 

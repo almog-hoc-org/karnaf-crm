@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { fetchAutomations, postAutomationToggle } from '@/lib/api';
+import { fetchAutomations, postAutomationToggle, postAutomationUpdateDsl } from '@/lib/api';
 import type { AutomationRuleRow, AutomationRunRow, AutomationSource } from '@/lib/types';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
@@ -45,6 +45,18 @@ export function AutomationsPage() {
     },
     onError: (err) => toast.error((err as Error).message),
   });
+
+  const updateDsl = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: { conditions?: Record<string, unknown>; actions?: Array<Record<string, unknown>> } }) =>
+      postAutomationUpdateDsl(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['automations'] });
+      toast.success('כלל עודכן');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
+  const [editing, setEditing] = useState<AutomationRuleRow | null>(null);
 
   const rules = q.data?.rules ?? [];
   const runs = q.data?.runs ?? [];
@@ -127,6 +139,9 @@ export function AutomationsPage() {
                           <span>{rule.enabled ? 'פעיל' : 'מושבת'}</span>
                         </label>
                       ) : null}
+                      {rule.source === 'engine' ? (
+                        <button type="button" className="kf-btn text-xs" onClick={() => setEditing(rule)}>עריכה</button>
+                      ) : null}
                     </div>
                   </div>
                   {rule.description ? <p className="mt-1 text-xs text-slate-500">{rule.description}</p> : null}
@@ -155,6 +170,18 @@ export function AutomationsPage() {
         </section>
       ))}
 
+      {editing ? (
+        <EditRuleDialog
+          rule={editing}
+          busy={updateDsl.isPending}
+          onSubmit={(payload) => {
+            updateDsl.mutate({ id: editing.id, payload });
+            setEditing(null);
+          }}
+          onCancel={() => setEditing(null)}
+        />
+      ) : null}
+
       {runs.length > 0 ? (
         <section className="kf-card p-4">
           <h2 className="text-lg font-semibold">הרצות אחרונות</h2>
@@ -180,6 +207,91 @@ export function AutomationsPage() {
           </ul>
         </section>
       ) : null}
+    </div>
+  );
+}
+
+// ── Edit dialog ─────────────────────────────────────────────────────────
+//
+// JSON editor for the engine DSL. Tier 4 ships text-area-of-JSON; the
+// drag-drop visual editor is later. Validates parse before submit so
+// a bad keystroke doesn't post 400s to the API.
+
+function EditRuleDialog({
+  rule,
+  busy,
+  onSubmit,
+  onCancel,
+}: {
+  rule: AutomationRuleRow;
+  busy: boolean;
+  onSubmit: (payload: { conditions?: Record<string, unknown>; actions?: Array<Record<string, unknown>> }) => void;
+  onCancel: () => void;
+}) {
+  const [conditions, setConditions] = useState(() => JSON.stringify(rule.conditions ?? {}, null, 2));
+  const [actions, setActions] = useState(() => JSON.stringify(rule.actions ?? [], null, 2));
+  const [parseError, setParseError] = useState<string | null>(null);
+
+  function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setParseError(null);
+    let parsedConditions: Record<string, unknown>;
+    let parsedActions: Array<Record<string, unknown>>;
+    try {
+      parsedConditions = JSON.parse(conditions);
+      if (typeof parsedConditions !== 'object' || parsedConditions === null || Array.isArray(parsedConditions)) {
+        throw new Error('conditions חייב להיות אובייקט');
+      }
+    } catch (err) {
+      setParseError(`conditions: ${(err as Error).message}`);
+      return;
+    }
+    try {
+      parsedActions = JSON.parse(actions);
+      if (!Array.isArray(parsedActions)) throw new Error('actions חייב להיות מערך');
+    } catch (err) {
+      setParseError(`actions: ${(err as Error).message}`);
+      return;
+    }
+    onSubmit({ conditions: parsedConditions, actions: parsedActions });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
+      <form className="kf-card max-h-[92vh] w-full max-w-3xl space-y-3 overflow-auto p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+        <header>
+          <h2 className="text-lg font-semibold">עריכת כלל — {rule.name_he}</h2>
+          <code className="text-xs text-slate-500">{rule.code} · {rule.trigger_event}</code>
+        </header>
+        <details className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
+          <summary className="cursor-pointer font-medium">תיעוד DSL</summary>
+          <div className="mt-2 space-y-2">
+            <p><strong>conditions</strong> מתואר ב-DSL רקורסיבי: <code>{`{"all": [...]}`}</code> ו-<code>{`{"any": [...]}`}</code> מקננים לוגיקה. עלים: <code>{`{"field": "lead.x", "op": "eq", "value": "..."}`}</code>. אופרטורים: eq, neq, in, not_in, gt/gte/lt/lte, exists, not_exists.</p>
+            <p><strong>actions</strong> מערך של אובייקטים <code>{`{"type": "..."}`}</code>:</p>
+            <ul className="list-disc pr-4">
+              <li><code>send_template</code> + <code>key</code> + <code>channel</code></li>
+              <li><code>notify_internal</code> + <code>text</code></li>
+              <li><code>create_task</code> + <code>title</code> + <code>kind</code> + <code>due_in_hours</code></li>
+              <li><code>set_field</code> + <code>table</code> + <code>field</code> + <code>value</code> (whitelist: leads.heat/next_action_*)</li>
+            </ul>
+          </div>
+        </details>
+        <label className="block text-sm">
+          <span className="text-slate-600">conditions (JSON)</span>
+          <textarea className="kf-input mt-1 min-h-[160px] font-mono text-xs leading-5"
+            value={conditions} onChange={(e) => setConditions(e.target.value)} dir="ltr" />
+        </label>
+        <label className="block text-sm">
+          <span className="text-slate-600">actions (JSON array)</span>
+          <textarea className="kf-input mt-1 min-h-[160px] font-mono text-xs leading-5"
+            value={actions} onChange={(e) => setActions(e.target.value)} dir="ltr" />
+        </label>
+        {parseError ? <p className="text-sm text-rose-600">{parseError}</p> : null}
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" className="kf-btn" onClick={onCancel}>ביטול</button>
+          <button type="submit" className="kf-btn kf-btn-primary" disabled={busy}>{busy ? 'שומר...' : 'שמירה'}</button>
+        </div>
+      </form>
     </div>
   );
 }

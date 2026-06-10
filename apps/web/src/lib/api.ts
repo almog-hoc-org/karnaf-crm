@@ -243,6 +243,16 @@ export async function postAutomationToggle(id: string, enabled: boolean) {
   return postJson<{ ok: true; rule: AutomationRuleRow }>('/automations', { action: 'toggle', id, enabled });
 }
 
+export async function postAutomationUpdateDsl(
+  id: string,
+  payload: { conditions?: Record<string, unknown>; actions?: Array<Record<string, unknown>> },
+) {
+  return postJson<{ ok: true; rule: AutomationRuleRow }>(
+    '/automations',
+    { action: 'update_dsl', id, ...payload },
+  );
+}
+
 // === Reports / dashboards (Tier 3) ========================================
 
 export async function fetchReports() {
