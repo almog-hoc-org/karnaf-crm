@@ -294,6 +294,8 @@ describe('LeadDetailPage', () => {
 
   it('invokes mark_won after confirming the action dialog', async () => {
     renderDetail();
+    // Tier 5.D — lifecycle buttons live inside "פעולות נוספות" disclosure.
+    fireEvent.click(await screen.findByText('פעולות נוספות'));
     fireEvent.click(await screen.findByRole('button', { name: 'סימון כסגירה' }));
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'אישור' }));
@@ -309,6 +311,7 @@ describe('LeadDetailPage', () => {
 
   it('invokes mark_lost with manual_close note after confirming dialog', async () => {
     renderDetail();
+    fireEvent.click(await screen.findByText('פעולות נוספות'));
     fireEvent.click(await screen.findByRole('button', { name: 'סימון כאבוד' }));
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'אישור' }));
@@ -325,7 +328,10 @@ describe('LeadDetailPage', () => {
 
   it('cancel button on the confirm dialog does not fire the action', async () => {
     renderDetail();
-    fireEvent.click(await screen.findByRole('button', { name: 'DNC' }));
+    // Tier 5.D — lifecycle buttons are now inside a "פעולות נוספות"
+    // <details> disclosure. Expand it before reaching the DNC button.
+    fireEvent.click(await screen.findByText('פעולות נוספות'));
+    fireEvent.click(await screen.findByRole('button', { name: 'סימון כ-DNC' }));
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'ביטול' }));
     expect(postAdminAction).not.toHaveBeenCalled();

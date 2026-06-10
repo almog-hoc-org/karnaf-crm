@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { fetchAutomations, postAutomationToggle, postAutomationUpdateDsl } from '@/lib/api';
 import type { AutomationRuleRow, AutomationRunRow, AutomationSource } from '@/lib/types';
+import { evaluateConditionsWithTrace, sampleContextForTrigger, type EvalResult } from '@/lib/automation-dsl';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { formatRelative } from '@/lib/format';
@@ -232,6 +233,37 @@ function EditRuleDialog({
   const [actions, setActions] = useState(() => JSON.stringify(rule.actions ?? [], null, 2));
   const [parseError, setParseError] = useState<string | null>(null);
 
+  // Tier 5.D.4 — in-browser "test against this lead". evaluateConditions
+  // is pure (mirrored from the server's automation-engine.ts). The
+  // editor admin clicks "בחן" → sees pass/fail + per-leaf trace.
+  // sampleContextForTrigger prefills a realistic context object for
+  // the rule's trigger_event so the admin doesn't have to invent
+  // JSON from scratch.
+  const [testContext, setTestContext] = useState(() =>
+    JSON.stringify(sampleContextForTrigger(rule.trigger_event), null, 2),
+  );
+  const [testResult, setTestResult] = useState<EvalResult | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+
+  function runTest() {
+    setTestError(null);
+    let parsedConditions: Record<string, unknown>;
+    let parsedContext: Record<string, unknown>;
+    try {
+      parsedConditions = JSON.parse(conditions);
+    } catch (err) {
+      setTestError(`conditions: ${(err as Error).message}`);
+      return;
+    }
+    try {
+      parsedContext = JSON.parse(testContext);
+    } catch (err) {
+      setTestError(`context: ${(err as Error).message}`);
+      return;
+    }
+    setTestResult(evaluateConditionsWithTrace(parsedConditions, parsedContext));
+  }
+
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setParseError(null);
@@ -287,6 +319,55 @@ function EditRuleDialog({
             value={actions} onChange={(e) => setActions(e.target.value)} dir="ltr" />
         </label>
         {parseError ? <p className="text-sm text-rose-600">{parseError}</p> : null}
+
+        {/* Tier 5.D.4 — test panel. Collapsible by default so the
+            editor doesn't get noisier than it already is. */}
+        <details className="rounded-md border border-slate-200 p-3">
+          <summary className="cursor-pointer text-sm font-medium text-slate-700">בחן את התנאים מול דוגמה</summary>
+          <p className="mt-2 text-xs text-slate-500">
+            הכלל ירוץ על המנוע בכל פעם שהטריגר <code className="font-mono">{rule.trigger_event}</code> נורה.
+            כאן אפשר לבדוק אם conditions שלך מתאימים — בלי לשמור, בלי לשלוח דבר.
+            הדוגמה נטענת אוטומטית לפי טריגר הכלל; אפשר לערוך אותה לפני בחינה.
+          </p>
+          <label className="mt-2 block text-sm">
+            <span className="text-slate-600">context (JSON)</span>
+            <textarea className="kf-input mt-1 min-h-[140px] font-mono text-xs leading-5" dir="ltr"
+              value={testContext} onChange={(e) => setTestContext(e.target.value)} />
+          </label>
+          <div className="mt-2 flex items-center gap-2">
+            <button type="button" className="kf-btn text-xs" onClick={runTest}>בחן</button>
+            <button type="button" className="kf-btn text-xs"
+              onClick={() => setTestContext(JSON.stringify(sampleContextForTrigger(rule.trigger_event), null, 2))}>
+              טען דוגמה מחדש
+            </button>
+          </div>
+          {testError ? <p className="mt-2 text-sm text-rose-600">{testError}</p> : null}
+          {testResult ? (
+            <div className="mt-3 space-y-1 text-sm">
+              <div className={clsx(
+                'rounded-md px-3 py-2 font-medium',
+                testResult.pass ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800',
+              )}>
+                {testResult.pass ? '✓ הכלל יורה — התנאים מתאימים' : '✗ הכלל מדלג — התנאים לא מתאימים'}
+              </div>
+              {testResult.trace.length > 0 ? (
+                <ul className="space-y-1">
+                  {testResult.trace.map((t, i) => (
+                    <li key={i} className={clsx(
+                      'flex items-baseline justify-between gap-2 rounded-md p-1.5 text-xs font-mono',
+                      t.pass ? 'bg-emerald-50/60 text-emerald-900' : 'bg-rose-50/60 text-rose-900',
+                    )} dir="ltr">
+                      <span>{t.field} {t.op} {JSON.stringify(t.expected)}</span>
+                      <span className="text-slate-600">{t.pass ? '✓' : `actual=${JSON.stringify(t.actual)}`}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-slate-500">אין תנאים — הכלל יורה תמיד.</p>
+              )}
+            </div>
+          ) : null}
+        </details>
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className="kf-btn" onClick={onCancel}>ביטול</button>
           <button type="submit" className="kf-btn kf-btn-primary" disabled={busy}>{busy ? 'שומר...' : 'שמירה'}</button>

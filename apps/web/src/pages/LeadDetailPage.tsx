@@ -302,92 +302,108 @@ export function LeadDetailPage() {
           <NextActionBadge actionType={lead.next_action_type} dueAt={lead.next_action_due_at} />
         </div>
 
-        {/* Lifecycle/ownership transitions are restricted server-side to
-            owner / admin / mia; hide them for sales_rep so the UI matches. */}
+        {/* Tier 5.D — lifecycle action bar.
+            Before: 6 buttons in 3 ActionGroups fought the OperatorGuidanceCard
+            below for "what should I click next?". A beginner couldn't tell
+            which one was right.
+            After: a single "פעולות נוספות" disclosure that hides all 6 by
+            default. The OperatorGuidanceCard now owns the primary CTA;
+            the disclosure is only opened when the operator needs to
+            override the recommendation. Reopen is always visible (it's
+            already gated to terminal states + admin role).
+            Server-side gate stays: only owner / admin / mia see these.
+        */}
         {auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia' ? (
-          <div className="mt-4 flex flex-wrap gap-2">
-            <ActionGroup label="בעלות">
-              <button
-                type="button"
-                className="kf-btn"
-                onClick={() => action.mutate({ action: 'assign_to_mia', label: 'הועבר למיה' })}
-              >
-                העברה למיה
-              </button>
-              <button
-                type="button"
-                className="kf-btn"
-                onClick={() => action.mutate({ action: 'return_to_ai', label: 'הוחזר ל-AI' })}
-              >
-                החזרה ל-AI
-              </button>
-              <button
-                type="button"
-                className="kf-btn"
-                onClick={() => action.mutate({ action: 'mark_phone_escalation', label: 'סומן לשיחה' })}
-              >
-                סימון לשיחה
-              </button>
-            </ActionGroup>
-            <ActionGroup label="סטטוס">
-              <button
-                type="button"
-                className="kf-btn kf-btn-primary"
-                onClick={() =>
-                  setPendingAction({
-                    action: 'mark_won',
-                    label: 'נסגר ברכישה',
-                    description: 'לסמן את הליד כסגירה ולהפעיל את תהליך האונבורדינג?',
-                    destructive: false,
-                  })
-                }
-              >
-                סימון כסגירה
-              </button>
-              <button
-                type="button"
-                className="kf-btn"
-                onClick={() =>
-                  setPendingAction({
-                    action: 'mark_lost',
-                    note: 'manual_close',
-                    label: 'סומן כאבוד',
-                    description: 'לסמן את הליד כאבוד. פעולה זו לא ניתנת לשחזור.',
-                    destructive: true,
-                  })
-                }
-              >
-                סימון כאבוד
-              </button>
-            </ActionGroup>
-            <ActionGroup label="הסרה">
-              <button
-                type="button"
-                className="kf-btn kf-btn-danger"
-                onClick={() =>
-                  setPendingAction({
-                    action: 'mark_dnc',
-                    label: 'סומן כ-DNC',
-                    description:
-                      'לסמן את הליד כ-Do Not Contact. הבוט יפסיק לפנות אליו ולא יישלחו עוד הודעות.',
-                    destructive: true,
-                  })
-                }
-              >
-                DNC
-              </button>
-            </ActionGroup>
-            {/* Reopen — visible only for terminal/dead-end states. won_at stays
-                intact (analytics keeps the conversion); lost_at + DNC clear so
-                AI can resume the conversation. */}
+          <div className="mt-4">
+            {/* Reopen is a rare override on dead leads — keep it visible
+                so an admin doesn't have to dig into "more". */}
             {(lead.lead_status === 'won' || lead.lead_status === 'lost' || lead.do_not_contact) &&
             (auth.role === 'owner' || auth.role === 'admin') ? (
-              <ActionGroup label="פתיחה מחדש">
+              <div className="mb-2">
                 <button type="button" className="kf-btn kf-btn-primary" onClick={() => setReopenOpen(true)}>
                   פתח שיחה מחדש
                 </button>
-              </ActionGroup>
+              </div>
             ) : null}
+            <details className="group">
+              <summary className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                פעולות נוספות
+                <svg viewBox="0 0 16 16" className="h-4 w-4 transition group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="1.7"><path strokeLinecap="round" d="M4 6l4 4 4-4" /></svg>
+              </summary>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <ActionGroup label="בעלות">
+                  <button
+                    type="button"
+                    className="kf-btn"
+                    onClick={() => action.mutate({ action: 'assign_to_mia', label: 'הועבר למיה' })}
+                  >
+                    העברה למיה
+                  </button>
+                  <button
+                    type="button"
+                    className="kf-btn"
+                    onClick={() => action.mutate({ action: 'return_to_ai', label: 'הוחזר ל-AI' })}
+                  >
+                    החזרה ל-AI
+                  </button>
+                  <button
+                    type="button"
+                    className="kf-btn"
+                    onClick={() => action.mutate({ action: 'mark_phone_escalation', label: 'סומן לשיחה' })}
+                  >
+                    סימון לשיחה
+                  </button>
+                </ActionGroup>
+                <ActionGroup label="סטטוס">
+                  <button
+                    type="button"
+                    className="kf-btn kf-btn-primary"
+                    onClick={() =>
+                      setPendingAction({
+                        action: 'mark_won',
+                        label: 'נסגר ברכישה',
+                        description: 'לסמן את הליד כסגירה ולהפעיל את תהליך האונבורדינג (מסע + עמלה)?\n\nדורש עסקה פתוחה — אם אין, צור אחת ב-״מסלולים ועסקאות״ קודם.',
+                        destructive: false,
+                      })
+                    }
+                  >
+                    סימון כסגירה
+                  </button>
+                  <button
+                    type="button"
+                    className="kf-btn"
+                    onClick={() =>
+                      setPendingAction({
+                        action: 'mark_lost',
+                        note: 'manual_close',
+                        label: 'סומן כאבוד',
+                        description: 'לסמן את הליד כאבוד. פעולה זו לא ניתנת לשחזור.',
+                        destructive: true,
+                      })
+                    }
+                  >
+                    סימון כאבוד
+                  </button>
+                </ActionGroup>
+                <ActionGroup label="הסרה">
+                  <button
+                    type="button"
+                    className="kf-btn kf-btn-danger"
+                    onClick={() =>
+                      setPendingAction({
+                        action: 'mark_dnc',
+                        label: 'סומן כ-DNC',
+                        description:
+                          'לסמן את הליד כ-Do Not Contact (אסור-ליצור-קשר). הבוט יפסיק לפנות אליו ולא יישלחו עוד הודעות.',
+                        destructive: true,
+                      })
+                    }
+                  >
+                    סימון כ-DNC
+                  </button>
+                </ActionGroup>
+              </div>
+            </details>
           </div>
         ) : null}
         {action.error ? (
@@ -469,9 +485,30 @@ export function LeadDetailPage() {
             </dl>
           </div>
 
+          {/* Tier 5.D — single "סיווג ואבחון" card replaces the three
+              earlier siblings (heat/fit/readiness + intake/product +
+              goal/pain). Hot-path fields stay at the top always-visible;
+              the long tail collapses into <details> so a beginner sees
+              only what changes every conversation. */}
           <div className="kf-card p-4">
-            <h2 className="font-semibold">סיווג ליד</h2>
-            <dl className="mt-2 space-y-1 text-sm">
+            <h2 className="font-semibold">סיווג ואבחון</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              הסיווג העיקרי תמיד גלוי. השאר נפתח כשצריך.
+            </p>
+
+            {/* Always-visible: the 4 fields Mia changes most often. */}
+            <dl className="mt-3 space-y-1 text-sm">
+              <EditableEnumRow
+                k="מסלול ראשי"
+                v={lead.primary_track}
+                editable={canEditMeta}
+                options={[
+                  { value: 'program', label: 'תכנית הליווי' },
+                  { value: 'presale', label: 'פריסייל / חתימה' },
+                  { value: 'investor_mentorship', label: 'ליווי משקיעים' },
+                ]}
+                onSave={(next) => updateMeta.mutate({ primary_track: next as 'program' | 'presale' | 'investor_mentorship' | null })}
+              />
               <EditableEnumRow
                 k="חום"
                 v={lead.lead_heat}
@@ -508,6 +545,98 @@ export function LeadDetailPage() {
                 onSave={(next) => updateMeta.mutate({ readiness_level: next as ReadinessLevel | null })}
               />
             </dl>
+
+            <details className="mt-3 rounded-md border border-slate-200 p-3">
+              <summary className="cursor-pointer text-sm font-medium text-slate-700">קליטה ואבחון AI</summary>
+              <dl className="mt-2 space-y-1 text-sm">
+                <EditableEnumRow
+                  k="סוג פנייה"
+                  v={lead.inquiry_type}
+                  editable={canEditMeta}
+                  options={INQUIRY_OPTIONS}
+                  onSave={(next) => updateMeta.mutate({ inquiry_type: next as InquiryType | null })}
+                />
+                <EditableEnumRow
+                  k="מוצר"
+                  v={lead.product_interest}
+                  editable={canEditMeta}
+                  options={PRODUCT_OPTIONS}
+                  onSave={(next) => updateMeta.mutate({ product_interest: next as ProductInterest | null })}
+                />
+                <EditableEnumRow
+                  k="מסלול טיפול"
+                  v={lead.intake_segment}
+                  editable={canEditMeta}
+                  options={SEGMENT_OPTIONS}
+                  onSave={(next) => updateMeta.mutate({ intake_segment: next as IntakeSegment | null })}
+                />
+                <Row
+                  k="ביטחון סיווג"
+                  v={
+                    lead.classification_confidence
+                      ? CLASSIFICATION_CONFIDENCE_LABELS[lead.classification_confidence]
+                      : null
+                  }
+                />
+                <Row k="סיכום" v={lead.classification_summary} />
+                <Row k="פעולה מומלצת" v={lead.suggested_next_action} />
+                <Row k="סיבת העברה" v={lead.handoff_reason} />
+                <Row
+                  k="עודכן"
+                  v={lead.classification_updated_at ? formatRelative(lead.classification_updated_at) : null}
+                />
+              </dl>
+            </details>
+
+            <details className="mt-2 rounded-md border border-slate-200 p-3">
+              <summary className="cursor-pointer text-sm font-medium text-slate-700">הקשר ויעדים</summary>
+              <dl className="mt-2 space-y-1 text-sm">
+                <EditableRow
+                  k="מטרה"
+                  v={lead.goal_summary}
+                  editable={canEditMeta}
+                  saving={updateMeta.isPending && 'goal_summary' in (updateMeta.variables ?? {})}
+                  onSave={(next) => updateMeta.mutate({ goal_summary: next })}
+                />
+                <EditableRow
+                  k="כאב מרכזי"
+                  v={lead.pain_point_summary}
+                  editable={canEditMeta}
+                  saving={updateMeta.isPending && 'pain_point_summary' in (updateMeta.variables ?? {})}
+                  onSave={(next) => updateMeta.mutate({ pain_point_summary: next })}
+                />
+                <EditableRow
+                  k="חסם עיקרי"
+                  v={lead.main_blocker}
+                  editable={canEditMeta}
+                  saving={updateMeta.isPending && 'main_blocker' in (updateMeta.variables ?? {})}
+                  onSave={(next) => updateMeta.mutate({ main_blocker: next })}
+                />
+                <EditableRow
+                  k="הקשר החלטה"
+                  v={lead.decision_context}
+                  editable={canEditMeta}
+                  onSave={(next) => updateMeta.mutate({ decision_context: next })}
+                />
+                <EditableRow
+                  k="פעולה הבאה"
+                  v={lead.next_action_type}
+                  editable={canEditMeta}
+                  saving={updateMeta.isPending && 'next_action_type' in (updateMeta.variables ?? {})}
+                  onSave={(next) => updateMeta.mutate({ next_action_type: next })}
+                />
+                <Row k="עד" v={lead.next_action_due_at ? formatDateTime(lead.next_action_due_at) : null} />
+                <Row k="סטטוס תשלום" v={lead.payment_status} />
+                {lead.lead_status === 'lost' || lead.lost_reason ? (
+                  <EditableRow
+                    k="סיבת אובדן"
+                    v={lead.lost_reason}
+                    editable={canEditMeta}
+                    onSave={(next) => updateMeta.mutate({ lost_reason: next })}
+                  />
+                ) : null}
+              </dl>
+            </details>
           </div>
 
           <PipelineOverviewCard
@@ -533,100 +662,6 @@ export function LeadDetailPage() {
             }
           />
 
-          <div className="kf-card p-4">
-            <h2 className="font-semibold">סיווג קליטה ותפעול</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              תמונת מצב מהירה לעובד חדש: למה הליד פנה, באיזה מוצר הוא מתעניין ומה צריך לעשות עכשיו.
-            </p>
-            <dl className="mt-3 space-y-1 text-sm">
-              <EditableEnumRow
-                k="סוג פנייה"
-                v={lead.inquiry_type}
-                editable={canEditMeta}
-                options={INQUIRY_OPTIONS}
-                onSave={(next) => updateMeta.mutate({ inquiry_type: next as InquiryType | null })}
-              />
-              <EditableEnumRow
-                k="מוצר"
-                v={lead.product_interest}
-                editable={canEditMeta}
-                options={PRODUCT_OPTIONS}
-                onSave={(next) => updateMeta.mutate({ product_interest: next as ProductInterest | null })}
-              />
-              <EditableEnumRow
-                k="מסלול טיפול"
-                v={lead.intake_segment}
-                editable={canEditMeta}
-                options={SEGMENT_OPTIONS}
-                onSave={(next) => updateMeta.mutate({ intake_segment: next as IntakeSegment | null })}
-              />
-              <Row
-                k="ביטחון סיווג"
-                v={
-                  lead.classification_confidence
-                    ? CLASSIFICATION_CONFIDENCE_LABELS[lead.classification_confidence]
-                    : null
-                }
-              />
-              <Row k="סיכום" v={lead.classification_summary} />
-              <Row k="פעולה מומלצת" v={lead.suggested_next_action} />
-              <Row k="סיבת העברה" v={lead.handoff_reason} />
-              <Row
-                k="עודכן"
-                v={lead.classification_updated_at ? formatRelative(lead.classification_updated_at) : null}
-              />
-            </dl>
-          </div>
-
-          <div className="kf-card p-4">
-            <h2 className="font-semibold">הקשר ליד</h2>
-            <dl className="mt-2 space-y-1 text-sm">
-              <EditableRow
-                k="מטרה"
-                v={lead.goal_summary}
-                editable={canEditMeta}
-                saving={updateMeta.isPending && 'goal_summary' in (updateMeta.variables ?? {})}
-                onSave={(next) => updateMeta.mutate({ goal_summary: next })}
-              />
-              <EditableRow
-                k="כאב מרכזי"
-                v={lead.pain_point_summary}
-                editable={canEditMeta}
-                saving={updateMeta.isPending && 'pain_point_summary' in (updateMeta.variables ?? {})}
-                onSave={(next) => updateMeta.mutate({ pain_point_summary: next })}
-              />
-              <EditableRow
-                k="חסם עיקרי"
-                v={lead.main_blocker}
-                editable={canEditMeta}
-                saving={updateMeta.isPending && 'main_blocker' in (updateMeta.variables ?? {})}
-                onSave={(next) => updateMeta.mutate({ main_blocker: next })}
-              />
-              <EditableRow
-                k="הקשר החלטה"
-                v={lead.decision_context}
-                editable={canEditMeta}
-                onSave={(next) => updateMeta.mutate({ decision_context: next })}
-              />
-              <EditableRow
-                k="פעולה הבאה"
-                v={lead.next_action_type}
-                editable={canEditMeta}
-                saving={updateMeta.isPending && 'next_action_type' in (updateMeta.variables ?? {})}
-                onSave={(next) => updateMeta.mutate({ next_action_type: next })}
-              />
-              <Row k="עד" v={lead.next_action_due_at ? formatDateTime(lead.next_action_due_at) : null} />
-              <Row k="סטטוס תשלום" v={lead.payment_status} />
-              {lead.lead_status === 'lost' || lead.lost_reason ? (
-                <EditableRow
-                  k="סיבת אובדן"
-                  v={lead.lost_reason}
-                  editable={canEditMeta}
-                  onSave={(next) => updateMeta.mutate({ lost_reason: next })}
-                />
-              ) : null}
-            </dl>
-          </div>
 
           {/* Tier 5.C — sidebar slimming. The earlier "תורי עבודה" /
               "משימות" / "היסטוריית אירועים" cards listed the same rows
