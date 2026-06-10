@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
   // to her. Audit Tier 5.B flagged this as critical.
   const { data: leads, error } = await supabase
     .from('leads')
-    .select('id, full_name, phone, email, city, product_interest, do_not_contact, removed_by_request, created_at, lead_status, ownership_mode')
+    .select('id, full_name, phone, email, city, product_interest, do_not_contact, removed_by_request, created_at, lead_status, ownership_mode, lead_heat, last_inbound_at, last_outbound_at')
     .eq('do_not_contact', false)
     .eq('removed_by_request', false)
     .not('lead_status', 'in', '(won,lost,suppressed)')
@@ -103,6 +103,15 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     const firstName = lead.full_name?.split(/\s+/u)[0] ?? '';
+    // Tier 4.D.6 — derive hours-since-last-touch fields so rules can
+    // express "hot lead 48h without reply" etc. without per-rule SQL.
+    // null when never inbound/outbound (lead never engaged).
+    const hoursSinceInbound = lead.last_inbound_at
+      ? (Date.now() - new Date(lead.last_inbound_at).getTime()) / 3600000
+      : null;
+    const hoursSinceOutbound = lead.last_outbound_at
+      ? (Date.now() - new Date(lead.last_outbound_at).getTime()) / 3600000
+      : null;
     const context = {
       lead: {
         id: lead.id,
@@ -115,7 +124,10 @@ Deno.serve(async (req) => {
         do_not_contact: lead.do_not_contact,
         lead_status: lead.lead_status,
         ownership_mode: lead.ownership_mode,
+        lead_heat: lead.lead_heat,
         hours_since_intake: Math.round(hoursSinceIntake * 10) / 10,
+        hours_since_last_inbound: hoursSinceInbound !== null ? Math.round(hoursSinceInbound * 10) / 10 : null,
+        hours_since_last_outbound: hoursSinceOutbound !== null ? Math.round(hoursSinceOutbound * 10) / 10 : null,
         has_won_program: !!wonProgram,
       },
     };
@@ -135,15 +147,57 @@ Deno.serve(async (req) => {
   // (MAX_RUNS_PER_TICK) so the combined budget is bounded.
   const journeySummary = await advanceDueRuns(supabase, correlationId);
 
+  // Tier 4.D.5 — third pass: investor_mentorship deals without a
+  // partner. Self-healing — a deal created anywhere (admin-actions,
+  // leads-intake, webinar-events, whatsapp-webhook) gets a partner
+  // within 10 minutes regardless of whether the creation path emitted
+  // an event. Emits `deal.investor_open` per matching deal so engine
+  // rules listening on that trigger can act (assign_partner, send
+  // C5/C6 templates, notify_internal).
+  let unassignedFired = 0;
+  const { data: unassignedDeals, error: dealsErr } = await supabase
+    .from('deals')
+    .select('id, lead_id, track, value, currency, created_at, leads(id, full_name, phone, email, do_not_contact, primary_track)')
+    .eq('status', 'open')
+    .eq('track', 'investor_mentorship')
+    .is('partner_id', null)
+    .order('created_at', { ascending: true })
+    .limit(50);
+  if (dealsErr) {
+    log.warn('tick_unassigned_deals_query_failed', { fn: 'automation-tick', correlationId, err: dealsErr.message });
+  } else {
+    for (const deal of unassignedDeals ?? []) {
+      const leadRow = deal.leads as unknown as { id: string; full_name: string | null; phone: string | null; email: string | null; do_not_contact: boolean; primary_track: string | null } | null;
+      if (!leadRow || leadRow.do_not_contact) continue;
+      const firstName = leadRow.full_name?.split(/\s+/u)[0] ?? '';
+      await runMatchingRules(supabase, {
+        triggerEvent: 'deal.investor_open',
+        context: {
+          lead: {
+            id: leadRow.id, full_name: leadRow.full_name, first_name: firstName,
+            phone: leadRow.phone, email: leadRow.email,
+            do_not_contact: leadRow.do_not_contact, primary_track: leadRow.primary_track,
+          },
+          deal: { id: deal.id, track: deal.track, value: deal.value, currency: deal.currency },
+        },
+        contactId: leadRow.id,
+        correlationId,
+      });
+      unassignedFired++;
+    }
+  }
+
   log.info('tick_done', {
     fn: 'automation-tick', correlationId,
     scanned: fired, rules: ruleCount,
     journeys_processed: journeySummary.processed,
     journeys_completed: journeySummary.completed,
     journeys_failed: journeySummary.failed,
+    unassigned_investor_deals_fired: unassignedFired,
   });
   return jsonResponse(req, {
     ok: true, scanned: fired, rules: ruleCount,
     journeys: journeySummary,
+    unassigned_investor_deals_fired: unassignedFired,
   });
 });

@@ -110,6 +110,7 @@ export async function dispatchAction(action: Record<string, unknown>, ctx: Actio
       case 'create_task': return await actionCreateTask(action, ctx);
       case 'set_field': return await actionSetField(action, ctx);
       case 'journey_start': return await actionJourneyStart(action, ctx);
+      case 'assign_partner': return await actionAssignPartner(action, ctx);
       default:
         return { type, status: 'skipped', detail: `unknown action type: ${type}` };
     }
@@ -248,6 +249,80 @@ async function actionCreateTask(action: Record<string, unknown>, ctx: ActionCont
   if (error) return { type: 'create_task', status: 'failed', detail: error.message };
 
   return { type: 'create_task', status: 'ok', detail: { task_id: data?.id, due_at: due } };
+}
+
+// Tier 4.D.5 — partner round-robin assignment (B3).
+// Picks the active partner with the lowest open_deals_count from
+// partner_workload, updates the deal's partner_id. Self-healing:
+// idempotent on repeat (returns 'skipped' if a partner is already
+// assigned). The picked partner's info goes into action_results so
+// downstream actions (send_template C5/C6, notify_internal) can
+// reference the assignment.
+//
+// Context required:
+//   deal.id   — which deal to assign on
+//   deal.track (optional) — currently always investor_mentorship
+//                          per spec § ז B3; future tracks can opt in
+//                          via the action's `domain` argument.
+async function actionAssignPartner(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const dealCtx = (ctx.context.deal as Record<string, unknown> | undefined) ?? null;
+  const dealId = dealCtx?.id as string | undefined;
+  if (!dealId) return { type: 'assign_partner', status: 'skipped', detail: 'no deal.id in context' };
+
+  // Refresh the deal to avoid racing on partner_id — another tick
+  // may already have assigned it.
+  const { data: deal, error: dealErr } = await ctx.supabase
+    .from('deals')
+    .select('id, partner_id, track')
+    .eq('id', dealId)
+    .maybeSingle();
+  if (dealErr) return { type: 'assign_partner', status: 'failed', detail: dealErr.message };
+  if (!deal) return { type: 'assign_partner', status: 'skipped', detail: 'deal not found' };
+  if (deal.partner_id) {
+    return { type: 'assign_partner', status: 'skipped', detail: `already assigned to ${deal.partner_id}` };
+  }
+
+  const domain = (action.domain as string | undefined) ?? 'investor_mentorship';
+  const { data: pick, error: pickErr } = await ctx.supabase
+    .from('partner_workload')
+    .select('partner_id, full_name, domain, commission_to_karnaf_pct, open_deals_count')
+    .eq('status', 'active')
+    .eq('domain', domain)
+    .order('open_deals_count', { ascending: true })
+    .order('full_name', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (pickErr) return { type: 'assign_partner', status: 'failed', detail: pickErr.message };
+  if (!pick) return { type: 'assign_partner', status: 'skipped', detail: `no active partners in domain ${domain}` };
+
+  const { error: updErr } = await ctx.supabase
+    .from('deals')
+    .update({ partner_id: pick.partner_id })
+    .eq('id', dealId);
+  if (updErr) return { type: 'assign_partner', status: 'failed', detail: updErr.message };
+
+  // Mutate the live context so downstream actions in the SAME rule
+  // can reference partner_name / partner_id without a re-fetch.
+  // This is a per-run mutation; doesn't leak across rules.
+  ctx.context.partner = {
+    id: pick.partner_id,
+    full_name: pick.full_name,
+    domain: pick.domain,
+  };
+  // Also surface partner_name at top level for {{partner_name}}
+  // template variable substitution.
+  ctx.context.partner_name = pick.full_name;
+
+  return {
+    type: 'assign_partner',
+    status: 'ok',
+    detail: {
+      deal_id: dealId,
+      partner_id: pick.partner_id,
+      partner_name: pick.full_name,
+      open_deals_at_pick: pick.open_deals_count,
+    },
+  };
 }
 
 // journey_start delegates to the journey-runner — kept here as a thin
