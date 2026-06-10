@@ -74,8 +74,15 @@ export interface DealRow {
   stage: string;
   value: number | null;
   currency: string;
+  // Legacy text shadows kept for one release; new code should join on
+  // partner_id / project_id and read names from partners / projects.
   presale_project: string | null;
   partner_name: string | null;
+  // Tier 1.C — FKs to the real entities. Nullable for the legacy rows
+  // the backfill couldn't match cleanly + for program-track deals that
+  // never have a partner or a presale project.
+  partner_id: string | null;
+  project_id: string | null;
   expected_close: string | null;
   status: 'open' | 'won' | 'lost' | 'cancelled';
   owner_user_id: string | null;
@@ -83,6 +90,75 @@ export interface DealRow {
   created_at: string;
   updated_at: string;
   closed_at: string | null;
+}
+
+// Tier 1.A — Partner = freelancer / external service provider that
+// closes for Karnaf. commission_to_karnaf_pct is Karnaf's slice of
+// the deal value (the partner's take is the complement).
+export type PartnerDomain = 'investor_mentorship' | 'appraisal' | 'legal' | 'financing' | 'other';
+export type PartnerStatus = 'active' | 'paused' | 'archived';
+
+export interface PartnerRow {
+  id: string;
+  full_name: string;
+  phone: string | null;
+  email: string | null;
+  domain: PartnerDomain;
+  commission_to_karnaf_pct: number;
+  status: PartnerStatus;
+  user_id: string | null;
+  notes: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PartnerWorkloadRow {
+  partner_id: string;
+  full_name: string;
+  domain: PartnerDomain;
+  commission_to_karnaf_pct: number;
+  status: PartnerStatus;
+  open_deals_count: number;
+  won_deals_count: number;
+}
+
+// Tier 1.B — Project = a presale (קבוצת רכישה) project. status walks
+// recruiting → closed → executed; cancelled is the off-ramp.
+export type ProjectType = 'residential' | 'commercial' | 'mixed';
+export type ProjectStatus = 'recruiting' | 'closed' | 'executed' | 'cancelled';
+
+export interface ProjectRow {
+  id: string;
+  name: string;
+  city: string | null;
+  developer_name: string | null;
+  project_type: ProjectType;
+  total_units: number | null;
+  price_per_unit: number | null;
+  target_amount: number | null;
+  currency: string;
+  status: ProjectStatus;
+  target_date: string | null;
+  notes: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectFundingRow {
+  project_id: string;
+  name: string;
+  city: string | null;
+  total_units: number | null;
+  price_per_unit: number | null;
+  target_amount: number | null;
+  currency: string;
+  status: ProjectStatus;
+  target_date: string | null;
+  committed_amount: number;
+  committed_units: number;
+  funding_pct: number | null;
 }
 
 export interface MeetingRow {

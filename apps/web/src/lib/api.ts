@@ -14,8 +14,14 @@ import type {
   LeadRow,
   MeetingRow,
   MessageRow,
+  PartnerDomain,
+  PartnerRow,
+  PartnerWorkloadRow,
   ProductInterest,
   ProgramMemberRow,
+  ProjectFundingRow,
+  ProjectRow,
+  ProjectType,
   QueueRow,
   ReadinessLevel,
   TaskRow,
@@ -144,6 +150,42 @@ export async function fetchAttentionInbox(limit?: number) {
     limit ? { limit } : undefined,
   );
   return r.items;
+}
+
+// === Partners (Tier 1.A) ==================================================
+
+export async function fetchPartners() {
+  return getJson<{ ok: true; partners: PartnerRow[]; workload: PartnerWorkloadRow[] }>('/partners');
+}
+
+export type PartnerAction =
+  | { action: 'create'; full_name: string; phone?: string | null; email?: string | null;
+      domain: PartnerDomain; commission_to_karnaf_pct?: number; notes?: string | null }
+  | { action: 'update'; id: string; full_name?: string; phone?: string | null; email?: string | null;
+      domain?: PartnerDomain; commission_to_karnaf_pct?: number; notes?: string | null }
+  | { action: 'archive' | 'restore' | 'pause'; id: string };
+
+export async function postPartnerAction(payload: PartnerAction) {
+  return postJson<{ ok: true; partner: PartnerRow }>('/partners', payload as unknown as Record<string, unknown>);
+}
+
+// === Projects (Tier 1.B) ==================================================
+
+export async function fetchProjects() {
+  return getJson<{ ok: true; projects: ProjectRow[]; funding: ProjectFundingRow[] }>('/projects');
+}
+
+export type ProjectAction =
+  | { action: 'create'; name: string; city?: string | null; developer_name?: string | null;
+      project_type?: ProjectType; total_units?: number | null; price_per_unit?: number | null;
+      target_amount?: number | null; target_date?: string | null; notes?: string | null }
+  | { action: 'update'; id: string; name?: string; city?: string | null; developer_name?: string | null;
+      project_type?: ProjectType; total_units?: number | null; price_per_unit?: number | null;
+      target_amount?: number | null; target_date?: string | null; notes?: string | null }
+  | { action: 'close' | 'cancel' | 'mark_executed' | 'reopen'; id: string };
+
+export async function postProjectAction(payload: ProjectAction) {
+  return postJson<{ ok: true; project: ProjectRow }>('/projects', payload as unknown as Record<string, unknown>);
 }
 
 // === Writes ===============================================================
