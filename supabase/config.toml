@@ -53,6 +53,12 @@ verify_jwt = false
 [functions.sla-worker]
 verify_jwt = false
 
+[functions.daily-sales-inbox]
+verify_jwt = false
+
+[functions.automation-tick]
+verify_jwt = false
+
 [functions.dispatch-outbound]
 verify_jwt = false
 
