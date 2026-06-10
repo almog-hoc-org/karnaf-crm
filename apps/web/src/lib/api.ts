@@ -4,6 +4,7 @@ import type {
   AttentionRow,
   AutomationRuleRow,
   AutomationRunRow,
+  ReportsBundle,
   CommissionRow,
   ConversationRow,
   DashboardSummary,
@@ -240,6 +241,12 @@ export async function fetchAutomationRunsForContact(contactId: string) {
 
 export async function postAutomationToggle(id: string, enabled: boolean) {
   return postJson<{ ok: true; rule: AutomationRuleRow }>('/automations', { action: 'toggle', id, enabled });
+}
+
+// === Reports / dashboards (Tier 3) ========================================
+
+export async function fetchReports() {
+  return getJson<{ ok: true } & ReportsBundle>('/reports');
 }
 
 // === Writes ===============================================================

@@ -179,6 +179,54 @@ export interface ProjectFundingRow {
   funding_pct: number | null;
 }
 
+// Tier 3 — dashboard aggregate rows from the views in migration 064.
+export interface CommissionMonthlyRow {
+  month: string;
+  status: 'pending' | 'to_bill' | 'paid' | 'cancelled';
+  count: number;
+  amount_total: number;
+}
+
+export interface CommissionByPartnerRow {
+  partner_id: string;
+  full_name: string;
+  domain: string;
+  commission_to_karnaf_pct: number;
+  commissions_count: number;
+  paid_count: number;
+  open_count: number;
+  paid_total: number;
+  open_total: number;
+  avg_days_to_paid: number | null;
+}
+
+export interface PresaleAtRiskRow {
+  project_id: string;
+  name: string;
+  city: string | null;
+  target_date: string | null;
+  target_amount: number | null;
+  currency: string;
+  committed_amount: number;
+  funding_pct: number | null;
+  days_to_target: number | null;
+  risk_level: 'ok' | 'amber' | 'red' | 'overdue';
+}
+
+export interface RetentionStageRow {
+  progress_stage: string;
+  members_count: number;
+  active_count: number;
+  dormant_count: number;
+  active_pct: number | null;
+}
+
+export interface ReportsBundle {
+  commissions: { monthly: CommissionMonthlyRow[]; byPartner: CommissionByPartnerRow[] };
+  presale: { atRisk: PresaleAtRiskRow[] };
+  retention: { stages: RetentionStageRow[] };
+}
+
 // Tier 2.B — automation rule catalog. Each row documents one of the
 // spec's 19 automations + any custom rules the admin adds later.
 // source: 'code' means the rule lives in an edge function today;

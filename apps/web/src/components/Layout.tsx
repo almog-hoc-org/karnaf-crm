@@ -22,6 +22,7 @@ const NAV: NavItem[] = [
   { to: '/projects', labelKey: 'nav_projects', adminOnly: true, icon: <IconChart /> },
   { to: '/commissions', labelKey: 'nav_commissions', adminOnly: true, icon: <IconChart /> },
   { to: '/analytics', labelKey: 'nav_analytics', managerOnly: true, icon: <IconChart /> },
+  { to: '/reports', labelKey: 'nav_reports', managerOnly: true, icon: <IconChart /> },
   { to: '/queue', labelKey: 'nav_queue', adminOnly: true, icon: <IconInbox /> },
   { to: '/team', labelKey: 'nav_team', adminOnly: true, icon: <IconUsers /> },
   { to: '/admin/sources', labelKey: 'nav_sources', adminOnly: true, icon: <IconChart /> },
