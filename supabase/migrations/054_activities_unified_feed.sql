@@ -44,9 +44,13 @@ create table if not exists public.activities (
   -- For message activities
   direction text,
 
-  -- Backfill / sync provenance — lets us idempotently mirror source rows
+  -- Backfill / sync provenance — lets us idempotently mirror source rows.
+  -- source_id is always set: the mirror triggers populate it from NEW.id,
+  -- and native activities created in later phases use gen_random_uuid().
+  -- Keeping it non-null lets the (source_table, source_id) uniqueness be
+  -- a real (non-partial) unique index, which ON CONFLICT can infer.
   source_table text not null,
-  source_id uuid,
+  source_id uuid not null default gen_random_uuid(),
   payload jsonb not null default '{}'::jsonb,
 
   created_at timestamptz not null default now()
@@ -71,9 +75,9 @@ create index if not exists idx_activities_type
   on public.activities(activity_type, occurred_at desc);
 
 -- Idempotency for the mirror triggers — replaying the trigger updates in place
--- instead of inserting duplicates.
+-- instead of inserting duplicates. Non-partial so ON CONFLICT can infer it.
 create unique index if not exists uniq_activities_source
-  on public.activities(source_table, source_id) where source_id is not null;
+  on public.activities(source_table, source_id);
 
 alter table public.activities enable row level security;
 
