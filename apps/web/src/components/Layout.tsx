@@ -14,25 +14,24 @@ interface NavItem {
   icon: ReactNode;
 }
 
+// Tier 5 — minimalist top nav. 5 items is the cognitive ceiling for
+// a non-CRM-native user (Mia learning the system). Everything that
+// used to be a top-level link now lives under /admin (AdminHubPage),
+// which groups them by what an admin actually does.
+//
+// What stayed up top:
+//   * בית — landing page; manager dashboard for owner/admin/mia,
+//           redirects to /inbox for operators.
+//   * היום שלי — Mia's work queue. The single most-visited page.
+//   * לידים — the customer list. Second most-visited.
+//   * דוחות — the 5-dashboard hub for managers. Manager+ only.
+//   * ניהול — everything else, organised. Admin+ only.
 const NAV: NavItem[] = [
   { to: '/', labelKey: 'nav_dashboard', end: true, managerOnly: true, icon: <IconDashboard /> },
   { to: '/inbox', labelKey: 'nav_inbox', icon: <IconInbox /> },
   { to: '/leads', labelKey: 'nav_leads', icon: <IconUsers /> },
-  { to: '/partners', labelKey: 'nav_partners', adminOnly: true, icon: <IconUsers /> },
-  { to: '/projects', labelKey: 'nav_projects', adminOnly: true, icon: <IconChart /> },
-  { to: '/commissions', labelKey: 'nav_commissions', adminOnly: true, icon: <IconChart /> },
-  { to: '/analytics', labelKey: 'nav_analytics', managerOnly: true, icon: <IconChart /> },
   { to: '/reports', labelKey: 'nav_reports', managerOnly: true, icon: <IconChart /> },
-  { to: '/queue', labelKey: 'nav_queue', adminOnly: true, icon: <IconInbox /> },
-  { to: '/team', labelKey: 'nav_team', adminOnly: true, icon: <IconUsers /> },
-  { to: '/admin/sources', labelKey: 'nav_sources', adminOnly: true, icon: <IconChart /> },
-  { to: '/templates', labelKey: 'nav_templates', adminOnly: true, icon: <IconSparkles /> },
-  { to: '/automations', labelKey: 'nav_automations', adminOnly: true, icon: <IconSparkles /> },
-  { to: '/journeys', labelKey: 'nav_journeys', adminOnly: true, icon: <IconSparkles /> },
-  { to: '/admin/whatsapp-router', labelKey: 'nav_whatsapp_router', adminOnly: true, icon: <IconInbox /> },
-  { to: '/admin/settings', labelKey: 'nav_settings', adminOnly: true, icon: <IconShield /> },
-  { to: '/users', labelKey: 'nav_users', adminOnly: true, icon: <IconShield /> },
-  { to: '/prompts', labelKey: 'nav_prompts', adminOnly: true, icon: <IconSparkles /> },
+  { to: '/admin', labelKey: 'nav_admin', adminOnly: true, icon: <IconShield /> },
 ];
 
 export function Layout() {
@@ -227,13 +226,6 @@ function IconShield() {
     <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
       <path d="M10 2.5l6 2.2v5.6c0 3.7-2.6 6.5-6 7.2-3.4-.7-6-3.5-6-7.2V4.7l6-2.2Z" />
       <path strokeLinecap="round" d="m7.5 10 1.7 1.8L13 8" />
-    </svg>
-  );
-}
-function IconSparkles() {
-  return (
-    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M10 3v3M10 14v3M3 10h3M14 10h3M5 5l2 2M13 13l2 2M15 5l-2 2M5 15l2-2" />
     </svg>
   );
 }

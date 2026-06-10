@@ -58,29 +58,31 @@ describe('Layout', () => {
     renderLayout({ role: 'mia' });
     expect(screen.getByRole('link', { name: 'היום' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'דוחות' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'משתמשים' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'ניהול' })).not.toBeInTheDocument();
   });
 
-  it('hides the admin-only Users link from non-admin roles', () => {
+  it('hides the admin hub link from non-admin roles', () => {
     renderLayout({ role: 'sales_rep' });
-    expect(screen.queryByRole('link', { name: 'משתמשים' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'ניהול' })).not.toBeInTheDocument();
   });
 
   it('hides manager and admin links from sales representatives', () => {
     renderLayout({ role: 'sales_rep' });
     expect(screen.queryByRole('link', { name: 'היום' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'דוחות' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'משתמשים' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'ניהול' })).not.toBeInTheDocument();
   });
 
-  it('shows the admin-only Users link for admins', () => {
+  it('shows the admin-only Admin hub link for admins', () => {
     renderLayout({ role: 'admin' });
-    expect(screen.getByRole('link', { name: 'משתמשים' })).toBeInTheDocument();
+    // Tier 5 — the /admin hub replaces the per-page admin nav items.
+    // Users page lives inside the hub now (AdminHubPage), not in top nav.
+    expect(screen.getByRole('link', { name: 'ניהול' })).toBeInTheDocument();
   });
 
-  it('shows the admin-only Users link for owners', () => {
+  it('shows the admin-only Admin hub link for owners', () => {
     renderLayout({ role: 'owner' });
-    expect(screen.getByRole('link', { name: 'משתמשים' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'ניהול' })).toBeInTheDocument();
   });
 
   it('renders the user email and role badge', () => {
