@@ -84,41 +84,6 @@ create policy partners_self_read on public.partners
 
 grant select, insert, update, delete on public.partners to service_role;
 
--- ─────────────────────────────────────────────────────────────────────
--- Workload view — how many open deals does each active partner have?
--- This is the input for the B3 assignment automation (pick the
--- partner with the lowest current workload).
---
--- A view (not a materialized view) so it stays current without a
--- refresh schedule. The query is cheap once deals.partner_id has its
--- index from 059.
--- ─────────────────────────────────────────────────────────────────────
-create or replace view public.partner_workload as
-  select
-    p.id as partner_id,
-    p.full_name,
-    p.domain,
-    p.commission_to_karnaf_pct,
-    p.status,
-    -- partner_id FK on deals lands in migration 059; until then this
-    -- count silently stays at 0 for everyone, which is correct: the
-    -- text shadow `deals.partner_name` is intentionally NOT bridged
-    -- into this view because it would give misleading workload
-    -- numbers based on string equality.
-    (
-      select count(*)::int from public.deals d
-      where d.status = 'open' and d.partner_id = p.id
-    ) as open_deals_count,
-    (
-      select count(*)::int from public.deals d
-      where d.status = 'won' and d.partner_id = p.id
-    ) as won_deals_count
-  from public.partners p;
-
-grant select on public.partner_workload to authenticated, service_role;
-
-comment on view public.partner_workload is
-  'Tier 1.A — read-side aggregate driving the partner-assignment '
-  'automation. open_deals_count picks the freelancer with the most '
-  'bandwidth; won_deals_count surfaces in the partner card UI as a '
-  'lightweight reputation signal.';
+-- partner_workload view is created in migration 060, after deals.partner_id
+-- exists. Keeping that view next to the FK migration keeps the dependency
+-- graph readable: a single file owns the partners↔deals bridge.

@@ -110,3 +110,70 @@ comment on column public.deals.partner_id is
 comment on column public.deals.project_id is
   'Tier 1.C FK to projects. presale_project (text) is the legacy '
   'shadow kept read-only for one release.';
+
+-- ─────────────────────────────────────────────────────────────────────
+-- partner_workload view — moved here from 058 because it depends on
+-- deals.partner_id which we just created above. Drives the B3
+-- assignment automation: pick the freelancer with the lowest open
+-- count.
+-- ─────────────────────────────────────────────────────────────────────
+create or replace view public.partner_workload as
+  select
+    p.id as partner_id,
+    p.full_name,
+    p.domain,
+    p.commission_to_karnaf_pct,
+    p.status,
+    (
+      select count(*)::int from public.deals d
+      where d.status = 'open' and d.partner_id = p.id
+    ) as open_deals_count,
+    (
+      select count(*)::int from public.deals d
+      where d.status = 'won' and d.partner_id = p.id
+    ) as won_deals_count
+  from public.partners p;
+
+grant select on public.partner_workload to authenticated, service_role;
+
+comment on view public.partner_workload is
+  'Tier 1.A/C — read-side aggregate driving the partner-assignment '
+  'automation. open_deals_count picks the freelancer with the most '
+  'bandwidth; won_deals_count surfaces in the partner card UI as a '
+  'lightweight reputation signal.';
+
+-- Same shape on the project side: project_funding_progress depends on
+-- deals.project_id. Created in 059 but re-defining here for safety —
+-- the OR REPLACE makes it idempotent.
+create or replace view public.project_funding_progress as
+  select
+    p.id as project_id,
+    p.name,
+    p.city,
+    p.total_units,
+    p.price_per_unit,
+    p.target_amount,
+    p.currency,
+    p.status,
+    p.target_date,
+    (
+      select coalesce(sum(d.value), 0)::numeric from public.deals d
+      where d.project_id = p.id and d.status in ('open', 'won')
+    ) as committed_amount,
+    (
+      select count(*)::int from public.deals d
+      where d.project_id = p.id and d.status in ('open', 'won')
+    ) as committed_units,
+    case
+      when p.target_amount is null or p.target_amount = 0 then null
+      else round(
+        100.0 * (
+          select coalesce(sum(d.value), 0) from public.deals d
+          where d.project_id = p.id and d.status in ('open', 'won')
+        ) / p.target_amount,
+        1
+      )
+    end as funding_pct
+  from public.projects p;
+
+grant select on public.project_funding_progress to authenticated, service_role;

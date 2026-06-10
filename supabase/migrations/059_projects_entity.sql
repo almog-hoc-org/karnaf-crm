@@ -80,47 +80,6 @@ create policy projects_staff_all on public.projects
 
 grant select, insert, update, delete on public.projects to service_role;
 
--- ─────────────────────────────────────────────────────────────────────
--- Funding progress view — drives the Dashboard's presale card and
--- the project detail screen header. Deal.project_id arrives in
--- migration 060; until then committed_amount stays 0.
--- ─────────────────────────────────────────────────────────────────────
-create or replace view public.project_funding_progress as
-  select
-    p.id as project_id,
-    p.name,
-    p.city,
-    p.total_units,
-    p.price_per_unit,
-    p.target_amount,
-    p.currency,
-    p.status,
-    p.target_date,
-    (
-      select coalesce(sum(d.value), 0)::numeric from public.deals d
-      where d.project_id = p.id and d.status in ('open', 'won')
-    ) as committed_amount,
-    (
-      select count(*)::int from public.deals d
-      where d.project_id = p.id and d.status in ('open', 'won')
-    ) as committed_units,
-    case
-      when p.target_amount is null or p.target_amount = 0 then null
-      else round(
-        100.0 * (
-          select coalesce(sum(d.value), 0) from public.deals d
-          where d.project_id = p.id and d.status in ('open', 'won')
-        ) / p.target_amount,
-        1
-      )
-    end as funding_pct
-  from public.projects p;
-
-grant select on public.project_funding_progress to authenticated, service_role;
-
-comment on view public.project_funding_progress is
-  'Tier 1.B — funding telemetry per project. funding_pct is what the '
-  'Dashboard plots; committed_amount/units drive the project detail '
-  'header. Open + won deals both count toward the commitment to '
-  'reflect reality on the ground (a signed unit is committed; an '
-  'open deal where rinity money was paid is committed too).';
+-- project_funding_progress view is created in 060, after deals gains
+-- the project_id FK. Tier 1.B intentionally ships only the storage
+-- shape here; the read-side aggregate ships next door.
