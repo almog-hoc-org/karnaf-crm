@@ -59,6 +59,12 @@ export interface LeadRow {
   consent_email?: boolean | null;
 }
 
+// Tier 0.E — Contact-centric type aliases. The v4 spec calls the
+// central entity "איש קשר"; the codebase still uses `leads` until the
+// physical rename in Tier 1. New code should reach for these aliases
+// so the conceptual shift is visible at the call site.
+export type ContactRow = LeadRow;
+
 export type PrdTrack = 'program' | 'presale' | 'investor_mentorship';
 
 export interface DealRow {
@@ -168,6 +174,11 @@ export interface LeadDetail extends LeadRow {
   handoff_reason: string | null;
   classification_updated_at: string | null;
 }
+
+// Tier 0.E — Contact alias for the rich detail view. Keep in lockstep
+// with LeadDetail; remove the alias once Tier 1 lands the physical
+// rename and the codebase drops "Lead" terminology entirely.
+export type ContactDetail = LeadDetail;
 
 export interface MessageRow {
   id: string;
