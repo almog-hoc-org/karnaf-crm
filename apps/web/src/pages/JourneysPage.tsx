@@ -5,15 +5,12 @@ import { fetchJourneys, postCancelJourneyRun, postUpdateJourneyDef } from '@/lib
 import type { JourneyDefinitionRow, JourneyRunStatus, JourneyStepDef } from '@/lib/types';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
-import { formatRelative } from '@/lib/format';
+import { PageIntro } from '@/components/PageIntro';
+import { JOURNEY_RUN_STATUS_LABELS, formatRelative } from '@/lib/format';
 import { t } from '@/lib/i18n';
 
-const STATUS_LABELS: Record<JourneyRunStatus, string> = {
-  active: 'פעיל',
-  completed: 'הסתיים',
-  cancelled: 'בוטל',
-  failed: 'נכשל',
-};
+// Tier 7.C.1 — central labels.
+const STATUS_LABELS = JOURNEY_RUN_STATUS_LABELS as Record<JourneyRunStatus, string>;
 
 const STATUS_TONE: Record<JourneyRunStatus, string> = {
   active: 'text-sky-700',
@@ -68,12 +65,12 @@ export function JourneysPage() {
         <span className="text-sm text-slate-500">{definitions.length} מסעות מוגדרים</span>
       </header>
 
-      <p className="text-sm text-slate-500">
+      <PageIntro>
         כל מסע הוא רצף שלבים שמתקדם אוטומטית לכל איש קשר שנכנס אליו. שלב מורכב
         מ-actions (פעולות) + delay_hours (השהיה מהשלב הקודם). אפשר לערוך את
         השלבים כ-JSON ולראות באיזה שלב כל ריצה. ה-cron tick מתקדם ריצות שמועד
         ה-scheduled_next_at שלהן הגיע.
-      </p>
+      </PageIntro>
 
       <section className="grid grid-cols-2 gap-2 md:grid-cols-4">
         {(['active', 'completed', 'cancelled', 'failed'] as JourneyRunStatus[]).map((s) => (

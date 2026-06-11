@@ -6,6 +6,7 @@ import {
 } from '@/lib/api';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
+import { PageIntro } from '@/components/PageIntro';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
 
@@ -51,12 +52,12 @@ export function SourcesPage() {
         </span>
       </header>
 
-      <p className="text-sm text-slate-500">
+      <PageIntro>
         מקור חדש שמוגדר כאן (לדוגמה <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-mono text-slate-800">tiktok_ads</code>) יתקבל
         אוטומטית ב-webhook של leads-intake בלי דרישה לפריסה. ה-slug ננעל אחרי
         יצירה. ניתן להשהות מקור (במקום למחוק) באמצעות כיבוי "פעיל". המקור{' '}
         <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-mono text-slate-800">unknown</code> נשמר כברירת מחדל ולא ניתן למחקו.
-      </p>
+      </PageIntro>
 
       <CreateForm
         onSubmit={(slug, display_name, sort_order) =>

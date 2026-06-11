@@ -5,19 +5,12 @@ import type { ProjectFundingRow, ProjectRow, ProjectStatus, ProjectType } from '
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
+import { PageIntro } from '@/components/PageIntro';
 
-const TYPE_LABELS: Record<ProjectType, string> = {
-  residential: 'מגורים',
-  commercial: 'מסחרי',
-  mixed: 'משולב',
-};
-
-const STATUS_LABELS: Record<ProjectStatus, string> = {
-  recruiting: 'בגיוס',
-  closed: 'סגור לגיוס',
-  executed: 'נסגר ובוצע',
-  cancelled: 'בוטל',
-};
+// Tier 7.C.1 — central labels.
+import { PROJECT_TYPE_LABELS, PROJECT_STATUS_LABELS } from '@/lib/format';
+const TYPE_LABELS = PROJECT_TYPE_LABELS as Record<ProjectType, string>;
+const STATUS_LABELS = PROJECT_STATUS_LABELS as Record<ProjectStatus, string>;
 
 export function ProjectsPage() {
   useDocumentTitle('פרויקטי פריסייל');
@@ -51,10 +44,10 @@ export function ProjectsPage() {
         <span className="text-sm text-slate-500">{projects.length} פרויקטים</span>
       </header>
 
-      <p className="text-sm text-slate-500">
+      <PageIntro>
         כל פרויקט פריסייל אוסף הרשמות עד שמגיע ליעד הגיוס. אחוזי הגיוס מחושבים
         אוטומטית מהעסקאות הפתוחות והסגורות. סטטוס בגיוס → סגור → בוצע.
-      </p>
+      </PageIntro>
 
       <CreateForm onSubmit={(payload) => action.mutate(payload)} busy={action.isPending} />
 

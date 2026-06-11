@@ -23,7 +23,14 @@ import { UnifiedTimeline } from '@/components/UnifiedTimeline';
 import { t } from '@/lib/i18n';
 import {
   AI_PLAYBOOK_STAGE_LABELS,
-  MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, QUEUE_LABELS,
+  COMMISSION_STATUS_LABELS,
+  DEAL_STAGE_LABELS,
+  DEAL_STATUS_LABELS,
+  MEETING_STATUS_LABELS, MEETING_TYPE_LABELS,
+  PARTNER_DOMAIN_LABELS,
+  PRD_TRACK_LABELS,
+  PROGRAM_PROGRESS_LABELS,
+  QUEUE_LABELS,
   formatDateTime, formatRelative,
 } from '@/lib/format';
 import type {
@@ -896,25 +903,11 @@ function OperatorGuidanceCard({
         <GuidanceMiniCard label="מה להגיד עכשיו" value={insight.script} />
       </div>
 
-      {/* Tier 6.D — the "סיום טיפול" resolution guide (4 mini-cards
-          explaining when to close/escalate) is tutorial content. New
-          operators benefit on day one; by day three it's noise. Now
-          inside a disclosure that defaults collapsed — open only if a
-          new sales_rep needs guidance on a specific lead. */}
-      <details className="mt-3 rounded-xl bg-white/55 ring-1 ring-black/5">
-        <summary className="cursor-pointer px-3 py-2 text-sm font-medium opacity-80 hover:opacity-100">
-          איך לסגור נכון את הטיפול?
-        </summary>
-        <div className="grid gap-2 px-3 pb-3 md:grid-cols-2">
-          {resolutionGuide.map((item) => (
-            <div key={item.title} className="rounded-xl bg-white/75 p-3 ring-1 ring-black/5">
-              <p className="text-sm font-semibold">{item.title}</p>
-              <p className="mt-1 text-xs leading-5 opacity-75">{item.when}</p>
-              <p className="mt-2 text-xs font-medium opacity-90">{item.action}</p>
-            </div>
-          ))}
-        </div>
-      </details>
+      {/* Tier 7.C.2 — fully dismissible. Mia/admin who's been around
+          for a week shouldn't see this every lead. Once dismissed, a
+          tiny "הצג מדריך" link replaces the disclosure so she can
+          reopen for a tricky one. */}
+      <ResolutionGuide items={resolutionGuide} />
 
       {!canAct ? (
         <p className="mt-3 text-sm opacity-75">יש לך הרשאת צפייה בלבד, לכן הפעולות מוסתרות.</p>
@@ -925,6 +918,61 @@ function OperatorGuidanceCard({
         {lead.intake_segment ? SEGMENT_OPTIONS.find((option) => option.value === lead.intake_segment)?.label : ''}
       </span>
     </section>
+  );
+}
+
+// Tier 7.C.2 — dismissible resolution guide. Pattern mirrors
+// InboxTrainingGuide (Tier 5.C): localStorage flag persists per
+// browser, "הצג מדריך" link reopens it for an unfamiliar lead.
+const RESOLUTION_GUIDE_DISMISSED_KEY = 'karnaf_operator_resolution_dismissed_v1';
+function ResolutionGuide({
+  items,
+}: {
+  items: Array<{ title: string; when: string; action: string }>;
+}) {
+  const [dismissed, setDismissed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(RESOLUTION_GUIDE_DISMISSED_KEY) === '1';
+  });
+  function dismiss() {
+    try { window.localStorage.setItem(RESOLUTION_GUIDE_DISMISSED_KEY, '1'); }
+    catch { /* ignore — private mode etc. */ }
+    setDismissed(true);
+  }
+  function reopen() {
+    try { window.localStorage.removeItem(RESOLUTION_GUIDE_DISMISSED_KEY); }
+    catch { /* ignore */ }
+    setDismissed(false);
+  }
+  if (dismissed) {
+    return (
+      <button type="button" onClick={reopen} className="mt-2 text-xs text-slate-500 hover:underline">
+        הצג מדריך סיום טיפול
+      </button>
+    );
+  }
+  return (
+    <details className="group mt-3 rounded-xl bg-white/55 ring-1 ring-black/5">
+      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 text-sm font-medium opacity-80 hover:opacity-100">
+        <span>איך לסגור נכון את הטיפול?</span>
+        <button type="button"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismiss(); }}
+          className="text-xs text-slate-500 hover:underline"
+          title="הסתר לצמיתות; אפשר להציג שוב דרך הקישור שיופיע"
+        >
+          הסתר
+        </button>
+      </summary>
+      <div className="grid gap-2 px-3 pb-3 md:grid-cols-2">
+        {items.map((item) => (
+          <div key={item.title} className="rounded-xl bg-white/75 p-3 ring-1 ring-black/5">
+            <p className="text-sm font-semibold">{item.title}</p>
+            <p className="mt-1 text-xs leading-5 opacity-75">{item.when}</p>
+            <p className="mt-2 text-xs font-medium opacity-90">{item.action}</p>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -1245,55 +1293,9 @@ const NEXT_DEAL_STAGES: Record<string, Record<string, string[]>> = {
   },
 };
 
-const PRD_TRACK_LABELS: Record<string, string> = {
-  program: 'תכנית הליווי',
-  presale: 'פריסייל / חתימה',
-  investor_mentorship: 'ליווי משקיעים',
-};
-
-const DEAL_STATUS_LABELS: Record<string, string> = {
-  open: 'פתוח',
-  won: 'נסגר בהצלחה',
-  lost: 'לא רלוונטי',
-  cancelled: 'בוטל',
-};
-
-const PARTNER_DOMAIN_LABELS: Record<string, string> = {
-  investor_mentorship: 'ליווי משקיעים',
-  appraisal: 'שמאות',
-  legal: 'משפטי',
-  financing: 'מימון',
-  other: 'אחר',
-};
-
-const COMMISSION_STATUS_LABELS: Record<string, string> = {
-  pending: 'ממתינה',
-  to_bill: 'לחיוב',
-  paid: 'שולמה',
-  cancelled: 'בוטלה',
-};
-
-const DEAL_STAGE_LABELS: Record<string, string> = {
-  new: 'ליד חדש',
-  webinar_registered: 'נרשם לוובינר',
-  webinar_attended: 'השתתף בוובינר',
-  phone_call_booked: 'קבע שיחת טלפון',
-  form_submitted: 'מילא טופס',
-  zoom_meeting: 'פגישת זום',
-  office_meeting: 'פגישה במשרד',
-  phone_call_done: 'בוצעה שיחה',
-  meeting_scheduled: 'תואמה פגישה',
-  office_meeting_held: 'פגישה התקיימה',
-  signed: 'חתם',
-  shahar_phone_call_done: 'בוצעה שיחה (שחר)',
-  paid_program_member: 'שילם — חבר תכנית',
-  closed_won: 'נסגר',
-  not_relevant: 'לא רלוונטי',
-};
-
-const PROGRAM_PROGRESS_LABELS: Record<string, string> = {
-  joined: 'הצטרף',
-};
+// Tier 7.C.1 — all 6 label maps consolidated to lib/format.ts.
+// LeadDetailPage was the largest offender, with 5 local maps duplicating
+// values used in PartnersPage, ProjectsPage, CommissionsPage, etc.
 
 function formatConsent(value: boolean | null | undefined) {
   if (value === true) return 'כן';

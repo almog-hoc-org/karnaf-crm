@@ -6,18 +6,12 @@ import { renderTemplate } from '@/lib/template-render';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
+import { PageIntro } from '@/components/PageIntro';
 
-const CHANNEL_LABELS: Record<TemplateChannel, string> = {
-  whatsapp: 'וואטסאפ',
-  sms: 'SMS',
-  email: 'מייל',
-};
-
-const STATUS_LABELS: Record<TemplateStatus, string> = {
-  draft: 'טיוטה',
-  active: 'פעיל',
-  deprecated: 'הוצא משימוש',
-};
+// Tier 7.C.1 — central labels.
+import { TEMPLATE_CHANNEL_LABELS, TEMPLATE_STATUS_LABELS } from '@/lib/format';
+const CHANNEL_LABELS = TEMPLATE_CHANNEL_LABELS as Record<TemplateChannel, string>;
+const STATUS_LABELS = TEMPLATE_STATUS_LABELS as Record<TemplateStatus, string>;
 
 export function TemplatesPage() {
   useDocumentTitle('תבניות הודעה');
@@ -55,12 +49,12 @@ export function TemplatesPage() {
         <span className="text-sm text-slate-500">{templates.length} תבניות</span>
       </header>
 
-      <p className="text-sm text-slate-500">
+      <PageIntro>
         כל הודעה אוטומטית או ידנית חוזרת על אותם משפטים בקרנף. עורך הטקסט כאן —
         בלי שום deploy — והבוט וה-Reply Box יראו את הגרסה המעודכנת מיד.
         משתנים ב-{'{{first_name}}'} מוחלפים אוטומטית מנתוני איש הקשר.
         תבנית בסטטוס "טיוטה" לא תישלח עד שהיא מסומנת כפעילה.
-      </p>
+      </PageIntro>
 
       {templatesQ.isLoading ? <p className="text-slate-500">{t('loading')}</p> : null}
 

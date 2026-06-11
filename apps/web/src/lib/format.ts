@@ -1,6 +1,33 @@
 // Display helpers. Hebrew labels for enum values used across the operator UI.
+//
+// Tier 7.C.1 — single source of truth for every status / stage / domain
+// label set. Pages must import from here rather than declaring a local
+// copy: the audit found 6+ pages with overlapping LOCAL `STATUS_LABELS`
+// constants. Drift between them is silent — a server enum widens and
+// one page renders raw English while another stays consistent.
 
 import type { LeadHeat, LeadStatus, MeetingRow, OwnershipMode } from './types';
+
+// Tier 7.C.1 — fallback formatter for unknown enum values. When a
+// server enum widens between a deploy and the next frontend rebuild,
+// the raw value would otherwise leak (e.g. `qualification_v2`). This
+// helper produces "Qualification V2" — readable, signal to the
+// operator that the label is auto-generated.
+export function titleizeEnum(raw: string): string {
+  return raw
+    .split(/[_\s]+/u)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+// Generic lookup helper: returns the labeled value or a titleized
+// fallback. Use this when the dictionary keys are stable but new
+// values may appear.
+export function labelOr(map: Record<string, string>, key: string | null | undefined): string {
+  if (!key) return '—';
+  return map[key] ?? titleizeEnum(key);
+}
 
 export const STATUS_LABELS: Record<LeadStatus, string> = {
   new: 'חדש',
@@ -83,6 +110,102 @@ export const AI_PLAYBOOK_STAGE_LABELS: Record<string, string> = {
   payment_pending_rescue: 'חילוץ תשלום ממתין',
   phone_request: 'בקשה לשיחה',
   opt_out: 'בקשת הסרה',
+};
+
+// Tier 7.C.1 — entity status / domain / type labels, centralized.
+// Each was previously a local const in its consuming page; drift
+// between pages was easy and silent. Importers should use these
+// exports + labelOr() wrapping for new server enum values.
+
+// Lead/Deal status (canonical pipeline) lives in STATUS_LABELS above.
+
+export const DEAL_STATUS_LABELS: Record<string, string> = {
+  open: 'פתוח',
+  won: 'נסגר בהצלחה',
+  lost: 'לא רלוונטי',
+  cancelled: 'בוטל',
+};
+
+export const DEAL_STAGE_LABELS: Record<string, string> = {
+  new: 'ליד חדש',
+  webinar_registered: 'נרשם לוובינר',
+  webinar_attended: 'השתתף בוובינר',
+  phone_call_booked: 'קבע שיחת טלפון',
+  form_submitted: 'מילא טופס',
+  zoom_meeting: 'פגישת זום',
+  office_meeting: 'פגישה במשרד',
+  phone_call_done: 'בוצעה שיחה',
+  meeting_scheduled: 'תואמה פגישה',
+  office_meeting_held: 'פגישה התקיימה',
+  signed: 'חתם',
+  shahar_phone_call_done: 'בוצעה שיחה (שחר)',
+  paid_program_member: 'שילם — חבר תכנית',
+  closed_won: 'נסגר',
+  not_relevant: 'לא רלוונטי',
+};
+
+export const PRD_TRACK_LABELS: Record<string, string> = {
+  program: 'תכנית הליווי',
+  presale: 'פריסייל / חתימה',
+  investor_mentorship: 'ליווי משקיעים',
+};
+
+export const PARTNER_STATUS_LABELS: Record<string, string> = {
+  active: 'פעיל',
+  paused: 'מושהה',
+  archived: 'בארכיון',
+};
+
+export const PARTNER_DOMAIN_LABELS: Record<string, string> = {
+  investor_mentorship: 'ליווי משקיעים',
+  appraisal: 'שמאות',
+  legal: 'משפטי',
+  financing: 'מימון',
+  other: 'אחר',
+};
+
+export const PROJECT_TYPE_LABELS: Record<string, string> = {
+  residential: 'מגורים',
+  commercial: 'מסחרי',
+  mixed: 'משולב',
+};
+
+export const PROJECT_STATUS_LABELS: Record<string, string> = {
+  recruiting: 'בגיוס',
+  closed: 'סגור לגיוס',
+  executed: 'נסגר ובוצע',
+  cancelled: 'בוטל',
+};
+
+export const COMMISSION_STATUS_LABELS: Record<string, string> = {
+  pending: 'ממתינה',
+  to_bill: 'לחיוב',
+  paid: 'שולמה',
+  cancelled: 'בוטלה',
+};
+
+export const TEMPLATE_STATUS_LABELS: Record<string, string> = {
+  draft: 'טיוטה',
+  active: 'פעיל',
+  deprecated: 'הוצא משימוש',
+};
+
+export const TEMPLATE_CHANNEL_LABELS: Record<string, string> = {
+  whatsapp: 'וואטסאפ',
+  sms: 'SMS',
+  email: 'מייל',
+};
+
+export const JOURNEY_RUN_STATUS_LABELS: Record<string, string> = {
+  active: 'פעיל',
+  completed: 'הסתיים',
+  cancelled: 'בוטל',
+  failed: 'נכשל',
+};
+
+export const PROGRAM_PROGRESS_LABELS: Record<string, string> = {
+  joined: 'הצטרף',
+  // Extend as program states are introduced.
 };
 
 export const QUEUE_LABELS: Record<string, string> = {

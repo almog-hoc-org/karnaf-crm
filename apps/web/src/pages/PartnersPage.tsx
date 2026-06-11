@@ -5,20 +5,12 @@ import type { PartnerDomain, PartnerRow, PartnerStatus, PartnerWorkloadRow } fro
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
+import { PageIntro } from '@/components/PageIntro';
 
-const DOMAIN_LABELS: Record<PartnerDomain, string> = {
-  investor_mentorship: 'ליווי משקיעים',
-  appraisal: 'שמאות',
-  legal: 'משפטי',
-  financing: 'מימון',
-  other: 'אחר',
-};
-
-const STATUS_LABELS: Record<PartnerStatus, string> = {
-  active: 'פעיל',
-  paused: 'מושהה',
-  archived: 'בארכיון',
-};
+// Tier 7.C.1 — central labels.
+import { PARTNER_DOMAIN_LABELS, PARTNER_STATUS_LABELS } from '@/lib/format';
+const DOMAIN_LABELS = PARTNER_DOMAIN_LABELS as Record<PartnerDomain, string>;
+const STATUS_LABELS = PARTNER_STATUS_LABELS as Record<PartnerStatus, string>;
 
 export function PartnersPage() {
   useDocumentTitle('פרילנסרים ושותפים');
@@ -55,11 +47,11 @@ export function PartnersPage() {
         <span className="text-sm text-slate-500">{partners.length} שותפים</span>
       </header>
 
-      <p className="text-sm text-slate-500">
+      <PageIntro>
         שותפים חיצוניים שסוגרים בשם קרנף. אחוז העמלה נחתך מערך כל עסקה שמועברת
         לשותף וניתן לשינוי בכל עת — שינוי אינו משכתב עמלות שכבר נוצרו (הן נשמרות
         עם ה-% שהיה בתוקף ביום יצירתן).
-      </p>
+      </PageIntro>
 
       <CreateForm onSubmit={(payload) => action.mutate(payload)} busy={action.isPending} />
 

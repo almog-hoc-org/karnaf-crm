@@ -5,16 +5,14 @@ import clsx from 'clsx';
 import { fetchCommissions, postCommissionAction } from '@/lib/api';
 import type { CommissionRow, CommissionStatus } from '@/lib/types';
 import { useToast } from '@/components/Toast';
+import { PageIntro } from '@/components/PageIntro';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
-import { formatRelative } from '@/lib/format';
+import { COMMISSION_STATUS_LABELS, formatRelative } from '@/lib/format';
 import { t } from '@/lib/i18n';
 
-const STATUS_LABELS: Record<CommissionStatus, string> = {
-  pending: 'ממתינה',
-  to_bill: 'לחיוב',
-  paid: 'שולמה',
-  cancelled: 'בוטלה',
-};
+// Tier 7.C.1 — labels live in lib/format.ts. Local alias keeps the
+// rest of the file readable without rewriting every reference.
+const STATUS_LABELS = COMMISSION_STATUS_LABELS as Record<CommissionStatus, string>;
 
 const STATUS_TONE: Record<CommissionStatus, string> = {
   pending: 'bg-amber-50 text-amber-800 ring-amber-200',
@@ -76,11 +74,11 @@ export function CommissionsPage() {
     <div className="space-y-4">
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">עמלות</h1>
-        <p className="text-sm text-slate-500">
-          עמלות נוצרות אוטומטית כשמתעדים תשלום דמי רצינות על העסקה. כשחותמים חוזה
-          → ״לחיוב״. ידני: סימון התשלום שהתקבל בפועל.
-        </p>
       </header>
+      <PageIntro>
+        עמלות נוצרות אוטומטית כשמתעדים תשלום דמי רצינות על העסקה. כשחותמים חוזה
+        → ״לחיוב״. ידני: סימון התשלום שהתקבל בפועל.
+      </PageIntro>
 
       {/* Summary chips */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

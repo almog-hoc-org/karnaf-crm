@@ -8,6 +8,7 @@ import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { formatRelative } from '@/lib/format';
 import { t } from '@/lib/i18n';
+import { PageIntro } from '@/components/PageIntro';
 
 const CATEGORY_LABELS: Record<string, string> = {
   intake: 'קליטה וניתוב',
@@ -95,11 +96,11 @@ export function AutomationsPage() {
         <span className="text-sm text-slate-500">{rules.length} כללים</span>
       </header>
 
-      <p className="text-sm text-slate-500">
+      <PageIntro>
         קטלוג כל האוטומציות במערכת + יומן הרצות אחרון. כללים מסומנים "בקוד" רצים
         מעמדות לוגיקה קיימות (sla-worker, daily-sales-inbox, triggers); "במנוע"
         ירוצו מהמנוע ההגדרתי שעדיין נבנה; "בתכנון" הם כללים מהמפרט שעוד לא מומשו.
-      </p>
+      </PageIntro>
 
       <div className="grid grid-cols-3 gap-2">
         {(['code', 'engine', 'planned'] as AutomationSource[]).map((s) => (
