@@ -98,6 +98,8 @@ export async function fetchDashboardSummary() {
   return r.summary;
 }
 
+export type ProductGroup = 'program' | 'investor' | 'presale' | 'consultation';
+
 export interface LeadsListParams {
   status?: string;
   heat?: string;
@@ -108,6 +110,9 @@ export interface LeadsListParams {
   createdFrom?: string;
   createdTo?: string;
   inboundFrom?: string;
+  // Tier 6.A — coarse product filter; backend maps to a per-group set
+  // of primary_track + product_interest values.
+  productGroup?: ProductGroup;
   limit?: number;
   offset?: number;
 }

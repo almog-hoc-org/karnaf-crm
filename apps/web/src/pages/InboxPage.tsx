@@ -417,41 +417,37 @@ function InboxTrainingGuide() {
   );
 }
 
+// Tier 6.C — DailyFocusPanel slimmed. Before: 1 hero card ("הדבר
+// הראשון לפתוח") + 3 metric tiles (דחוף/לענות/להתקשר). The 3 metrics
+// already appear as count pills inside LANE_FILTERS below — two rows
+// teaching the same numbers. Now: just the hero, full width.
 function DailyFocusPanel({ rows }: { rows: AttentionRow[] }) {
   const firstRow = rows[0] ?? null;
   const firstMeta = firstRow ? classifyRow(firstRow) : null;
   const first = firstRow && firstMeta ? operatingPlan(firstRow, firstMeta) : null;
-  const critical = rows.filter((row) => classifyRow(row).urgency === 'critical').length;
-  const calls = rows.filter((row) => classifyRow(row).lane === 'call').length;
-  const replies = rows.filter((row) => classifyRow(row).lane === 'reply').length;
 
   return (
-    <section className="grid gap-3 lg:grid-cols-[1.4fr_1fr_1fr_1fr]" aria-label="מיקוד יומי">
-      <div className="kf-card border-s-4 border-s-brand-500 p-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">הדבר הראשון לפתוח</p>
-        {first ? (
-          <>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold text-slate-900">{first.nextAction}</h2>
-              {firstMeta ? <span className={clsx('rounded-full px-2 py-0.5 text-xs font-semibold', firstMeta.pillClass)}>{firstMeta.actionLabel}</span> : null}
-            </div>
-            {firstRow ? (
-              <Link to={`/leads/${firstRow.lead_id}`} className="mt-1 inline-flex text-sm font-semibold text-brand-700 hover:underline">
-                לפתוח ראשון: {firstRow.lead_name || `ליד ${firstRow.lead_id.slice(0, 8)}`}
-              </Link>
-            ) : null}
-            <p className="mt-1 text-sm leading-6 text-slate-500">{first.why}</p>
-          </>
-        ) : (
-          <>
-            <h2 className="mt-1 text-lg font-semibold text-slate-900">אין כרגע טיפול דחוף</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-500">אפשר לעבור ללידים חדשים, פולואפים או שיפור נתונים.</p>
-          </>
-        )}
-      </div>
-      <FocusMetric label="דחוף" value={critical} hint="סיכונים ו-SLA" tone={critical > 0 ? 'danger' : 'ok'} />
-      <FocusMetric label="לענות" value={replies} hint="מחכים לאדם" />
-      <FocusMetric label="להתקשר" value={calls} hint="שיחות והסלמות" />
+    <section className="kf-card border-s-4 border-s-brand-500 p-4" aria-label="מיקוד יומי">
+      <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">הדבר הראשון לפתוח</p>
+      {first ? (
+        <>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold text-slate-900">{first.nextAction}</h2>
+            {firstMeta ? <span className={clsx('rounded-full px-2 py-0.5 text-xs font-semibold', firstMeta.pillClass)}>{firstMeta.actionLabel}</span> : null}
+          </div>
+          {firstRow ? (
+            <Link to={`/leads/${firstRow.lead_id}`} className="mt-1 inline-flex text-sm font-semibold text-brand-700 hover:underline">
+              לפתוח ראשון: {firstRow.lead_name || `ליד ${firstRow.lead_id.slice(0, 8)}`}
+            </Link>
+          ) : null}
+          <p className="mt-1 text-sm leading-6 text-slate-500">{first.why}</p>
+        </>
+      ) : (
+        <>
+          <h2 className="mt-1 text-lg font-semibold text-slate-900">אין כרגע טיפול דחוף</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-500">אפשר לעבור ללידים חדשים, פולואפים או שיפור נתונים.</p>
+        </>
+      )}
     </section>
   );
 }
@@ -590,17 +586,9 @@ function formatDuration(minutes: number) {
   return rest ? `${hours}ש׳ ${rest}דק׳` : `${hours}ש׳`;
 }
 
-function FocusMetric({ label, value, hint, tone }: { label: string; value: number; hint: string; tone?: 'danger' | 'ok' }) {
-  return (
-    <div className="kf-card p-4">
-      <div className="text-sm font-medium text-slate-500">{label}</div>
-      <div className={clsx('mt-1 text-3xl font-semibold tabular-nums', tone === 'danger' && 'text-rose-600', tone === 'ok' && 'text-emerald-600')}>
-        {value}
-      </div>
-      <div className="mt-1 text-xs text-slate-500">{hint}</div>
-    </div>
-  );
-}
+// Tier 6.C — FocusMetric removed (was used only inside DailyFocusPanel,
+// now slimmed down to the hero card. The lane filters below already
+// expose counts per lane).
 
 function TrainingStep({ number, title, text }: { number: string; title: string; text: string }) {
   return (

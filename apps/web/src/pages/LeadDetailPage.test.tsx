@@ -283,7 +283,8 @@ describe('LeadDetailPage', () => {
     expect(screen.getByText('ה-AI מטפל — רק לעקוב')).toBeInTheDocument();
     expect(screen.getByText('למה זה כאן')).toBeInTheDocument();
     expect(screen.getByText('מה להגיד עכשיו')).toBeInTheDocument();
-    expect(screen.getByText('מוצר רלוונטי לנציג')).toBeInTheDocument();
+    // Tier 6.B — ProductFocusStrip removed; product label is now shown
+    // by OperatorGuidanceCard + the סיווג ואבחון sidebar card.
     expect(screen.getAllByText('תוכנית הדרך לדירה').length).toBeGreaterThan(0);
     expect(screen.getAllByText('לתת תשובה קצרה ולשאול שאלת אבחון אחת.').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'לקחת לטיפול אנושי' })).toBeInTheDocument();

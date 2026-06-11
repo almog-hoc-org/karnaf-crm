@@ -37,6 +37,13 @@ Deno.serve(async (req) => {
   const createdFrom = url.searchParams.get('createdFrom');
   const createdTo = url.searchParams.get('createdTo');
   const inboundFrom = url.searchParams.get('inboundFrom');
+  // Tier 6.A — product group filter. Single param that matches either
+  // primary_track OR product_interest because the two columns evolved
+  // historically and a lead may have one but not the other (e.g.
+  // primary_track='investor_mentorship' with product_interest=null on
+  // a freshly-classified lead). Coarse-grained groups instead of raw
+  // enum values to keep the UI scannable for a non-CRM user.
+  const productGroup = url.searchParams.get('productGroup');
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 200);
   const offset = Math.max(0, Number(url.searchParams.get('offset') ?? 0));
 
@@ -56,6 +63,28 @@ Deno.serve(async (req) => {
   if (heat) query = query.eq('lead_heat', heat);
   if (ownershipMode) query = query.eq('ownership_mode', ownershipMode);
   if (source) query = query.eq('source', source.slice(0, 120));
+  // Map coarse product groups → real enum values across both columns.
+  // The mapping is in code (not data) so a typo in the UI param
+  // produces a deterministic empty result, not a malformed query.
+  if (productGroup) {
+    const productMap: Record<string, { tracks: string[]; interests: string[] }> = {
+      program: { tracks: ['program'], interests: ['digital_program'] },
+      investor: { tracks: ['investor_mentorship'], interests: ['investor_mentorship', 'mentorship'] },
+      presale: { tracks: ['presale'], interests: ['contractor_group_purchase'] },
+      consultation: { tracks: [], interests: ['personal_consultation', 'financing_guidance', 'student_tools', 'unknown'] },
+    };
+    const m = productMap[productGroup];
+    if (m) {
+      const parts: string[] = [];
+      if (m.tracks.length) parts.push(`primary_track.in.(${m.tracks.join(',')})`);
+      if (m.interests.length) parts.push(`product_interest.in.(${m.interests.join(',')})`);
+      if (parts.length) query = query.or(parts.join(','));
+    } else {
+      // Unknown group key → return empty rather than ignore. Loud is
+      // better than silently broad.
+      return jsonResponse(req, { ok: true, leads: [], total: 0, limit, offset });
+    }
+  }
   if (isValidDate(createdFrom)) query = query.gte('created_at', createdFrom as string);
   if (isValidDate(createdTo)) query = query.lte('created_at', createdTo as string);
   if (isValidDate(inboundFrom)) query = query.gte('last_inbound_at', inboundFrom as string);

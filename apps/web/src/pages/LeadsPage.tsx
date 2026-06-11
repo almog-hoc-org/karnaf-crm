@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { fetchLeadsList, fetchUsersList, postBulkLeadAction } from '@/lib/api';
+import { fetchLeadsList, fetchUsersList, postBulkLeadAction, type ProductGroup } from '@/lib/api';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { BulkActionBar } from '@/components/BulkActionBar';
 import { LeadsTableSkeleton } from '@/components/Skeleton';
@@ -71,6 +71,17 @@ interface SavedView {
 }
 
 const SAVED_VIEWS_KEY = 'karnaf:leads:savedViews';
+
+// Tier 6.A — product strip. Four coarse groups that match how Almog
+// thinks about the business, not the raw enum values. Backend maps
+// each to its real primary_track + product_interest set.
+const PRODUCT_GROUPS: Array<{ key: ProductGroup | ''; label: string; hint: string }> = [
+  { key: '',             label: 'הכל',            hint: 'כל הלידים' },
+  { key: 'program',      label: 'הדרך לדירה',     hint: 'תוכנית הליווי הדיגיטלית' },
+  { key: 'investor',     label: 'ליווי משקיעים',   hint: 'ליווי אישי לרכישת השקעה' },
+  { key: 'presale',      label: 'פריסייל',         hint: 'קבוצות רכישה / חתימה' },
+  { key: 'consultation', label: 'שיחת ייעוץ ואחר', hint: 'ייעוץ אישי, מימון, ולא מסווג' },
+];
 
 function LeadWorkCard({
   lead,
@@ -264,6 +275,9 @@ export function LeadsPage() {
   const [heat, setHeat] = useState(searchParams.get('heat') ?? '');
   const [ownership, setOwnership] = useState(searchParams.get('ownership') ?? '');
   const [source, setSource] = useState(searchParams.get('source') ?? '');
+  const [productGroup, setProductGroup] = useState<ProductGroup | ''>(
+    (searchParams.get('productGroup') as ProductGroup | null) ?? ''
+  );
   const [createdFrom, setCreatedFrom] = useState(searchParams.get('createdFrom') ?? '');
   const [createdTo, setCreatedTo] = useState(searchParams.get('createdTo') ?? '');
   const [inboundFrom, setInboundFrom] = useState(searchParams.get('inboundFrom') ?? '');
@@ -281,11 +295,12 @@ export function LeadsPage() {
     if (heat) next.set('heat', heat);
     if (ownership) next.set('ownership', ownership);
     if (source) next.set('source', source);
+    if (productGroup) next.set('productGroup', productGroup);
     if (createdFrom) next.set('createdFrom', createdFrom);
     if (createdTo) next.set('createdTo', createdTo);
     if (inboundFrom) next.set('inboundFrom', inboundFrom);
     setSearchParams(next, { replace: true });
-  }, [status, heat, ownership, source, createdFrom, createdTo, inboundFrom, setSearchParams]);
+  }, [status, heat, ownership, source, productGroup, createdFrom, createdTo, inboundFrom, setSearchParams]);
 
   // dates from UI come as yyyy-mm-dd; expand to UTC range so we match the
   // entire day for createdTo, and start-of-day for createdFrom / inboundFrom.
@@ -299,6 +314,7 @@ export function LeadsPage() {
     heat: heat || undefined,
     ownershipMode: ownership || undefined,
     source: source || undefined,
+    productGroup: productGroup || undefined,
     createdFrom: expandStart(createdFrom),
     createdTo: expandEnd(createdTo),
     inboundFrom: expandStart(inboundFrom),
@@ -414,6 +430,37 @@ export function LeadsPage() {
         <h1 className="text-2xl font-semibold tracking-tight">{t('leads_title')}</h1>
         <span className="text-sm text-slate-500">{total != null ? `${total} ${t('total_count')}` : ''}</span>
       </header>
+
+      {/* Tier 6.A — product strip. Coarse-grained tabs by what the
+          customer actually wants (program / investor / presale /
+          consultation). Sits above the detailed filter card so a
+          manager pivots between products in one click; the detail
+          filters (status / heat / source / dates) stack beneath. */}
+      <nav className="flex flex-wrap gap-1" role="tablist" aria-label="סינון לפי מוצר">
+        {PRODUCT_GROUPS.map((g) => {
+          const active = (productGroup ?? '') === g.key;
+          return (
+            <button
+              key={g.key || 'all'}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              title={g.hint}
+              onClick={() => {
+                setProductGroup(g.key as ProductGroup | '');
+                setOffset(0);
+              }}
+              className={
+                active
+                  ? 'rounded-full bg-brand-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm'
+                  : 'rounded-full bg-white px-3 py-1.5 text-sm text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50'
+              }
+            >
+              {g.label}
+            </button>
+          );
+        })}
+      </nav>
 
       <div className="kf-card grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 md:grid-cols-5">
         <div className="sm:col-span-2 md:col-span-2">

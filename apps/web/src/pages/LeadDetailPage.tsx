@@ -14,7 +14,6 @@ import {
   type CallOutcome,
   type LeadMetaUpdates,
   type ReopenTarget,
-  type HumanOwnerProfile,
 } from '@/lib/api';
 import { contextFromLead, renderTemplate } from '@/lib/template-render';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
@@ -24,7 +23,7 @@ import { UnifiedTimeline } from '@/components/UnifiedTimeline';
 import { t } from '@/lib/i18n';
 import {
   AI_PLAYBOOK_STAGE_LABELS,
-  MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, PRODUCT_LABELS, QUEUE_LABELS,
+  MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, QUEUE_LABELS,
   formatDateTime, formatRelative,
 } from '@/lib/format';
 import type {
@@ -238,7 +237,11 @@ export function LeadDetailPage() {
   // (Tier 0.F merged them into the unified activities feed). The detail
   // response still ships them for back-compat, but consumers should read
   // from `activities`. Drop the unused destructured fields.
-  const { lead, messages, queueItems, humanOwnerProfile } = detailQ.data;
+  // Tier 6.B — humanOwnerProfile no longer rendered (CurrentOwnerLine removed;
+  // ownership is shown by the OwnershipBadge chip + HandlerBanner above the
+  // timeline). The detail response still ships it for future per-owner
+  // surfaces.
+  const { lead, messages, queueItems } = detailQ.data;
   // Tier 0.F.1 — UnifiedTimeline reads from the new activities feed
   // when the migration-054 server is live; falls back to nothing so
   // the empty state renders gracefully if the field is missing during
@@ -256,55 +259,60 @@ export function LeadDetailPage() {
         ← חזרה לרשימה
       </Link>
 
+      {/* Tier 6.B — header pass two. The previous header had THREE
+          places saying "AI is handling this lead" (CurrentOwnerLine
+          banner, OwnershipBadge chip, HandlerBanner above timeline),
+          a heavy ProductFocusStrip that duplicated the classification
+          card AND the OperatorGuidanceCard recommendation, a contact
+          grid with 6 fields most managers never read, and an AI
+          playbook debug subtitle. Now: one identity line, one chip
+          row, contact essentials only (phone/email/source). The rest
+          collapses behind "פרטים נוספים". HandlerBanner above the
+          timeline stays as the contextual ownership signal. */}
       <header className="kf-card p-4 sm:p-5">
-        {/* Identity zone: who is this lead. */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
             {lead.full_name || 'ליד ללא שם'}
           </h1>
-          {lead.do_not_contact ? <span className="kf-badge bg-rose-100 text-rose-700">DNC</span> : null}
+          {lead.do_not_contact ? <span className="kf-badge bg-rose-100 text-rose-700">לא ליצור קשר</span> : null}
           {lead.removed_by_request ? (
             <span className="kf-badge bg-rose-100 text-rose-700">הוסר לבקשתו</span>
           ) : null}
         </div>
-        {/* AI playbook subtitle: where in the script the bot currently is. */}
-        {lead.ai_playbook_stage ? (
-          <p className="mt-1 text-xs text-slate-500">
-            <span className="opacity-70">שלב AI:</span>{' '}
-            <span className="font-medium text-slate-700">
-              {AI_PLAYBOOK_STAGE_LABELS[lead.ai_playbook_stage] ?? lead.ai_playbook_stage}
-            </span>
-            {lead.ai_playbook_stage_at ? (
-              <span> · עודכן {formatRelative(lead.ai_playbook_stage_at)}</span>
-            ) : null}
-          </p>
-        ) : null}
 
-        {/* Single-line "who owns this right now" indicator (AI or named human),
-            kept above the metadata grid so it's always visible at a glance. */}
-        <CurrentOwnerLine ownershipMode={lead.ownership_mode} humanOwner={humanOwnerProfile} />
-
-        <ProductFocusStrip lead={lead} />
-
-        <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
+        <dl className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-slate-600">
           <ContactRow label="טלפון" value={lead.phone} kind="phone" />
           <ContactRow label="אימייל" value={lead.email} kind="email" />
           <DataRow label="מקור" value={lead.source} />
-          <DataRow label="נוצר" value={formatDateTime(lead.created_at)} />
-          <DataRow label="נכנס לאחרונה" value={formatRelative(lead.last_inbound_at)} />
-          <DataRow label="יצא לאחרונה" value={formatRelative(lead.last_outbound_at)} />
         </dl>
 
-        <hr className="my-3 border-slate-100" />
-
-        {/* State zone: status / who handles / heat / next action. */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        {/* Status row — same chips as before, no longer competes with
+            a duplicate CurrentOwnerLine banner. */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 sm:gap-3">
           <StatusBadge status={lead.lead_status} />
           <OwnershipBadge ownership={lead.ownership_mode} />
           <HeatBadge heat={lead.lead_heat} />
           <span className="kf-badge kf-badge-mute">ציון {lead.lead_score}</span>
           <NextActionBadge actionType={lead.next_action_type} dueAt={lead.next_action_due_at} />
         </div>
+
+        {/* Long-tail metadata collapses behind a disclosure. AI playbook
+            stage is mostly debug info; created / last-in / last-out are
+            interesting once a week, not every conversation. */}
+        <details className="mt-3 text-xs text-slate-500">
+          <summary className="cursor-pointer hover:text-slate-700">פרטים נוספים</summary>
+          <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+            <DataRow label="נוצר" value={formatDateTime(lead.created_at)} />
+            <DataRow label="נכנס לאחרונה" value={formatRelative(lead.last_inbound_at)} />
+            <DataRow label="יצא לאחרונה" value={formatRelative(lead.last_outbound_at)} />
+            {lead.ai_playbook_stage ? (
+              <DataRow
+                label="שלב AI"
+                value={`${AI_PLAYBOOK_STAGE_LABELS[lead.ai_playbook_stage] ?? lead.ai_playbook_stage}${lead.ai_playbook_stage_at ? ` · ${formatRelative(lead.ai_playbook_stage_at)}` : ''}`}
+              />
+            ) : null}
+          </dl>
+        </details>
 
         {/* Tier 5.D — lifecycle action bar.
             Before: 6 buttons in 3 ActionGroups fought the OperatorGuidanceCard
@@ -1314,35 +1322,11 @@ function formatConsent(value: boolean | null | undefined) {
   return null;
 }
 
-function ProductFocusStrip({ lead }: { lead: LeadDetailType }) {
-  const product = lead.product_interest ?? 'unknown';
-  const label = PRODUCT_LABELS[product] ?? product;
-  const hint = PRODUCT_OPERATOR_HINTS[product] ?? PRODUCT_OPERATOR_HINTS.unknown;
-  const confidence = lead.classification_confidence
-    ? CLASSIFICATION_CONFIDENCE_LABELS[lead.classification_confidence]
-    : 'לא ידוע';
-
-  return (
-    <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-amber-950 sm:flex sm:items-start sm:justify-between sm:gap-4">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">מוצר רלוונטי לנציג</p>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <strong className="text-lg leading-6">{label}</strong>
-          <span className="rounded-full bg-white/75 px-2 py-0.5 text-xs font-medium ring-1 ring-amber-200">
-            ביטחון: {confidence}
-          </span>
-        </div>
-        <p className="mt-1 text-sm leading-6 text-amber-900/85">{hint}</p>
-      </div>
-      {lead.suggested_next_action ? (
-        <div className="mt-3 rounded-xl bg-white/70 p-2 text-sm ring-1 ring-amber-200 sm:mt-0 sm:max-w-sm">
-          <span className="block text-xs font-semibold text-amber-700">פעולה מומלצת</span>
-          {lead.suggested_next_action}
-        </div>
-      ) : null}
-    </div>
-  );
-}
+// Tier 6.B — ProductFocusStrip removed. It rendered a yellow card
+// repeating product label + confidence + hint + suggested next
+// action, all of which are shown by OperatorGuidanceCard and the
+// סיווג ואבחון sidebar. Three copies of the same idea was the
+// single biggest source of visual clutter on the page.
 
 function leadResolutionGuide(
   lead: LeadDetailType,
@@ -1830,16 +1814,6 @@ const PRODUCT_OPTIONS: Array<{ value: ProductInterest; label: string }> = [
 ];
 
 
-const PRODUCT_OPERATOR_HINTS: Record<string, string> = {
-  digital_program: 'מוצר הליבה: מסלול הדרך לדירה. לכוון לאבחון התאמה, ערך ותהליך הצטרפות.',
-  investor_mentorship: 'הליד כנראה מחפש ליווי השקעות אישי. לברר הון עצמי, ניסיון, אזור יעד ורמת בשלות.',
-  contractor_group_purchase: 'עניין בקבוצת רכישה/דירה מקבלן. לברר פרויקט, תקציב, לו״ז ורמת סיכון/מחויבות.',
-  personal_consultation: 'הליד מבקש שיחת ייעוץ אישית. לקדם לתיאום שיחה ולתעד שאלת אבחון מרכזית.',
-  mentorship: 'ערך ישן: להתייחס כליווי משקיעים ולחדד אם צריך.',
-  student_tools: 'ערך ישן: ייתכן לקוח/תלמיד קיים — לבדוק לפני מכירה.',
-  financing_guidance: 'ערך ישן: שיחת מימון/תקציב — בדרך כלל לשייך לתוכנית הדרך לדירה אחרי בירור.',
-  unknown: 'המוצר עדיין לא ברור. לשאול שאלה אחת: מה הכי רלוונטי — הדרך לדירה, ליווי משקיעים, קבוצת רכישה מקבלן או שיחת ייעוץ?',
-};
 
 const SEGMENT_OPTIONS: Array<{ value: IntakeSegment; label: string }> = [
   { value: 'hot_sales', label: 'מכירה חמה' },
@@ -2026,46 +2000,11 @@ function ReplyBox({
 // next step was unclear ("did anyone catch this?"). Surfacing the
 // owner prominently — including when AI is the active owner — closes
 // the visibility gap that was costing leads.
-function CurrentOwnerLine({
-  ownershipMode,
-  humanOwner,
-}: {
-  ownershipMode: string;
-  humanOwner: HumanOwnerProfile | null;
-}) {
-  const ai = ownershipMode === 'ai_active';
-  const phone = ownershipMode === 'phone_sales_pending';
-  const human = ownershipMode === 'mia_active' || (!!humanOwner && !ai && !phone);
-
-  let label: string;
-  let detail: string | null = null;
-  let bg: string;
-
-  if (ai) {
-    label = '🤖 הליד באחריות ה-AI';
-    detail = 'נציג אוטומטי עונה על הודעות נכנסות לפי playbook + variant פעיל';
-    bg = 'bg-sky-50 text-sky-900 border-sky-200';
-  } else if (phone) {
-    label = '📞 ממתין לשיחת טלפון יזומה';
-    detail = 'נציג אנושי הסמין שצריך לחייג; ה-AI לא יענה עד שיוחזר אליו';
-    bg = 'bg-amber-50 text-amber-900 border-amber-200';
-  } else if (human) {
-    const name = humanOwner?.full_name || humanOwner?.email || 'נציג אנושי';
-    label = `👤 מטפל: ${name}`;
-    detail = 'ה-AI מושעה. כשהנציג מסיים — צריך "החזרה ל-AI" כדי לשחזר מענה אוטומטי';
-    bg = 'bg-emerald-50 text-emerald-900 border-emerald-200';
-  } else {
-    label = `מצב בעלות: ${ownershipMode}`;
-    bg = 'bg-slate-50 text-slate-700 border-slate-200';
-  }
-
-  return (
-    <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${bg}`}>
-      <div className="font-medium">{label}</div>
-      {detail ? <div className="text-xs opacity-80">{detail}</div> : null}
-    </div>
-  );
-}
+// Tier 6.B — CurrentOwnerLine removed. It rendered a colored banner
+// saying "🤖 AI is handling" with an explanation subtitle. The
+// OwnershipBadge chip + HandlerBanner (the one directly above the
+// timeline) already say this — twice — so the colored banner was a
+// third repetition.
 
 // ── Tier 4.C — per-contact automation + journey history ─────────────────
 //
