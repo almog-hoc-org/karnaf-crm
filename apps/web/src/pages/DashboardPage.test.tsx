@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { DashboardSummary, QueueRow } from '@/lib/types';
@@ -111,9 +111,12 @@ describe('DashboardPage', () => {
   it('renders KPI cards with values from the summary', async () => {
     renderDashboard();
     await screen.findByText('מסך מצב');
-    const kpiSection = screen.getByText('לידים היום').closest('section') as HTMLElement;
+    // Tier 6.D.2 — "לידים היום" demoted from KPI card to an inline
+    // header subtitle (no click target made it the 5th-wheel KPI).
+    expect(screen.getByText(/היום נכנסו/)).toBeInTheDocument();
+    expect(screen.getByText(/12/)).toBeInTheDocument();
+    const kpiSection = screen.getByText('ממתינים למענה').closest('section') as HTMLElement;
     const kpiPairs: Array<[string, string]> = [
-      ['לידים היום', '12'],
       ['ממתינים למענה', '3'],
       ['לידים חמים', '5'],
       ['ממתינים לתשלום', '2'],
@@ -148,21 +151,14 @@ describe('DashboardPage', () => {
     expect(screen.getByText('נסגר ברכישה')).toBeInTheDocument();
   });
 
-  it('renders the pending queue list with deep links to lead detail', async () => {
+  it('renders the top queue items inside the command center with deep links', async () => {
+    // Tier 6.D.2 — "Pending queues" list panel was removed (the
+    // top 3 already appear in TodayCommandCenter's "הבא בתור" column,
+    // and queues_by_type below shows aggregated counts). The deep
+    // links the test cares about now live inside the command center.
     renderDashboard();
     const danaLinks = await screen.findAllByRole('link', { name: /דנה כהן/ });
     expect(danaLinks.some((link) => link.getAttribute('href') === '/leads/lead-1')).toBe(true);
-    const yossiLinks = screen.getAllByRole('link', { name: /יוסי לוי/ });
-    expect(yossiLinks.some((link) => link.getAttribute('href') === '/leads/lead-2')).toBe(true);
-    expect(screen.getByText('עדיפות 1')).toBeInTheDocument();
-  });
-
-  it('renders the empty state for the pending queue when there are no items', async () => {
-    vi.mocked(fetchQueueList).mockResolvedValue([]);
-    renderDashboard();
-    await screen.findByText('מסך מצב');
-    await waitFor(() => expect(screen.getByText('אין משימות פתוחות. הנה צעדים מומלצים:')).toBeInTheDocument());
-    expect(screen.getByRole('link', { name: 'בדיקת לידים חמים' })).toHaveAttribute('href', '/leads?heat=hot');
   });
 
   it('renders an error message when the summary query fails', async () => {

@@ -274,16 +274,22 @@ function EditJourneyDialog({
             <span>אפשר ריצות מקבילות לאותו איש קשר</span>
           </label>
         </div>
-        <label className="block text-sm">
-          <span className="text-slate-600">trigger_conditions (JSON)</span>
-          <textarea className="kf-input mt-1 min-h-[100px] font-mono text-xs leading-5" dir="ltr"
-            value={triggerJson} onChange={(e) => setTriggerJson(e.target.value)} />
-        </label>
-        <label className="block text-sm">
-          <span className="text-slate-600">steps (JSON array)</span>
-          <textarea className="kf-input mt-1 min-h-[200px] font-mono text-xs leading-5" dir="ltr"
-            value={stepsJson} onChange={(e) => setStepsJson(e.target.value)} />
-        </label>
+        {/* Tier 6.D.3 — JSON editing is the long-tail use case; basic
+            metadata edits are 80% of dialog opens. Collapse the two
+            heavy textareas behind a single disclosure. */}
+        <details className="rounded-md border border-slate-200 p-3">
+          <summary className="cursor-pointer text-sm font-medium text-slate-700">עריכת שלבים ותנאים (JSON)</summary>
+          <label className="mt-3 block text-sm">
+            <span className="text-slate-600">trigger_conditions (JSON)</span>
+            <textarea className="kf-input mt-1 min-h-[100px] font-mono text-xs leading-5" dir="ltr"
+              value={triggerJson} onChange={(e) => setTriggerJson(e.target.value)} />
+          </label>
+          <label className="mt-3 block text-sm">
+            <span className="text-slate-600">steps (JSON array)</span>
+            <textarea className="kf-input mt-1 min-h-[200px] font-mono text-xs leading-5" dir="ltr"
+              value={stepsJson} onChange={(e) => setStepsJson(e.target.value)} />
+          </label>
+        </details>
         {parseError ? <p className="text-sm text-rose-600">{parseError}</p> : null}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className="kf-btn" onClick={onCancel}>ביטול</button>

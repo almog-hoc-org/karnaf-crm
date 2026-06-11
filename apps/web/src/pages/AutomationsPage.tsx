@@ -354,16 +354,24 @@ function EditRuleDialog({
             </ul>
           </div>
         </details>
-        <label className="block text-sm">
-          <span className="text-slate-600">conditions (JSON)</span>
-          <textarea className="kf-input mt-1 min-h-[160px] font-mono text-xs leading-5"
-            value={conditions} onChange={(e) => setConditions(e.target.value)} dir="ltr" />
-        </label>
-        <label className="block text-sm">
-          <span className="text-slate-600">actions (JSON array)</span>
-          <textarea className="kf-input mt-1 min-h-[160px] font-mono text-xs leading-5"
-            value={actions} onChange={(e) => setActions(e.target.value)} dir="ltr" />
-        </label>
+        {/* Tier 6.D.3 — the two JSON textareas were the loudest thing
+            in the dialog even though most edits are toggling enabled or
+            tweaking copy. Collapsed by default behind a disclosure so
+            the dialog opens compact; rule-test panel below still gets
+            its own disclosure (Tier 5.D.4). */}
+        <details className="rounded-md border border-slate-200 p-3">
+          <summary className="cursor-pointer text-sm font-medium text-slate-700">עריכת conditions ו-actions (JSON)</summary>
+          <label className="mt-3 block text-sm">
+            <span className="text-slate-600">conditions (JSON)</span>
+            <textarea className="kf-input mt-1 min-h-[160px] font-mono text-xs leading-5"
+              value={conditions} onChange={(e) => setConditions(e.target.value)} dir="ltr" />
+          </label>
+          <label className="mt-3 block text-sm">
+            <span className="text-slate-600">actions (JSON array)</span>
+            <textarea className="kf-input mt-1 min-h-[160px] font-mono text-xs leading-5"
+              value={actions} onChange={(e) => setActions(e.target.value)} dir="ltr" />
+          </label>
+        </details>
         {parseError ? <p className="text-sm text-rose-600">{parseError}</p> : null}
 
         {/* Tier 5.D.4 — test panel. Collapsible by default so the

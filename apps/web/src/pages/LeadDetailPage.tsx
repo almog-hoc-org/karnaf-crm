@@ -867,84 +867,63 @@ function OperatorGuidanceCard({
       className={clsx('rounded-2xl border p-4 shadow-sm sm:p-5', insight.tone)}
       aria-label="המלצת פעולה למפעילה"
     >
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-white/75 px-2.5 py-1 text-xs font-semibold ring-1 ring-black/5">
-              הפעולה הבאה
-            </span>
-            <span className="text-xs font-medium opacity-75">{insight.ownerLine}</span>
-            {lead.intake_segment ? (
-              <span className="rounded-full bg-white/60 px-2.5 py-1 text-xs font-medium ring-1 ring-black/5">
-                {SEGMENT_OPTIONS.find((option) => option.value === lead.intake_segment)?.label ?? lead.intake_segment}
-              </span>
-            ) : null}
-          </div>
-          <h2 className="text-xl font-semibold tracking-tight">{insight.title}</h2>
-          <p className="max-w-3xl text-sm leading-6 opacity-85">{insight.detail}</p>
-          <div className="grid gap-2 md:grid-cols-2">
-            <GuidanceMiniCard label="למה זה כאן" value={insight.why} />
-            <GuidanceMiniCard label="מה להגיד עכשיו" value={insight.script} />
-          </div>
-          <div className="rounded-2xl bg-white/65 p-3 ring-1 ring-black/5" aria-label="סיום טיפול נכון">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide opacity-60">סיום טיפול</p>
-                <h3 className="text-sm font-semibold">איך יודעים שהליד לא צריך להמשיך לקפוץ?</h3>
-              </div>
-              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium ring-1 ring-black/5">
-                החלטה אחת לפני שסוגרים
-              </span>
-            </div>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
-              {resolutionGuide.map((item) => (
-                <div key={item.title} className="rounded-xl bg-white/70 p-3 ring-1 ring-black/5">
-                  <p className="text-sm font-semibold">{item.title}</p>
-                  <p className="mt-1 text-xs leading-5 opacity-75">{item.when}</p>
-                  <p className="mt-2 text-xs font-medium opacity-90">{item.action}</p>
-                </div>
-              ))}
-            </div>
-          </div>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-white/75 px-2.5 py-1 text-xs font-semibold ring-1 ring-black/5">
+            הפעולה הבאה
+          </span>
+          <span className="text-xs font-medium opacity-75">{insight.ownerLine}</span>
         </div>
-        <div className="rounded-2xl bg-white/70 p-3 ring-1 ring-black/5">
-          <p className="text-xs font-semibold uppercase tracking-wide opacity-60">צעדים מהירים</p>
-          {canAct ? (
-            <div className="mt-3 grid gap-2">
-              {primaryLabel && primaryHandler ? (
-                <button
-                  type="button"
-                  className="kf-btn kf-btn-primary justify-center"
-                  disabled={busy}
-                  onClick={primaryHandler}
-                >
-                  {primaryLabel}
-                </button>
-              ) : null}
-              <a
-                href={lead.phone ? waLink(lead.phone) : undefined}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={clsx('kf-btn justify-center', !lead.phone && 'pointer-events-none opacity-50')}
-              >
-                לפתוח שיחה ב-WhatsApp
-              </a>
-              {insight.primaryAction !== 'takeover' ? (
-                <button
-                  type="button"
-                  className="kf-btn kf-btn-ghost justify-center"
-                  disabled={busy}
-                  onClick={onAssignToMia}
-                >
-                  להעביר לאדם
-                </button>
-              ) : null}
-            </div>
-          ) : (
-            <p className="mt-2 text-sm opacity-75">יש לך הרשאת צפייה בלבד, לכן הפעולות מוסתרות.</p>
-          )}
-        </div>
+        {/* Primary action moved inline next to the title — the right-side
+            column with 3 buttons (Tier 6 audit) duplicated WhatsApp
+            (header) and "להעביר לאדם" (action bar overflow). Only the
+            single recommended action earns the primary slot here. */}
+        {canAct && primaryLabel && primaryHandler ? (
+          <button
+            type="button"
+            className="kf-btn kf-btn-primary"
+            disabled={busy}
+            onClick={primaryHandler}
+          >
+            {primaryLabel}
+          </button>
+        ) : null}
       </div>
+      <h2 className="mt-2 text-xl font-semibold tracking-tight">{insight.title}</h2>
+      <p className="mt-1 max-w-3xl text-sm leading-6 opacity-85">{insight.detail}</p>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <GuidanceMiniCard label="למה זה כאן" value={insight.why} />
+        <GuidanceMiniCard label="מה להגיד עכשיו" value={insight.script} />
+      </div>
+
+      {/* Tier 6.D — the "סיום טיפול" resolution guide (4 mini-cards
+          explaining when to close/escalate) is tutorial content. New
+          operators benefit on day one; by day three it's noise. Now
+          inside a disclosure that defaults collapsed — open only if a
+          new sales_rep needs guidance on a specific lead. */}
+      <details className="mt-3 rounded-xl bg-white/55 ring-1 ring-black/5">
+        <summary className="cursor-pointer px-3 py-2 text-sm font-medium opacity-80 hover:opacity-100">
+          איך לסגור נכון את הטיפול?
+        </summary>
+        <div className="grid gap-2 px-3 pb-3 md:grid-cols-2">
+          {resolutionGuide.map((item) => (
+            <div key={item.title} className="rounded-xl bg-white/75 p-3 ring-1 ring-black/5">
+              <p className="text-sm font-semibold">{item.title}</p>
+              <p className="mt-1 text-xs leading-5 opacity-75">{item.when}</p>
+              <p className="mt-2 text-xs font-medium opacity-90">{item.action}</p>
+            </div>
+          ))}
+        </div>
+      </details>
+
+      {!canAct ? (
+        <p className="mt-3 text-sm opacity-75">יש לך הרשאת צפייה בלבד, לכן הפעולות מוסתרות.</p>
+      ) : null}
+      {/* intake_segment chip dropped from the top row — it's already
+          visible inside the סיווג ואבחון sidebar card. */}
+      <span className="sr-only">
+        {lead.intake_segment ? SEGMENT_OPTIONS.find((option) => option.value === lead.intake_segment)?.label : ''}
+      </span>
     </section>
   );
 }

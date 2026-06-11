@@ -22,8 +22,15 @@ export function DashboardPage() {
   return (
     <div className="space-y-4 sm:space-y-6">
       <WelcomeCard role={auth.role} userEmail={auth.user?.email ?? null} />
-      <header className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{t('dashboard_title')}</h1>
+      <header className="flex flex-wrap items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{t('dashboard_title')}</h1>
+          {/* Tier 6.D.2 — "leads today" was a 5th KPI that didn't have a
+              click target. Inline here as quiet context instead. */}
+          <span className="text-sm text-slate-500">
+            היום נכנסו <strong className="tabular-nums text-slate-700">{s.leadsToday}</strong> לידים
+          </span>
+        </div>
         <button
           type="button" className="kf-btn kf-btn-ghost shrink-0"
           onClick={() => { summaryQ.refetch(); queueQ.refetch(); }}
@@ -39,8 +46,8 @@ export function DashboardPage() {
 
       <TodayCommandCenter summary={s} queues={queueQ.data ?? []} queuesLoading={queueQ.isLoading} />
 
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <KpiCard label={t('kpi_leads_today')} value={s.leadsToday} icon={<IconSparkles />} />
+      {/* Tier 6.D.2 — 4 actionable KPIs (was 5). Each has a click target. */}
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard label={t('kpi_unanswered')} value={s.unansweredNow} tone={s.unansweredNow > 0 ? 'warn' : 'normal'}
                  to="/leads?status=new" icon={<IconClock />} />
         <KpiCard label={t('kpi_hot_leads')} value={s.hotLeadsNow} tone={s.hotLeadsNow > 0 ? 'hot' : 'normal'}
@@ -51,41 +58,16 @@ export function DashboardPage() {
                  to="/inbox?lane=risk" icon={<IconAlert />} />
       </section>
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="kf-card p-4 sm:p-5">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold">{t('conversion_funnel')}</h2>
-            <span className="hidden text-xs text-slate-500 sm:inline">{t('conversion_step_over_step')}</span>
-          </div>
-          <FunnelBars funnel={s.funnel} />
+      {/* Tier 6.D.2 — "Pending queues" panel removed. TodayCommandCenter's
+          "הבא בתור" already lists the top 3 queue items; this panel
+          showed the next 8. queues_by_type below shows aggregated counts.
+          Three queue-related sections was one too many. */}
+      <section className="kf-card p-4 sm:p-5">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">{t('conversion_funnel')}</h2>
+          <span className="hidden text-xs text-slate-500 sm:inline">{t('conversion_step_over_step')}</span>
         </div>
-
-        <div className="kf-card p-4 sm:p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">{t('pending_queues')}</h2>
-            <Link to="/queue" className="text-xs text-brand-700 hover:underline">{t('to_all_queues')}</Link>
-          </div>
-          {queueQ.isLoading ? (
-            <p className="mt-3 text-sm text-slate-500">{t('loading')}</p>
-          ) : queueQ.data && queueQ.data.length > 0 ? (
-            <ul className="mt-3 divide-y divide-slate-100">
-              {queueQ.data.slice(0, 8).map((q) => (
-                <li key={q.id} className="flex items-center justify-between gap-3 py-2">
-                  <Link to={`/leads/${q.lead_id}`} className="min-w-0 flex-1 truncate text-sm text-slate-700 hover:text-brand-700">
-                    <strong>{QUEUE_LABELS[q.queue_type] ?? q.queue_type}</strong>
-                    <span className="text-slate-500"> · {q.leads?.full_name ?? '—'}</span>
-                  </Link>
-                  <span className="inline-flex items-center gap-1 text-xs text-slate-500" title={`${t('priority')} ${q.priority_level}`}>
-                    <PriorityDot priority={q.priority_level} />
-                    {t('priority')} {q.priority_level}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <EmptyStateGuidance />
-          )}
-        </div>
+        <FunnelBars funnel={s.funnel} />
       </section>
 
       <section className="kf-card p-4 sm:p-5">
@@ -314,33 +296,6 @@ function FunnelBars({ funnel }: { funnel: DashboardSummary['funnel'] }) {
   );
 }
 
-function EmptyStateGuidance() {
-  return (
-    <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/40 p-4 text-sm text-slate-700">
-      <div className="flex items-center gap-2">
-        <svg viewBox="0 0 20 20" className="h-5 w-5 text-emerald-500" fill="none" stroke="currentColor" strokeWidth="1.7">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M5 10.5 9 14l6-7" />
-        </svg>
-        <span className="font-medium text-emerald-800">אין משימות פתוחות. הנה צעדים מומלצים:</span>
-      </div>
-      <ol className="mt-2 list-decimal space-y-1 ps-6 text-slate-600">
-        <li>
-          <Link to="/leads?heat=hot" className="text-brand-700 hover:underline">בדיקת לידים חמים</Link>
-          {' '}— ודא שהבוט מתקדם איתם או שמיה יודעת לקחת.
-        </li>
-        <li>
-          <Link to="/leads" className="text-brand-700 hover:underline">סקירת לידים חדשים מהשעה האחרונה</Link>
-          {' '}— מקור / heat / סטטוס בכניסה.
-        </li>
-        <li>
-          <Link to="/queue?status=resolved" className="text-brand-700 hover:underline">סקירת פריטי תור שנסגרו היום</Link>
-          {' '}— זיהוי חזרות שמצדיקות שיפור בוט.
-        </li>
-      </ol>
-    </div>
-  );
-}
-
 function PriorityDot({ priority }: { priority: number }) {
   // work_queue.priority_level is constrained to 1-5; lower number = more urgent.
   const tone =
@@ -350,13 +305,6 @@ function PriorityDot({ priority }: { priority: number }) {
   return <span aria-hidden="true" className={`kf-dot ${tone}`} />;
 }
 
-function IconSparkles() {
-  return (
-    <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7">
-      <path strokeLinecap="round" d="M10 3v3M10 14v3M3 10h3M14 10h3M5 5l2 2M13 13l2 2M15 5l-2 2M7 13l-2 2" />
-    </svg>
-  );
-}
 function IconClock() {
   return (
     <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7">
