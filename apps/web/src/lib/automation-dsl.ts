@@ -145,11 +145,116 @@ export function sampleContextForTrigger(triggerEvent: string): Record<string, un
           id: '00000000-0000-0000-0000-000000000000',
           full_name: 'דנה כהן',
           first_name: 'דנה',
+          phone: '+972501234567',
+          email: 'dana@example.com',
+          city: 'תל אביב',
           product_interest: 'program',
-          hours_since_intake: 36,
-          has_won_program: false,
+          intake_segment: 'high_intent_qualified',
+          primary_track: 'program',
+          lead_status: 'first_contact_sent',
+          ownership_mode: 'ai_active',
+          lead_heat: 'warm',
           do_not_contact: false,
+          source: 'whatsapp_direct',
+          hours_since_intake: 36,
+          hours_since_last_inbound: 28,
+          hours_since_last_outbound: 12,
+          has_won_program: false,
+          is_program_member: false,
+          days_since_program_join: null,
+          program_progress_stage: null,
         },
+      };
+    // Tier 7.D.2 — sample contexts for the remaining triggers so
+    // /automations rule editing test panel doesn't render a stub.
+    case 'deal.investor_open':
+      return {
+        lead: {
+          id: '00000000-0000-0000-0000-000000000000',
+          full_name: 'יובל לוי',
+          first_name: 'יובל',
+          phone: '+972502345678',
+          do_not_contact: false,
+          primary_track: 'investor_mentorship',
+          product_interest: 'investor_mentorship',
+          lead_status: 'qualified',
+          ownership_mode: 'ai_active',
+        },
+        deal: {
+          id: '00000000-0000-0000-0000-000000000010',
+          track: 'investor_mentorship',
+          value: 18000,
+          currency: 'ILS',
+          partner_id: null,
+        },
+      };
+    case 'lead.dormant':
+      return {
+        lead: {
+          id: '00000000-0000-0000-0000-000000000000',
+          full_name: 'דנה כהן',
+          first_name: 'דנה',
+          phone: '+972501234567',
+          do_not_contact: false,
+          primary_track: 'program',
+          product_interest: 'program',
+          lead_status: 'dormant',
+          ownership_mode: 'ai_active',
+          hours_since_last_inbound: 360,
+          hours_since_last_outbound: 96,
+          has_won_program: false,
+          is_program_member: false,
+        },
+      };
+    case 'deal.lost':
+      return {
+        lead: {
+          id: '00000000-0000-0000-0000-000000000000',
+          full_name: 'יובל לוי',
+          first_name: 'יובל',
+          phone: '+972502345678',
+          do_not_contact: false,
+          primary_track: 'investor_mentorship',
+          lead_status: 'lost',
+        },
+        deal: { id: '00000000-0000-0000-0000-000000000010', track: 'investor_mentorship', value: 0, currency: 'ILS' },
+        lost_reason: 'price objection',
+      };
+    case 'project.recruiting':
+      return {
+        lead: {
+          id: '00000000-0000-0000-0000-000000000000',
+          full_name: 'דנה כהן',
+          first_name: 'דנה',
+          phone: '+972501234567',
+          city: 'תל אביב',
+          do_not_contact: false,
+          primary_track: 'presale',
+          product_interest: 'contractor_group_purchase',
+          lead_status: 'nurture',
+        },
+        project: {
+          id: '00000000-0000-0000-0000-000000000020',
+          name: 'פרויקט אלפא',
+          city: 'נתניה',
+          target_amount: 60_000_000,
+          target_date: '2026-12-01',
+          currency: 'ILS',
+        },
+        project_name: 'פרויקט אלפא',
+        city: 'נתניה',
+      };
+    case 'lead.track_set':
+      return {
+        lead: {
+          id: '00000000-0000-0000-0000-000000000000',
+          full_name: 'דנה כהן',
+          first_name: 'דנה',
+          do_not_contact: false,
+          primary_track: 'program',
+        },
+        previous_track: null,
+        new_track: 'program',
       };
     default:
       return { lead: { id: 'sample', do_not_contact: false } };

@@ -31,16 +31,44 @@ export interface AutomationRunInput {
   correlationId?: string;
 }
 
+// Tier 7.D.1 — context blob cap. Every run today logs the full lead
+// context (~600 bytes) plus deal/project blocks. At 1k rules/day that
+// becomes meaningful storage growth over months. 4096 bytes is enough
+// to debug a typical "why did this skip" question; anything bigger gets
+// truncated and a marker added so the operator knows.
+const CONTEXT_MAX_BYTES = 4096;
+
+function truncateContext(ctx: Record<string, unknown> | undefined):
+  { context: Record<string, unknown>; truncated: boolean }
+{
+  if (!ctx) return { context: {}, truncated: false };
+  const json = JSON.stringify(ctx);
+  if (json.length <= CONTEXT_MAX_BYTES) return { context: ctx, truncated: false };
+  // Keep top-level keys but trim long string values. Faster than
+  // recursive walk and matches the typical context shape (lead, deal,
+  // partner, project — none of those have deep nesting).
+  const trimmed: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(ctx)) {
+    if (typeof v === 'string' && v.length > 200) {
+      trimmed[k] = v.slice(0, 200) + '…(truncated)';
+    } else {
+      trimmed[k] = v;
+    }
+  }
+  return { context: trimmed, truncated: true };
+}
+
 export async function logAutomationRun(
   supabase: SupabaseClient,
   input: AutomationRunInput,
 ): Promise<void> {
   try {
+    const { context: trimmedContext, truncated } = truncateContext(input.context);
     const { error } = await supabase.from('automation_runs').insert({
       rule_code: input.ruleCode,
       trigger_event: input.triggerEvent,
       contact_id: input.contactId ?? null,
-      context: input.context ?? {},
+      context: { ...trimmedContext, ...(truncated ? { _truncated: true } : {}) },
       action_results: input.actionResults ?? [],
       status: input.status ?? 'success',
       reason: input.reason ?? null,

@@ -722,20 +722,27 @@ export function LeadDetailPage() {
             </div>
           ) : null}
 
+          {/* Tier 7.D.3 — call log is a low-frequency action. Collapsed
+              by default so the sidebar stays compact for the 80% of leads
+              that aren't getting a phone log in this session. */}
           {auth.role === 'sales_rep' ||
           auth.role === 'mia' ||
           auth.role === 'admin' ||
           auth.role === 'owner' ? (
-            <div className="kf-card p-4">
-              <h2 className="font-semibold">תיעוד שיחת טלפון</h2>
-              <CallLogForm
-                onSubmit={(outcome, durationMinutes, note) =>
-                  logCall.mutate({ outcome, durationMinutes, note })
-                }
-                submitting={logCall.isPending}
-                errorMessage={logCall.error ? (logCall.error as Error).message : null}
-              />
-            </div>
+            <details className="kf-card p-4">
+              <summary className="cursor-pointer text-base font-semibold text-slate-800">
+                תיעוד שיחת טלפון
+              </summary>
+              <div className="mt-2">
+                <CallLogForm
+                  onSubmit={(outcome, durationMinutes, note) =>
+                    logCall.mutate({ outcome, durationMinutes, note })
+                  }
+                  submitting={logCall.isPending}
+                  errorMessage={logCall.error ? (logCall.error as Error).message : null}
+                />
+              </div>
+            </details>
           ) : null}
 
           {/* Tier 4.C — per-contact automation + journey history. Mia

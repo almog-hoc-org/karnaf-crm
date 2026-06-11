@@ -1,8 +1,8 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { fetchMessageTemplates, postMessageTemplateAction } from '@/lib/api';
-import type { MessageTemplateRow, TemplateChannel, TemplateStatus } from '@/lib/types';
-import { renderTemplate } from '@/lib/template-render';
+import { fetchLeadsList, fetchMessageTemplates, postMessageTemplateAction } from '@/lib/api';
+import type { LeadRow, MessageTemplateRow, TemplateChannel, TemplateStatus } from '@/lib/types';
+import { contextFromLead, renderTemplate } from '@/lib/template-render';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
@@ -32,6 +32,49 @@ export function TemplatesPage() {
   const templates = templatesQ.data?.templates ?? [];
   const [editing, setEditing] = useState<MessageTemplateRow | null>(null);
 
+  // Tier 7.C.4 — preview-against-real-lead. Admin picks a recent lead;
+  // every template renders against that contact's data. Fallback to the
+  // hard-coded sample when no lead is picked. Lazy fetch — only loads
+  // when the picker opens.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [previewLead, setPreviewLead] = useState<LeadRow | null>(null);
+  const leadsQ = useQuery({
+    queryKey: ['templates-preview-leads'],
+    queryFn: () => fetchLeadsList({ limit: 30 }),
+    enabled: pickerOpen,
+  });
+  // Build the substitution context per render. When previewLead is null,
+  // falls back to a representative sample so first-time admins see
+  // something meaningful.
+  const previewContext = useMemo<Record<string, unknown>>(() => {
+    if (previewLead) {
+      return {
+        ...contextFromLead(previewLead),
+        partner_name: 'שם הפרילנסר',
+        meeting_time: 'מחר בשעה 14:00',
+        project_name: 'שם הפרויקט',
+        deal_value: '1,200,000',
+        commission_amount: '36,000',
+        investment_budget: '1.5M',
+        preferred_area: 'מרכז',
+        target_date: '15/07',
+      };
+    }
+    return {
+      first_name: 'שם הלקוח',
+      phone: '050-1234567',
+      partner_name: 'שם הפרילנסר',
+      meeting_time: 'מחר בשעה 14:00',
+      project_name: 'שם הפרויקט',
+      city: 'תל אביב',
+      deal_value: '1,200,000',
+      commission_amount: '36,000',
+      investment_budget: '1.5M',
+      preferred_area: 'מרכז',
+      target_date: '15/07',
+    };
+  }, [previewLead]);
+
   // Group by channel for the section layout.
   const byChannel = useMemo(() => {
     const groups = new Map<TemplateChannel, MessageTemplateRow[]>();
@@ -56,6 +99,48 @@ export function TemplatesPage() {
         תבנית בסטטוס "טיוטה" לא תישלח עד שהיא מסומנת כפעילה.
       </PageIntro>
 
+      {/* Tier 7.C.4 — preview against a real lead. */}
+      <section className="kf-card flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
+        <div>
+          {previewLead ? (
+            <span>
+              תצוגה מקדימה לליד: <strong>{previewLead.full_name || previewLead.phone || previewLead.id.slice(0, 8)}</strong>
+              <span className="ms-2 text-xs text-amber-700">תצוגה בלבד — לא נשלח דבר</span>
+            </span>
+          ) : (
+            <span className="text-slate-500">תצוגה מקדימה משתמשת ב-sample data — אפשר לבחור ליד אמיתי לבדיקה.</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {previewLead ? (
+            <button type="button" className="kf-btn text-xs" onClick={() => setPreviewLead(null)}>
+              איפוס לדוגמה
+            </button>
+          ) : null}
+          <button type="button" className="kf-btn kf-btn-ghost text-xs" onClick={() => setPickerOpen((o) => !o)}>
+            {pickerOpen ? 'סגור' : 'בחר ליד אמיתי'}
+          </button>
+        </div>
+      </section>
+      {pickerOpen ? (
+        <div className="kf-card max-h-64 overflow-auto p-2">
+          {leadsQ.isLoading ? <p className="text-xs text-slate-500">טוען...</p> :
+            leadsQ.data?.leads.length ? (
+              <ul className="space-y-1 text-sm">
+                {leadsQ.data.leads.map((lead) => (
+                  <li key={lead.id}>
+                    <button type="button" className="w-full rounded-md p-2 text-right hover:bg-slate-50"
+                      onClick={() => { setPreviewLead(lead); setPickerOpen(false); }}>
+                      <strong>{lead.full_name || lead.phone || lead.id.slice(0, 8)}</strong>
+                      {lead.product_interest ? <span className="text-xs text-slate-500"> · {lead.product_interest}</span> : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="text-xs text-slate-500">אין לידים.</p>}
+        </div>
+      ) : null}
+
       {templatesQ.isLoading ? <p className="text-slate-500">{t('loading')}</p> : null}
 
       {Array.from(byChannel.entries()).map(([channel, items]) => (
@@ -64,19 +149,7 @@ export function TemplatesPage() {
           <p className="mt-1 text-xs text-slate-500">{items.length} תבניות</p>
           <ul className="mt-3 space-y-2">
             {items.map((tpl) => {
-              const preview = renderTemplate(tpl.body, {
-                first_name: 'שם הלקוח',
-                phone: '050-1234567',
-                partner_name: 'שם הפרילנסר',
-                meeting_time: 'מחר בשעה 14:00',
-                project_name: 'שם הפרויקט',
-                city: 'תל אביב',
-                deal_value: '1,200,000',
-                commission_amount: '36,000',
-                investment_budget: '1.5M',
-                preferred_area: 'מרכז',
-                target_date: '15/07',
-              });
+              const preview = renderTemplate(tpl.body, previewContext);
               return (
                 <li key={tpl.id} className="rounded-lg border border-slate-200 bg-white p-3">
                   <div className="flex items-baseline justify-between gap-2">
