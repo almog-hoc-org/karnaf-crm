@@ -103,6 +103,15 @@ export function ProjectsPage() {
               <div className="flex flex-wrap gap-1 pt-2">
                 <button type="button" className="kf-btn text-xs" onClick={() => setEditing(p)}>עריכה</button>
                 {p.status === 'recruiting' ? (
+                  <button type="button" className="kf-btn kf-btn-primary text-xs" disabled={action.isPending}
+                    onClick={() => {
+                      if (window.confirm(`לשלוח הצעת פריסייל (C14) לכל הלידים המתאימים לפרויקט ${p.name}? פעולה אינה הפיכה — ההודעות נכנסות מיד לתור.`)) {
+                        action.mutate({ action: 'publish', id: p.id });
+                      }
+                    }}
+                    title="שולח C14 לכל הלידים שמתעניינים בפריסייל / קבוצת רכישה">פרסום ללידים</button>
+                ) : null}
+                {p.status === 'recruiting' ? (
                   <button type="button" className="kf-btn text-xs" disabled={action.isPending}
                     onClick={() => action.mutate({ action: 'close', id: p.id })}>סגירה לגיוס</button>
                 ) : null}

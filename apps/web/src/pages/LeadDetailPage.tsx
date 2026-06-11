@@ -2097,21 +2097,25 @@ function AutomationHistoryCard({ contactId }: { contactId: string }) {
   return (
     <div className="kf-card p-4">
       <h2 className="font-semibold">היסטוריית אוטומציה</h2>
+      {/* Tier 5 polish — journey rows + automation rows linkable to
+          their definitions for one-click drill-down. */}
       {journeys.length > 0 ? (
         <div className="mt-2">
           <h3 className="text-xs font-medium text-slate-500">מסעות לקוח</h3>
           <ul className="mt-1 space-y-1 text-sm">
             {journeys.map((j) => (
-              <li key={j.id} className="flex items-baseline justify-between gap-2">
-                <span className="truncate">
-                  <strong>{j.definition?.name_he ?? j.definition_code}</strong>
-                  <span className="text-slate-500"> · שלב {j.current_step + 1}</span>
-                </span>
-                <span className={
-                  j.status === 'active' ? 'text-xs text-sky-700' :
-                  j.status === 'completed' ? 'text-xs text-emerald-700' :
-                  j.status === 'failed' ? 'text-xs text-rose-700' : 'text-xs text-slate-500'
-                }>{j.status}</span>
+              <li key={j.id}>
+                <Link to="/journeys" className="flex items-baseline justify-between gap-2 rounded-md p-1 hover:bg-slate-50">
+                  <span className="truncate">
+                    <strong>{j.definition?.name_he ?? j.definition_code}</strong>
+                    <span className="text-slate-500"> · שלב {j.current_step + 1}</span>
+                  </span>
+                  <span className={
+                    j.status === 'active' ? 'text-xs text-sky-700' :
+                    j.status === 'completed' ? 'text-xs text-emerald-700' :
+                    j.status === 'failed' ? 'text-xs text-rose-700' : 'text-xs text-slate-500'
+                  }>{j.status}</span>
+                </Link>
               </li>
             ))}
           </ul>
@@ -2122,16 +2126,18 @@ function AutomationHistoryCard({ contactId }: { contactId: string }) {
           <h3 className="text-xs font-medium text-slate-500">הרצות אחרונות ({runs.length})</h3>
           <ul className="mt-1 max-h-44 overflow-auto text-xs">
             {runs.slice(0, 12).map((r) => (
-              <li key={r.id} className="flex items-baseline justify-between gap-2 py-0.5">
-                <code className="truncate text-slate-700">{r.rule_code}</code>
-                <span className="flex items-center gap-1 text-slate-500">
-                  <span className={
-                    r.status === 'success' ? 'text-emerald-700' :
-                    r.status === 'failed' ? 'text-rose-700' :
-                    r.status === 'partial' ? 'text-amber-700' : 'text-slate-500'
-                  }>{r.status}</span>
-                  <span title={r.created_at}>{formatRelative(r.created_at)}</span>
-                </span>
+              <li key={r.id}>
+                <Link to="/automations" className="flex items-baseline justify-between gap-2 rounded-md p-1 py-0.5 hover:bg-slate-50">
+                  <code className="truncate text-slate-700">{r.rule_code}</code>
+                  <span className="flex items-center gap-1 text-slate-500">
+                    <span className={
+                      r.status === 'success' ? 'text-emerald-700' :
+                      r.status === 'failed' ? 'text-rose-700' :
+                      r.status === 'partial' ? 'text-amber-700' : 'text-slate-500'
+                    }>{r.status}</span>
+                    <span title={r.created_at}>{formatRelative(r.created_at)}</span>
+                  </span>
+                </Link>
               </li>
             ))}
           </ul>

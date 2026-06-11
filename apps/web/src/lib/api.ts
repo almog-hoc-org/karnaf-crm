@@ -192,10 +192,12 @@ export type ProjectAction =
   | { action: 'update'; id: string; name?: string; city?: string | null; developer_name?: string | null;
       project_type?: ProjectType; total_units?: number | null; price_per_unit?: number | null;
       target_amount?: number | null; target_date?: string | null; notes?: string | null }
-  | { action: 'close' | 'cancel' | 'mark_executed' | 'reopen'; id: string };
+  | { action: 'close' | 'cancel' | 'mark_executed' | 'reopen' | 'publish'; id: string };
 
 export async function postProjectAction(payload: ProjectAction) {
-  return postJson<{ ok: true; project: ProjectRow }>('/projects', payload as unknown as Record<string, unknown>);
+  // Publish returns the project plus a `fired` count; types stay loose
+  // here since the page presents it as a toast number.
+  return postJson<{ ok: true; project: ProjectRow; fired?: number }>('/projects', payload as unknown as Record<string, unknown>);
 }
 
 // === Commissions (Tier 1.D) ===============================================

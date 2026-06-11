@@ -42,7 +42,7 @@ interface UpdatePayload {
   notes?: string | null;
 }
 interface StatusPayload {
-  action: 'close' | 'cancel' | 'mark_executed' | 'reopen';
+  action: 'close' | 'cancel' | 'mark_executed' | 'reopen' | 'publish';
   id: string;
 }
 type Payload = CreatePayload | UpdatePayload | StatusPayload;
@@ -131,6 +131,71 @@ Deno.serve(async (req) => {
     if (error) return jsonResponse(req, { error: error.message }, 400);
     log.info('project_updated', { fn: 'projects', correlationId, by: staff.userId, id: body.id });
     return jsonResponse(req, { ok: true, project: data });
+  }
+
+  // Tier 4.D.8 — explicit "publish" action that fans the project out
+  // to relevant leads via the engine. Separate from `create` so an
+  // admin can fill in details first, then publish when ready.
+  // Emits `project.recruiting` per (lead, project) pair so the B17
+  // rule can match per-lead conditions. Capped at 500 leads per
+  // publish to bound the work; if Karnaf ever has more "relevant"
+  // leads this becomes a paginated background job.
+  if (body.action === 'publish') {
+    if (!body.id) return jsonResponse(req, { error: 'id required' }, 400);
+    const { data: project, error: projErr } = await supabase
+      .from('projects').select('*').eq('id', body.id).single();
+    if (projErr || !project) {
+      return jsonResponse(req, { error: projErr?.message ?? 'project not found' }, 404);
+    }
+    if (project.status !== 'recruiting') {
+      return jsonResponse(req, { error: 'publish requires project status = recruiting' }, 400);
+    }
+
+    // "Relevant" = active leads in presale or contractor_group_purchase
+    // interest who haven't opted out and aren't terminal.
+    const { data: leads, error: leadsErr } = await supabase
+      .from('leads')
+      .select('id, full_name, phone, email, city, product_interest, do_not_contact, primary_track, lead_status, ownership_mode')
+      .eq('do_not_contact', false)
+      .eq('removed_by_request', false)
+      .not('lead_status', 'in', '(won,lost,suppressed)')
+      .or('primary_track.eq.presale,product_interest.eq.contractor_group_purchase')
+      .limit(500);
+    if (leadsErr) return jsonResponse(req, { error: leadsErr.message }, 500);
+
+    const { runMatchingRules } = await import('../_shared/automation-engine.ts');
+    let fired = 0;
+    for (const lead of leads ?? []) {
+      const firstName = lead.full_name?.split(/\s+/u)[0] ?? '';
+      await runMatchingRules(supabase, {
+        triggerEvent: 'project.recruiting',
+        context: {
+          lead: {
+            id: lead.id, full_name: lead.full_name, first_name: firstName,
+            phone: lead.phone, email: lead.email, city: lead.city,
+            product_interest: lead.product_interest, do_not_contact: lead.do_not_contact,
+            primary_track: lead.primary_track, lead_status: lead.lead_status,
+            ownership_mode: lead.ownership_mode,
+          },
+          project: {
+            id: project.id, name: project.name, city: project.city,
+            developer_name: project.developer_name, project_type: project.project_type,
+            target_amount: project.target_amount, target_date: project.target_date,
+            currency: project.currency,
+          },
+          // Top-level project_name so {{project_name}} works in template
+          // bodies without `project.` prefix. Keeps spec template C14
+          // ("פרויקט {{project_name}} ב{{city}}") direct.
+          project_name: project.name,
+          city: project.city,
+        },
+        contactId: lead.id,
+        correlationId,
+      });
+      fired++;
+    }
+    log.info('project_published', { fn: 'projects', correlationId, by: staff.userId, id: project.id, fired });
+    return jsonResponse(req, { ok: true, project, fired });
   }
 
   if (['close', 'cancel', 'mark_executed', 'reopen'].includes(body.action)) {

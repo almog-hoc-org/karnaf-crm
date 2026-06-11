@@ -102,6 +102,20 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
+    // Tier 4.D.7 — program membership for B14 (student inactive
+    // nudge) and similar. is_program_member tells a rule the lead
+    // bought a program track; days_since_program_join + progress_stage
+    // give the cadence + position needed for retention rules.
+    const { data: memberRow } = await supabase
+      .from('program_members')
+      .select('joined_at, progress_stage')
+      .eq('lead_id', lead.id)
+      .maybeSingle();
+    const isProgramMember = !!memberRow;
+    const daysSinceProgramJoin = memberRow?.joined_at
+      ? Math.round((Date.now() - new Date(memberRow.joined_at).getTime()) / 86400000)
+      : null;
+
     const firstName = lead.full_name?.split(/\s+/u)[0] ?? '';
     // Tier 4.D.6 — derive hours-since-last-touch fields so rules can
     // express "hot lead 48h without reply" etc. without per-rule SQL.
@@ -129,6 +143,11 @@ Deno.serve(async (req) => {
         hours_since_last_inbound: hoursSinceInbound !== null ? Math.round(hoursSinceInbound * 10) / 10 : null,
         hours_since_last_outbound: hoursSinceOutbound !== null ? Math.round(hoursSinceOutbound * 10) / 10 : null,
         has_won_program: !!wonProgram,
+        // Program membership context (Tier 4.D.7) — enables B14 +
+        // student-progress automations without per-rule SQL.
+        is_program_member: isProgramMember,
+        days_since_program_join: daysSinceProgramJoin,
+        program_progress_stage: memberRow?.progress_stage ?? null,
       },
     };
 
