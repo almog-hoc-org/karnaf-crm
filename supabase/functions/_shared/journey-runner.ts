@@ -121,7 +121,18 @@ export async function startJourney(
     })
     .select('id')
     .single();
-  if (insErr) return { status: 'failed', reason: insErr.message };
+  // Tier 7.A.3 — partial unique index on (definition_id, contact_id)
+  // where status='active' (migration 077) atomically protects against
+  // burst races. When a concurrent insert beat us to it, the error
+  // code is 23505. Treat the same as the check-then-insert dedup
+  // above: skip and return success-ish so callers don't retry.
+  if (insErr) {
+    const errCode = (insErr as { code?: string }).code;
+    if (errCode === '23505') {
+      return { status: 'skipped', reason: 'concurrent start lost the race — already active' };
+    }
+    return { status: 'failed', reason: insErr.message };
+  }
 
   log.info('journey_started', { code: def.code, contactId: input.contactId, runId: created?.id });
   return { status: 'ok', run_id: created?.id };
@@ -144,6 +155,12 @@ export interface AdvanceTickResult {
   processed: number;
   completed: number;
   failed: number;
+  // Tier 7.A.5 — surfaces the query error so the tick orchestrator
+  // can fail the response (pg_cron retries on 5xx).
+  query_error: string | null;
+  // Tier 7.B.6 — when MAX_RUNS_PER_TICK was hit, signals that more
+  // due runs exist; the tick log uses this to emit a cap-breach warning.
+  cap_reached: boolean;
 }
 
 const MAX_RUNS_PER_TICK = 200;
@@ -152,7 +169,9 @@ export async function advanceDueRuns(
   supabase: SupabaseClient,
   correlationId?: string,
 ): Promise<AdvanceTickResult> {
-  const summary: AdvanceTickResult = { processed: 0, completed: 0, failed: 0 };
+  const summary: AdvanceTickResult = {
+    processed: 0, completed: 0, failed: 0, query_error: null, cap_reached: false,
+  };
 
   const { data: runs, error } = await supabase
     .from('journey_runs')
@@ -163,8 +182,10 @@ export async function advanceDueRuns(
     .limit(MAX_RUNS_PER_TICK);
   if (error) {
     log.error('journey_tick_query_failed', { err: error.message });
+    summary.query_error = error.message;
     return summary;
   }
+  if ((runs?.length ?? 0) >= MAX_RUNS_PER_TICK) summary.cap_reached = true;
 
   for (const run of runs ?? []) {
     const result = await advanceOneRun(supabase, run as DueRun, correlationId);

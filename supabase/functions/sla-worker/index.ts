@@ -9,6 +9,7 @@ import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { notifyTelegram } from '../_shared/notify-telegram.ts';
 import { logAutomationRun } from '../_shared/automation-log.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
+import { buildLeadContext } from '../_shared/event-context.ts';
 
 // Designed to be invoked by pg_cron via the Supabase scheduler. Every run
 // emits operational queue items for leads that have crossed an SLA boundary
@@ -298,16 +299,14 @@ Deno.serve(async (req) => {
     // since Tier 4.C migration 068). Fetch the lead detail context
     // the engine needs before the call — keeps the contract aligned
     // with leads-intake / mark_won.
-    const { data: leadCtx } = await supabase
-      .from('leads')
-      .select('id, full_name, phone, email, city, product_interest, do_not_contact, primary_track, lead_status, ownership_mode')
-      .eq('id', lead.id)
-      .maybeSingle();
+    // Tier 7.B.1 — unified context. retention_resurrect rules may
+    // condition on hours_since_intake / has_won_program; the builder
+    // populates them.
+    const leadCtx = await buildLeadContext(supabase, lead.id, { includeDerived: true });
     if (leadCtx) {
-      const firstName = leadCtx.full_name?.split(/\s+/u)[0] ?? '';
       await runMatchingRules(supabase, {
         triggerEvent: 'lead.dormant',
-        context: { lead: { ...leadCtx, first_name: firstName } },
+        context: { lead: leadCtx },
         contactId: lead.id,
         correlationId,
       });

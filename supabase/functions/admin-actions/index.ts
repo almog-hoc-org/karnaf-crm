@@ -6,6 +6,7 @@ import { AuthError, requireStaff, type StaffRole } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { env } from '../_shared/env.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
+import { buildLeadContext } from '../_shared/event-context.ts';
 
 type ActionName =
   | 'assign_to_mia'
@@ -377,17 +378,13 @@ Deno.serve(async (req) => {
           lost_at: ts,
         }).eq('id', lostDeal.id);
       }
-      const { data: leadForCtx } = await supabase
-        .from('leads')
-        .select('id, full_name, phone, email, city, product_interest, do_not_contact, lead_status, primary_track')
-        .eq('id', leadId)
-        .maybeSingle();
-      if (leadForCtx) {
-        const firstName = leadForCtx.full_name?.split(/\s+/u)[0] ?? '';
+      // Tier 7.B.1 — canonical context shape.
+      const leadCtxLost = await buildLeadContext(supabase, leadId);
+      if (leadCtxLost) {
         await runMatchingRules(supabase, {
           triggerEvent: 'deal.lost',
           context: {
-            lead: { ...leadForCtx, first_name: firstName },
+            lead: leadCtxLost,
             deal: lostDeal ?? null,
             lost_reason: note ?? null,
           },
@@ -447,17 +444,16 @@ Deno.serve(async (req) => {
         .order('won_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-      const { data: leadForCtx } = await supabase
-        .from('leads')
-        .select('id, full_name, phone, email, city, product_interest, do_not_contact, lead_status')
-        .eq('id', leadId)
-        .maybeSingle();
-      if (leadForCtx) {
-        const firstName = leadForCtx.full_name?.split(/\s+/u)[0] ?? '';
+      // Tier 7.B.1 — canonical context shape via builder; same shape
+      // as deal.lost and lead.created. Tier 7.A.1 depends on this: the
+      // investor_mentorship journey's new step-0 (assign_partner) needs
+      // primary_track in the lead context to gate correctly.
+      const leadCtxWon = await buildLeadContext(supabase, leadId);
+      if (leadCtxWon) {
         await runMatchingRules(supabase, {
           triggerEvent: 'deal.won',
           context: {
-            lead: { ...leadForCtx, first_name: firstName },
+            lead: leadCtxWon,
             deal: wonDeal ?? null,
           },
           contactId: leadId,

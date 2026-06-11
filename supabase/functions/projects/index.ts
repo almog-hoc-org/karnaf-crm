@@ -153,9 +153,10 @@ Deno.serve(async (req) => {
 
     // "Relevant" = active leads in presale or contractor_group_purchase
     // interest who haven't opted out and aren't terminal.
+    // Tier 7.B.1 — select the columns buildLeadContextFromRow expects.
     const { data: leads, error: leadsErr } = await supabase
       .from('leads')
-      .select('id, full_name, phone, email, city, product_interest, do_not_contact, primary_track, lead_status, ownership_mode')
+      .select('id, full_name, phone, email, city, product_interest, intake_segment, primary_track, lead_status, ownership_mode, lead_heat, do_not_contact, removed_by_request, source, created_at, last_inbound_at, last_outbound_at')
       .eq('do_not_contact', false)
       .eq('removed_by_request', false)
       .not('lead_status', 'in', '(won,lost,suppressed)')
@@ -163,20 +164,18 @@ Deno.serve(async (req) => {
       .limit(500);
     if (leadsErr) return jsonResponse(req, { error: leadsErr.message }, 500);
 
+    // Tier 7.B.1 — canonical lead context via shared builder. We
+    // already selected the relevant lead columns; pass the row
+    // straight through to avoid a per-lead re-query.
     const { runMatchingRules } = await import('../_shared/automation-engine.ts');
+    const { buildLeadContextFromRow } = await import('../_shared/event-context.ts');
     let fired = 0;
     for (const lead of leads ?? []) {
-      const firstName = lead.full_name?.split(/\s+/u)[0] ?? '';
+      const leadCtx = await buildLeadContextFromRow(supabase, lead);
       await runMatchingRules(supabase, {
         triggerEvent: 'project.recruiting',
         context: {
-          lead: {
-            id: lead.id, full_name: lead.full_name, first_name: firstName,
-            phone: lead.phone, email: lead.email, city: lead.city,
-            product_interest: lead.product_interest, do_not_contact: lead.do_not_contact,
-            primary_track: lead.primary_track, lead_status: lead.lead_status,
-            ownership_mode: lead.ownership_mode,
-          },
+          lead: leadCtx,
           project: {
             id: project.id, name: project.name, city: project.city,
             developer_name: project.developer_name, project_type: project.project_type,

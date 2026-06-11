@@ -150,6 +150,28 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
   if (!tpl) return { type: 'send_template', status: 'skipped', detail: `template ${channel}:${key} not found` };
   if (tpl.status !== 'active') return { type: 'send_template', status: 'skipped', detail: `template ${key} is ${tpl.status}` };
 
+  // Tier 7.A.2 — lazy partner fetch. If the template body references
+  // {{partner_name}} but ctx.context doesn't have it yet (e.g. admin
+  // reordered actions and send_template runs before assign_partner),
+  // try to resolve it from the deal's partner_id before refusing the
+  // send. Cheap one-time query per rendering; ignored on failure
+  // (we fall through to the "missing var" branch below as before).
+  if (tpl.body.includes('{{partner_name}}') && !ctx.context.partner_name) {
+    const dealCtx = ctx.context.deal as Record<string, unknown> | undefined;
+    const partnerId = dealCtx?.partner_id as string | undefined;
+    if (partnerId) {
+      const { data: partnerRow } = await ctx.supabase
+        .from('partners')
+        .select('id, full_name')
+        .eq('id', partnerId)
+        .maybeSingle();
+      if (partnerRow?.full_name) {
+        ctx.context.partner_name = partnerRow.full_name;
+        ctx.context.partner = { id: partnerRow.id, full_name: partnerRow.full_name };
+      }
+    }
+  }
+
   const { text, missing } = renderBody(tpl.body, ctx.context);
   if (missing.length > 0) {
     // Engine refuses half-filled templates. Better to log + skip than

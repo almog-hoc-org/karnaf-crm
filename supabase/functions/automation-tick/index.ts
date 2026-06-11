@@ -25,6 +25,7 @@ import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
 import { advanceDueRuns } from '../_shared/journey-runner.ts';
+import { buildLeadContextFromRow } from '../_shared/event-context.ts';
 
 const TRIGGER = 'time.elapsed';
 // Hard cap so a runaway query doesn't burn all our function time.
@@ -62,6 +63,16 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { ok: true, scanned: 0, rules: 0 });
   }
 
+  // Tier 7.A.5 — accumulate per-pass errors. Each pass continues
+  // independently (a journey advance failure shouldn't block the time
+  // .elapsed scan); the orchestrator returns 500 at the end if any pass
+  // failed so pg_cron retries on the next tick.
+  const tickErrors: string[] = [];
+  // Tier 7.B.6 — track caps hit; if a pass touched MAX_LEADS_PER_TICK
+  // or MAX_RUNS_PER_TICK, the next tick will catch the leftover work
+  // but admins should know we're behind.
+  const capBreaches: string[] = [];
+
   // Scan leads that could plausibly match any time-based rule. The
   // engine re-checks per-rule conditions; this query is just the
   // coarse filter. Skip muted leads + leads that have moved on +
@@ -71,7 +82,7 @@ Deno.serve(async (req) => {
   // to her. Audit Tier 5.B flagged this as critical.
   const { data: leads, error } = await supabase
     .from('leads')
-    .select('id, full_name, phone, email, city, product_interest, do_not_contact, removed_by_request, created_at, lead_status, ownership_mode, lead_heat, last_inbound_at, last_outbound_at')
+    .select('id, full_name, phone, email, city, product_interest, intake_segment, primary_track, do_not_contact, removed_by_request, source, created_at, last_inbound_at, last_outbound_at, lead_status, ownership_mode, lead_heat')
     .eq('do_not_contact', false)
     .eq('removed_by_request', false)
     .not('lead_status', 'in', '(won,lost,suppressed)')
@@ -81,79 +92,19 @@ Deno.serve(async (req) => {
 
   if (error) {
     log.error('tick_query_failed', { fn: 'automation-tick', correlationId, err: error.message });
-    return jsonResponse(req, { error: error.message }, 500);
+    tickErrors.push(`leads_query: ${error.message}`);
   }
+  if ((leads?.length ?? 0) >= MAX_LEADS_PER_TICK) capBreaches.push('leads_scan');
 
   let fired = 0;
   for (const lead of leads ?? []) {
-    // Build the per-lead context. The shape mirrors the rule's
-    // condition paths (`lead.product_interest`, `lead.hours_since_intake`).
-    const hoursSinceIntake = (Date.now() - new Date(lead.created_at).getTime()) / 3600000;
-
-    // Whether this lead has ever bought a program track. Cheap query
-    // — partial index on deals(status, track) would make it cheaper
-    // still. Skip for now; volume is low.
-    const { data: wonProgram } = await supabase
-      .from('deals')
-      .select('id', { head: false })
-      .eq('lead_id', lead.id)
-      .eq('track', 'program')
-      .eq('status', 'won')
-      .limit(1)
-      .maybeSingle();
-
-    // Tier 4.D.7 — program membership for B14 (student inactive
-    // nudge) and similar. is_program_member tells a rule the lead
-    // bought a program track; days_since_program_join + progress_stage
-    // give the cadence + position needed for retention rules.
-    const { data: memberRow } = await supabase
-      .from('program_members')
-      .select('joined_at, progress_stage')
-      .eq('lead_id', lead.id)
-      .maybeSingle();
-    const isProgramMember = !!memberRow;
-    const daysSinceProgramJoin = memberRow?.joined_at
-      ? Math.round((Date.now() - new Date(memberRow.joined_at).getTime()) / 86400000)
-      : null;
-
-    const firstName = lead.full_name?.split(/\s+/u)[0] ?? '';
-    // Tier 4.D.6 — derive hours-since-last-touch fields so rules can
-    // express "hot lead 48h without reply" etc. without per-rule SQL.
-    // null when never inbound/outbound (lead never engaged).
-    const hoursSinceInbound = lead.last_inbound_at
-      ? (Date.now() - new Date(lead.last_inbound_at).getTime()) / 3600000
-      : null;
-    const hoursSinceOutbound = lead.last_outbound_at
-      ? (Date.now() - new Date(lead.last_outbound_at).getTime()) / 3600000
-      : null;
-    const context = {
-      lead: {
-        id: lead.id,
-        full_name: lead.full_name,
-        first_name: firstName,
-        phone: lead.phone,
-        email: lead.email,
-        city: lead.city,
-        product_interest: lead.product_interest,
-        do_not_contact: lead.do_not_contact,
-        lead_status: lead.lead_status,
-        ownership_mode: lead.ownership_mode,
-        lead_heat: lead.lead_heat,
-        hours_since_intake: Math.round(hoursSinceIntake * 10) / 10,
-        hours_since_last_inbound: hoursSinceInbound !== null ? Math.round(hoursSinceInbound * 10) / 10 : null,
-        hours_since_last_outbound: hoursSinceOutbound !== null ? Math.round(hoursSinceOutbound * 10) / 10 : null,
-        has_won_program: !!wonProgram,
-        // Program membership context (Tier 4.D.7) — enables B14 +
-        // student-progress automations without per-rule SQL.
-        is_program_member: isProgramMember,
-        days_since_program_join: daysSinceProgramJoin,
-        program_progress_stage: memberRow?.progress_stage ?? null,
-      },
-    };
-
+    // Tier 7.B.1 — canonical lead context built from the already-loaded
+    // row + derived fields (program membership, has_won_program). One
+    // function returns the same 18-field shape every other emitter uses.
+    const leadCtx = await buildLeadContextFromRow(supabase, lead, { includeDerived: true });
     await runMatchingRules(supabase, {
       triggerEvent: TRIGGER,
-      context,
+      context: { lead: leadCtx },
       contactId: lead.id,
       correlationId,
     });
@@ -164,7 +115,10 @@ Deno.serve(async (req) => {
   // from the rule scan above, so a slow journeys step can't block
   // time.elapsed rules and vice versa. The runner already caps work
   // (MAX_RUNS_PER_TICK) so the combined budget is bounded.
+  // Tier 7.A.5 + 7.B.6 — surface the runner's query error + cap signal.
   const journeySummary = await advanceDueRuns(supabase, correlationId);
+  if (journeySummary.query_error) tickErrors.push(`journey_advance: ${journeySummary.query_error}`);
+  if (journeySummary.cap_reached) capBreaches.push('journey_advance');
 
   // Tier 4.D.5 — third pass: investor_mentorship deals without a
   // partner. Self-healing — a deal created anywhere (admin-actions,
@@ -174,29 +128,31 @@ Deno.serve(async (req) => {
   // rules listening on that trigger can act (assign_partner, send
   // C5/C6 templates, notify_internal).
   let unassignedFired = 0;
+  // Tier 7.B.1 — select the full leads.* shape the builder consumes
+  // so we don't have to round-trip per deal.
   const { data: unassignedDeals, error: dealsErr } = await supabase
     .from('deals')
-    .select('id, lead_id, track, value, currency, created_at, leads(id, full_name, phone, email, do_not_contact, primary_track)')
+    .select('id, lead_id, track, value, currency, created_at, leads(id, full_name, phone, email, city, product_interest, intake_segment, primary_track, lead_status, ownership_mode, lead_heat, do_not_contact, removed_by_request, source, created_at, last_inbound_at, last_outbound_at)')
     .eq('status', 'open')
     .eq('track', 'investor_mentorship')
     .is('partner_id', null)
     .order('created_at', { ascending: true })
     .limit(50);
   if (dealsErr) {
-    log.warn('tick_unassigned_deals_query_failed', { fn: 'automation-tick', correlationId, err: dealsErr.message });
+    // Tier 7.A.5 — fatal-on-error for this pass too. The full tick
+    // collects errors and fails the response so pg_cron logs red.
+    tickErrors.push(`unassigned_deals_query: ${dealsErr.message}`);
+    log.error('tick_unassigned_deals_query_failed', { fn: 'automation-tick', correlationId, err: dealsErr.message });
   } else {
     for (const deal of unassignedDeals ?? []) {
-      const leadRow = deal.leads as unknown as { id: string; full_name: string | null; phone: string | null; email: string | null; do_not_contact: boolean; primary_track: string | null } | null;
+      const leadRow = deal.leads as unknown as { id: string; do_not_contact?: boolean } | null;
       if (!leadRow || leadRow.do_not_contact) continue;
-      const firstName = leadRow.full_name?.split(/\s+/u)[0] ?? '';
+      // Use the loaded row directly — no extra query.
+      const leadCtxInvestor = await buildLeadContextFromRow(supabase, deal.leads as never);
       await runMatchingRules(supabase, {
         triggerEvent: 'deal.investor_open',
         context: {
-          lead: {
-            id: leadRow.id, full_name: leadRow.full_name, first_name: firstName,
-            phone: leadRow.phone, email: leadRow.email,
-            do_not_contact: leadRow.do_not_contact, primary_track: leadRow.primary_track,
-          },
+          lead: leadCtxInvestor,
           deal: { id: deal.id, track: deal.track, value: deal.value, currency: deal.currency },
         },
         contactId: leadRow.id,
@@ -206,6 +162,15 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Tier 7.B.6 — record cap hit on unassigned deals too.
+  if ((unassignedDeals?.length ?? 0) >= 50) capBreaches.push('unassigned_investor_deals');
+
+  // Tier 7.B.6 — log every cap breach as a warn so admins see "we're
+  // running behind" before customer-facing latency becomes a complaint.
+  if (capBreaches.length > 0) {
+    log.warn('tick_cap_breach', { fn: 'automation-tick', correlationId, passes: capBreaches });
+  }
+
   log.info('tick_done', {
     fn: 'automation-tick', correlationId,
     scanned: fired, rules: ruleCount,
@@ -213,10 +178,27 @@ Deno.serve(async (req) => {
     journeys_completed: journeySummary.completed,
     journeys_failed: journeySummary.failed,
     unassigned_investor_deals_fired: unassignedFired,
+    cap_breaches: capBreaches,
+    errors: tickErrors,
   });
+  // Tier 7.A.5 — fatal-on-error orchestration. If any pass errored out
+  // at the query level, return 500 so pg_cron logs red and retries on
+  // the next tick. Per-row failures inside the passes stay as warnings
+  // (already logged) — they're per-contact recoverable.
+  if (tickErrors.length > 0) {
+    return jsonResponse(req, {
+      ok: false,
+      scanned: fired, rules: ruleCount,
+      journeys: journeySummary,
+      unassigned_investor_deals_fired: unassignedFired,
+      cap_breaches: capBreaches,
+      errors: tickErrors,
+    }, 500);
+  }
   return jsonResponse(req, {
     ok: true, scanned: fired, rules: ruleCount,
     journeys: journeySummary,
     unassigned_investor_deals_fired: unassignedFired,
+    cap_breaches: capBreaches,
   });
 });

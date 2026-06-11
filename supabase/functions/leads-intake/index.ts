@@ -15,6 +15,7 @@ import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { classifyLeadIntake } from '../_shared/lead-classifier.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
+import { buildLeadContextFromRow } from '../_shared/event-context.ts';
 
 const FALLBACK_ALLOWED_SOURCES = new Set([
   'landing_page',
@@ -353,28 +354,25 @@ Deno.serve(async (req) => {
     dueAt,
   });
 
-  // Tier 4.C — emit lead.created for the engine. Any engine rule
-  // listening on this trigger gets evaluated against a context that
-  // includes lead.* + the classification (so a rule can gate on
-  // product_interest / intake_segment without re-querying).
-  const firstName = (lead.full_name as string | null | undefined)?.split(/\s+/u)[0] ?? '';
+  // Tier 4.C — emit lead.created for the engine. Tier 7.B.1: built
+  // via the unified context builder so the lead.* shape matches every
+  // other emitter. Classification + source come from the intake
+  // pipeline (more accurate than re-querying), so override after.
+  const leadCtx = await buildLeadContextFromRow(supabase, {
+    id: lead.id,
+    full_name: lead.full_name as string | null,
+    phone: lead.phone as string | null,
+    email: lead.email as string | null,
+    city: lead.city as string | null,
+    do_not_contact: lead.do_not_contact as boolean,
+    primary_track: prdTrack,
+    source,
+  });
+  leadCtx.product_interest = classification.productInterest;
+  leadCtx.intake_segment = classification.intakeSegment;
   await runMatchingRules(supabase, {
     triggerEvent: 'lead.created',
-    context: {
-      lead: {
-        id: lead.id,
-        full_name: lead.full_name,
-        first_name: firstName,
-        phone: lead.phone,
-        email: lead.email,
-        city: lead.city,
-        product_interest: classification.productInterest,
-        intake_segment: classification.intakeSegment,
-        do_not_contact: lead.do_not_contact,
-        primary_track: prdTrack,
-        source,
-      },
-    },
+    context: { lead: leadCtx },
     contactId: lead.id,
     correlationId,
   });
