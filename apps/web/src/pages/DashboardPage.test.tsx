@@ -20,9 +20,10 @@ const authStub: AuthState = {
 vi.mock('@/lib/api', () => ({
   fetchDashboardSummary: vi.fn(),
   fetchQueueList: vi.fn(),
+  fetchHeartbeats: vi.fn(),
 }));
 
-import { fetchDashboardSummary, fetchQueueList } from '@/lib/api';
+import { fetchDashboardSummary, fetchHeartbeats, fetchQueueList } from '@/lib/api';
 
 const summaryFixture: DashboardSummary = {
   leadsToday: 12,
@@ -95,6 +96,10 @@ function renderDashboard() {
 beforeEach(() => {
   vi.mocked(fetchDashboardSummary).mockResolvedValue(summaryFixture);
   vi.mocked(fetchQueueList).mockResolvedValue(queueFixture);
+  // Tier 7.B.3 — default to fresh heartbeat so banner doesn't render.
+  vi.mocked(fetchHeartbeats).mockResolvedValue([
+    { name: 'automation_tick', last_ok_at: new Date().toISOString(), last_run_id: 'mock', metadata: {} },
+  ]);
 });
 
 afterEach(() => {

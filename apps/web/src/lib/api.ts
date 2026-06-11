@@ -263,6 +263,25 @@ export async function postAutomationUpdateDsl(
   );
 }
 
+// === System heartbeat (Tier 7.B.3) =======================================
+
+export interface SystemHeartbeat {
+  name: string;
+  last_ok_at: string;
+  last_run_id: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export async function fetchHeartbeats() {
+  // Reads via the authed supabase client; RLS gates the read to staff.
+  const { supabase } = await import('./supabase');
+  const { data, error } = await supabase
+    .from('system_heartbeats')
+    .select('name, last_ok_at, last_run_id, metadata');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as SystemHeartbeat[];
+}
+
 // === Reports / dashboards (Tier 3) ========================================
 
 export async function fetchReports() {

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { fetchDashboardSummary, fetchQueueList } from '@/lib/api';
+import { fetchDashboardSummary, fetchHeartbeats, fetchQueueList } from '@/lib/api';
 import type { DashboardSummary, QueueRow } from '@/lib/types';
 import { QUEUE_LABELS } from '@/lib/format';
 import { Link } from 'react-router-dom';
@@ -12,6 +12,14 @@ export function DashboardPage() {
   const auth = useAuth();
   const summaryQ = useQuery({ queryKey: ['dashboard-summary'], queryFn: fetchDashboardSummary });
   const queueQ = useQuery({ queryKey: ['queue', 'pending'], queryFn: () => fetchQueueList({ status: 'pending' }) });
+  // Tier 7.B.3 — heartbeat health check. Refetches every minute so
+  // the banner appears within a tick or two of cron drift. RLS-gated
+  // to staff via system_heartbeats select policy.
+  const heartbeatsQ = useQuery({
+    queryKey: ['heartbeats'],
+    queryFn: fetchHeartbeats,
+    refetchInterval: 60_000,
+  });
   useDocumentTitle(t('dashboard_title'));
 
   if (summaryQ.isLoading) return <p className="text-slate-500">{t('loading')}</p>;
@@ -19,8 +27,27 @@ export function DashboardPage() {
 
   const s = summaryQ.data!;
 
+  // Tier 7.B.3 — banner shown when no automation_tick heartbeat in 15 min.
+  const tickHeartbeat = heartbeatsQ.data?.find((h) => h.name === 'automation_tick');
+  const heartbeatStale = tickHeartbeat
+    ? Date.now() - Date.parse(tickHeartbeat.last_ok_at) > 15 * 60_000
+    : false;
+
   return (
     <div className="space-y-4 sm:space-y-6">
+      {heartbeatStale ? (
+        <section className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-4 text-sm text-rose-900" role="alert">
+          <div className="flex items-baseline justify-between gap-3">
+            <div>
+              <strong className="block text-base">⚠️ האוטומציות לא רצות</strong>
+              <p className="mt-1 text-sm">
+                tick אחרון: <span className="tabular-nums">{tickHeartbeat ? new Date(tickHeartbeat.last_ok_at).toLocaleString('he-IL') : 'אף פעם'}</span>.
+                המנוע אמור לרוץ כל 10 דק׳ — אם הסטטוס לא חוזר, בדוק את ה-cron job ואת secrets האדג׳ פאנקשן.
+              </p>
+            </div>
+          </div>
+        </section>
+      ) : null}
       <WelcomeCard role={auth.role} userEmail={auth.user?.email ?? null} />
       <header className="flex flex-wrap items-baseline justify-between gap-3">
         <div className="flex items-baseline gap-3">

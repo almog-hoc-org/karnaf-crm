@@ -195,6 +195,22 @@ Deno.serve(async (req) => {
       errors: tickErrors,
     }, 500);
   }
+
+  // Tier 7.B.3 — heartbeat write. Lets the Dashboard banner detect
+  // cron drift without external monitoring. Best-effort; a write
+  // failure here doesn't change the tick's reported success — the
+  // dashboard would still see staleness within 15 min.
+  await supabase.from('system_heartbeats').upsert({
+    name: 'automation_tick',
+    last_ok_at: new Date().toISOString(),
+    last_run_id: correlationId,
+    metadata: {
+      scanned: fired, rules: ruleCount,
+      journeys_processed: journeySummary.processed,
+      unassigned_fired: unassignedFired,
+    },
+  }, { onConflict: 'name' });
+
   return jsonResponse(req, {
     ok: true, scanned: fired, rules: ruleCount,
     journeys: journeySummary,

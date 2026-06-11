@@ -147,6 +147,10 @@ interface DueRun {
   contact_id: string;
   current_step: number;
   state: Record<string, unknown>;
+  // Tier 7.B.2 — idempotency guard. Runner skips a step if it was
+  // already executed within the last 60 seconds for the same step idx.
+  last_step_executed_at: string | null;
+  last_step_idx: number | null;
   // The runner re-joins the steps live from journey_definitions on
   // each tick so an edit to a definition propagates immediately.
 }
@@ -175,7 +179,7 @@ export async function advanceDueRuns(
 
   const { data: runs, error } = await supabase
     .from('journey_runs')
-    .select('id, definition_id, definition_code, contact_id, current_step, state')
+    .select('id, definition_id, definition_code, contact_id, current_step, state, last_step_executed_at, last_step_idx')
     .eq('status', 'active')
     .lte('scheduled_next_at', new Date().toISOString())
     .order('scheduled_next_at', { ascending: true })
@@ -228,29 +232,33 @@ async function advanceOneRun(
     await supabase.from('journey_runs').update({
       status: 'completed', completed_at: new Date().toISOString(),
     }).eq('id', run.id);
+    log.info('journey_completed', {
+      run_id: run.id, definition_code: def.code, contact_id: run.contact_id, correlation_id: correlationId,
+    });
     return 'completed';
   }
 
-  // Build a lightweight context for condition eval + action rendering.
-  // Pulls the contact row at advance time so template variables stay fresh.
-  const { data: lead } = await supabase
-    .from('leads')
-    .select('id, full_name, phone, email, city, product_interest, do_not_contact, lead_status')
-    .eq('id', run.contact_id)
-    .maybeSingle();
-  const firstName = lead?.full_name?.split(/\s+/u)[0] ?? '';
+  // Tier 7.B.2 — idempotency guard. If the same step was just
+  // executed within 60 seconds (e.g. cron double-fire, manual replay),
+  // skip dispatch and let the next tick continue from current_step.
+  if (run.last_step_idx === run.current_step && run.last_step_executed_at) {
+    const ageMs = Date.now() - Date.parse(run.last_step_executed_at);
+    if (ageMs < 60_000) {
+      log.warn('journey_step_recent_duplicate_skipped', {
+        run_id: run.id, definition_code: def.code, step_idx: run.current_step,
+        step_name: step.name ?? null, age_ms: ageMs, correlation_id: correlationId,
+      });
+      return 'skipped';
+    }
+  }
+
+  // Tier 7.B.1 — canonical context shape via shared builder. Replaces
+  // the journey-runner's inline 9-field copy so all engine paths
+  // converge on the same lead.* shape. journey block stays unchanged.
+  const { buildLeadContext } = await import('./event-context.ts');
+  const leadCtx = await buildLeadContext(supabase, run.contact_id);
   const context = {
-    lead: lead ? {
-      id: lead.id,
-      full_name: lead.full_name,
-      first_name: firstName,
-      phone: lead.phone,
-      email: lead.email,
-      city: lead.city,
-      product_interest: lead.product_interest,
-      do_not_contact: lead.do_not_contact,
-      lead_status: lead.lead_status,
-    } : null,
+    lead: leadCtx,
     journey: { code: def.code, step_index: run.current_step, step_name: step.name ?? null },
   };
 
@@ -293,9 +301,14 @@ async function advanceOneRun(
           ...state,
           step_retries: { ...stepRetries, [stepKey]: usedRetries + 1 },
         };
+        // Tier 7.B.2 — also stamp last_step_executed_at/last_step_idx
+        // on retry path so the idempotency gate fires correctly on a
+        // hypothetical double-tick during the retry delay window.
         await supabase.from('journey_runs').update({
           state: nextState,
           scheduled_next_at: nextAttempt,
+          last_step_executed_at: new Date().toISOString(),
+          last_step_idx: run.current_step,
         }).eq('id', run.id);
         await logAutomationRun(supabase, {
           ruleCode: `journey:${def.code}:step:${step.name ?? run.current_step}`,
@@ -306,6 +319,13 @@ async function advanceOneRun(
           status: 'partial',
           reason: `retry ${usedRetries + 1}/${maxRetries} scheduled in ${policy?.retry_delay_minutes ?? 60} min`,
           correlationId,
+        });
+        // Tier 7.B.4 — enriched journey log.
+        log.warn('journey_step_retry_scheduled', {
+          run_id: run.id, definition_code: def.code, contact_id: run.contact_id,
+          step_idx: run.current_step, step_name: step.name ?? null,
+          retry: usedRetries + 1, max_retries: maxRetries,
+          correlation_id: correlationId,
         });
         return 'advanced';
       }
@@ -322,6 +342,11 @@ async function advanceOneRun(
       reason: 'all step actions failed' + (maxRetries > 0 ? ` (after ${maxRetries} retries)` : ''),
       correlationId,
     });
+    log.error('journey_step_failed', {
+      run_id: run.id, definition_code: def.code, contact_id: run.contact_id,
+      step_idx: run.current_step, step_name: step.name ?? null,
+      max_retries: maxRetries, correlation_id: correlationId,
+    });
     return 'failed';
   }
 
@@ -337,11 +362,21 @@ async function advanceOneRun(
     correlationId,
   });
 
+  // Tier 7.B.2 — stamp idempotency fields on every successful step
+  // dispatch. last_step_idx records which step we executed; the next
+  // tick checks it before re-firing the same step.
+  const executedAt = new Date().toISOString();
   if (isLast) {
     await supabase.from('journey_runs').update({
-      status: 'completed', completed_at: new Date().toISOString(),
+      status: 'completed', completed_at: executedAt,
       current_step: nextStepIdx,
+      last_step_executed_at: executedAt,
+      last_step_idx: run.current_step,
     }).eq('id', run.id);
+    log.info('journey_completed', {
+      run_id: run.id, definition_code: def.code, contact_id: run.contact_id,
+      step_idx: run.current_step, step_name: step.name ?? null, correlation_id: correlationId,
+    });
     return 'completed';
   }
 
@@ -351,7 +386,14 @@ async function advanceOneRun(
   await supabase.from('journey_runs').update({
     current_step: nextStepIdx,
     scheduled_next_at: nextScheduled,
+    last_step_executed_at: executedAt,
+    last_step_idx: run.current_step,
   }).eq('id', run.id);
+  log.info('journey_step_advanced', {
+    run_id: run.id, definition_code: def.code, contact_id: run.contact_id,
+    step_idx: run.current_step, step_name: step.name ?? null,
+    next_step_idx: nextStepIdx, correlation_id: correlationId,
+  });
   return 'advanced';
 }
 
