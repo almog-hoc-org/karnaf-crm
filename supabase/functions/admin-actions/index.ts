@@ -532,6 +532,33 @@ Deno.serve(async (req) => {
       }
       break;
     }
+    case 'merge_lead_duplicate': {
+      // Tier 8.E3 — collapse a duplicate row into the lead being viewed.
+      // The RPC repoints every linked table, fills missing contact
+      // fields, neutralizes the duplicate, and audits both sides.
+      if (staff.role !== 'owner' && staff.role !== 'admin') {
+        return jsonResponse(req, { error: 'merge requires owner/admin' }, 403);
+      }
+      const duplicateLeadId = typeof body.duplicateLeadId === 'string' ? body.duplicateLeadId : null;
+      if (!duplicateLeadId) return jsonResponse(req, { error: 'Missing duplicateLeadId' }, 400);
+      const { error: mergeErr } = await supabase.rpc('merge_leads', {
+        p_survivor: leadId,
+        p_duplicate: duplicateLeadId,
+      });
+      if (mergeErr) {
+        log.warn('merge_leads_failed', { fn: 'admin-actions', correlationId, leadId, duplicateLeadId, err: mergeErr.message });
+        return jsonResponse(req, { error: mergeErr.message }, 400);
+      }
+      // Close any pending merge-review queue items that referenced this pair.
+      await supabase
+        .from('work_queue')
+        .update({ status: 'resolved', resolved_at: new Date().toISOString(), resolution_note: 'מוזג' })
+        .eq('queue_type', 'manual_review_required')
+        .eq('status', 'pending')
+        .eq('lead_id', leadId)
+        .eq('payload_json->>duplicate_lead_id', duplicateLeadId);
+      break;
+    }
     case 'update_lead_meta': {
       const sanitised = sanitiseMetaUpdates(body.metaUpdates);
       if (!sanitised) return jsonResponse(req, { error: 'No meta fields to update' }, 400);

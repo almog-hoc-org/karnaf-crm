@@ -34,6 +34,9 @@ export interface AiLeadContext {
   classificationSummary?: string | null;
   suggestedNextAction?: string | null;
   handoffReason?: string | null;
+  /** Tier 8.A — conversation channel ('whatsapp' | 'instagram'). Keeps
+   *  the bot from saying "וואטסאפ" inside an Instagram DM. */
+  channel?: string;
 }
 
 export interface TopicEntry {

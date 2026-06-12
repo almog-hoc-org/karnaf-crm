@@ -444,7 +444,12 @@ export function LeadDetailPage() {
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="kf-card p-4 lg:col-span-2">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">שיחה</h2>
+            <h2 className="font-semibold">
+              שיחה
+              {detailQ.data?.conversations[0]?.channel === 'instagram' ? (
+                <span className="ms-2 inline-flex items-center rounded-full bg-fuchsia-100 px-2 py-0.5 text-xs font-medium text-fuchsia-700">אינסטגרם</span>
+              ) : null}
+            </h2>
             {lead.phone ? (
               <a
                 href={waLink(lead.phone)}
@@ -472,6 +477,7 @@ export function LeadDetailPage() {
             sending={sendReply.isPending}
             errorMessage={sendReply.error ? (sendReply.error as Error).message : null}
             lead={lead}
+            channel={detailQ.data?.conversations[0]?.channel ?? 'whatsapp'}
           />
         </div>
 
@@ -1894,6 +1900,7 @@ function ReplyBox({
   sending,
   errorMessage,
   lead,
+  channel = 'whatsapp',
 }: {
   disabled: boolean;
   onSend: (text: string) => void;
@@ -1903,6 +1910,10 @@ function ReplyBox({
   // {{first_name}} and other markers against the actual contact
   // when Mia inserts a template into the reply.
   lead: { full_name: string | null; phone: string | null; email: string | null; city: string | null };
+  // Tier 8.A — conversation channel; Instagram hides the WhatsApp
+  // template picker and gets its own 24h-window copy (IG has no
+  // template fallback — late replies queue until the next inbound).
+  channel?: string;
 }) {
   const [text, setText] = useState('');
 
@@ -1940,12 +1951,16 @@ function ReplyBox({
       />
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
         <div className="flex items-center gap-2 text-xs">
-          <button type="button" className="kf-btn text-xs" disabled={disabled}
-            onClick={() => setPickerOpen((open) => !open)}>
-            {pickerOpen ? 'סגור תבניות' : '+ הכנס תבנית'}
-          </button>
+          {channel !== 'instagram' ? (
+            <button type="button" className="kf-btn text-xs" disabled={disabled}
+              onClick={() => setPickerOpen((open) => !open)}>
+              {pickerOpen ? 'סגור תבניות' : '+ הכנס תבנית'}
+            </button>
+          ) : null}
           <span className="text-slate-500">
-            ייצא דרך WhatsApp. מחוץ לחלון 24 שעות תישלח תבנית.
+            {channel === 'instagram'
+              ? 'ייצא דרך אינסטגרם. מחוץ לחלון 24 שעות ההודעה תמתין עד שהלקוח יכתוב שוב.'
+              : 'ייצא דרך WhatsApp. מחוץ לחלון 24 שעות תישלח תבנית.'}
           </span>
         </div>
         <button

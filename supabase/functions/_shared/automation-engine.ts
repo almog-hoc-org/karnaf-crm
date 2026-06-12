@@ -111,6 +111,7 @@ export async function dispatchAction(action: Record<string, unknown>, ctx: Actio
       case 'set_field': return await actionSetField(action, ctx);
       case 'journey_start': return await actionJourneyStart(action, ctx);
       case 'assign_partner': return await actionAssignPartner(action, ctx);
+      case 'add_to_email_list': return await actionAddToEmailList(action, ctx);
       default:
         return { type, status: 'skipped', detail: `unknown action type: ${type}` };
     }
@@ -177,6 +178,23 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
     // Engine refuses half-filled templates. Better to log + skip than
     // send "{{first_name}}" to a customer.
     return { type: 'send_template', status: 'skipped', detail: `missing vars: ${missing.join(', ')}` };
+  }
+
+  // Tier 8.E2 — `once: true` caps the send at one per (lead, template,
+  // channel), ever. The unique-insert is the gate: a conflict means a
+  // prior fire already claimed this send (re-published presale project,
+  // re-fired rule), so skip before enqueueing anything.
+  if (action.once === true) {
+    const { data: claim, error: claimErr } = await ctx.supabase
+      .from('engine_template_sends')
+      .upsert(
+        { lead_id: ctx.contactId, template_key: key, channel },
+        { onConflict: 'lead_id,template_key,channel', ignoreDuplicates: true },
+      )
+      .select('id')
+      .maybeSingle();
+    if (claimErr) return { type: 'send_template', status: 'failed', detail: claimErr.message };
+    if (!claim) return { type: 'send_template', status: 'skipped', detail: 'already sent (once gate)' };
   }
 
   // Enqueue via outbound_dispatch the same way manual replies do.
@@ -344,6 +362,70 @@ async function actionAssignPartner(action: Record<string, unknown>, ctx: ActionC
       partner_name: pick.full_name,
       open_deals_at_pick: pick.open_deals_count,
     },
+  };
+}
+
+// Tier 8.C — hand the lead to a Rav Messer mailing list; Rav Messer's
+// automations run the email sequence from there. The CRM never sends
+// marketing email directly.
+async function actionAddToEmailList(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const listId = action.list_id as string | undefined;
+  const listName = (action.list_name as string | undefined) ?? null;
+  if (!listId || listId.startsWith('REPLACE_WITH')) {
+    return { type: 'add_to_email_list', status: 'skipped', detail: 'missing list_id' };
+  }
+  if (!ctx.contactId) return { type: 'add_to_email_list', status: 'skipped', detail: 'no contactId' };
+
+  const { isRavmesserConfigured, addSubscriberToList } = await import('./ravmesser.ts');
+  if (!isRavmesserConfigured()) {
+    return { type: 'add_to_email_list', status: 'skipped', detail: 'ravmesser not configured' };
+  }
+
+  const { data: lead, error: leadErr } = await ctx.supabase
+    .from('leads')
+    .select('id, email, full_name, phone, do_not_contact, removed_by_request, consent_email')
+    .eq('id', ctx.contactId)
+    .maybeSingle();
+  if (leadErr) return { type: 'add_to_email_list', status: 'failed', detail: leadErr.message };
+  if (!lead?.email) return { type: 'add_to_email_list', status: 'skipped', detail: 'lead has no email' };
+  if (lead.do_not_contact || lead.removed_by_request) {
+    return { type: 'add_to_email_list', status: 'skipped', detail: 'do_not_contact' };
+  }
+  // חוק הספאם — explicit refusal blocks; null (never asked) passes,
+  // matching how consent is captured at intake today.
+  if (lead.consent_email === false) {
+    return { type: 'add_to_email_list', status: 'skipped', detail: 'consent_email refused' };
+  }
+
+  // Per-(lead, list) dedup via the event log; the API's EMAILS_EXISTING
+  // is the backstop for races.
+  const { data: prior } = await ctx.supabase
+    .from('lead_events')
+    .select('id')
+    .eq('lead_id', ctx.contactId)
+    .eq('event_type', 'email_list_added')
+    .eq('event_payload->>list_id', listId)
+    .limit(1)
+    .maybeSingle();
+  if (prior) return { type: 'add_to_email_list', status: 'skipped', detail: 'already added to list' };
+
+  const result = await addSubscriberToList(listId, {
+    email: lead.email as string,
+    name: lead.full_name as string | null,
+    phone: lead.phone as string | null,
+  });
+  if (!result.ok) return { type: 'add_to_email_list', status: 'failed', detail: result.error ?? 'unknown' };
+
+  await ctx.supabase.from('lead_events').insert({
+    lead_id: ctx.contactId,
+    event_type: 'email_list_added',
+    actor_type: 'system',
+    event_payload: { list_id: listId, list_name: listName, existing: result.existing },
+  });
+
+  return {
+    type: 'add_to_email_list', status: 'ok',
+    detail: { list_id: listId, list_name: listName, created: result.created, existing: result.existing },
   };
 }
 

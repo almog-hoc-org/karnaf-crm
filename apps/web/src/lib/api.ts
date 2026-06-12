@@ -335,7 +335,8 @@ export type AdminAction =
   | 'schedule_meeting'
   | 'update_meeting_status'
   | 'advance_deal_stage'
-  | 'update_lead_meta';
+  | 'update_lead_meta'
+  | 'merge_lead_duplicate';
 
 export type ReopenTarget = 'responded' | 'qualified' | 'nurture' | 'human_handoff';
 
@@ -382,6 +383,7 @@ export async function postAdminAction(payload: {
   meetingId?: string;
   meetingStatus?: MeetingRow['status'];
   metaUpdates?: LeadMetaUpdates;
+  duplicateLeadId?: string;
 }) {
   return postJson<{ ok: true; action: string }>('/admin-actions', payload);
 }
@@ -672,12 +674,44 @@ export interface WhatsAppSessionConfig {
   templateApprovalRequired: boolean;
 }
 
+export interface FollowUpDelaysConfig {
+  firstResponseMinutes: number;
+  nurtureHours: number;
+  paymentPendingHours: number;
+}
+
+export interface SlaThresholdsConfig {
+  firstResponseWarnHours: number;
+  firstResponseHighWarnHours: number;
+  firstResponseBreachHours: number;
+  paymentPendingHours: number;
+}
+
 export async function fetchRuntimeConfig() {
-  return getJson<{ ok: true; activeHours: ActiveHoursConfig; whatsappSession: WhatsAppSessionConfig }>('/runtime-config');
+  return getJson<{
+    ok: true;
+    activeHours: ActiveHoursConfig;
+    whatsappSession: WhatsAppSessionConfig;
+    followUpDelays: FollowUpDelaysConfig;
+    slaThresholds: SlaThresholdsConfig;
+    forbiddenClaims: string[];
+  }>('/runtime-config');
 }
 
 export async function postUpdateActiveHours(payload: ActiveHoursConfig) {
   return postJson<{ ok: true; activeHours: ActiveHoursConfig }>('/runtime-config', { action: 'update_active_hours', ...payload });
+}
+
+export async function postUpdateFollowUpDelays(payload: FollowUpDelaysConfig) {
+  return postJson<{ ok: true }>('/runtime-config', { action: 'update_follow_up_delays', ...payload });
+}
+
+export async function postUpdateSlaThresholds(payload: SlaThresholdsConfig) {
+  return postJson<{ ok: true }>('/runtime-config', { action: 'update_sla_thresholds', ...payload });
+}
+
+export async function postUpdateForbiddenClaims(claims: string[]) {
+  return postJson<{ ok: true }>('/runtime-config', { action: 'update_forbidden_claims', claims });
 }
 
 // === Prompt variants =====================================================

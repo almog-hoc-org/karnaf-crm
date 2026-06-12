@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { fetchQueueList, postQueueResolve } from '@/lib/api';
+import { fetchQueueList, postAdminAction, postQueueResolve } from '@/lib/api';
 import { MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
 import { HeatBadge, OwnershipBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -60,6 +60,20 @@ export function QueuePage() {
   });
   const [pendingClose, setPendingClose] = useState<{ id: string; label: string } | null>(null);
   const [closeNote, setCloseNote] = useState('');
+
+  // Tier 8.E3 — phone-collision items from the 083 backfill (and future
+  // dedup detection) carry payload_json.duplicate_lead_id. One click
+  // collapses the duplicate into the queue item's lead.
+  const merge = useMutation({
+    mutationFn: (input: { leadId: string; duplicateLeadId: string }) =>
+      postAdminAction({ action: 'merge_lead_duplicate', leadId: input.leadId, duplicateLeadId: input.duplicateLeadId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['queue'] });
+      toast.success('הלידים מוזגו');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+  const [pendingMerge, setPendingMerge] = useState<{ leadId: string; duplicateLeadId: string; label: string } | null>(null);
 
   const total = q.data?.length ?? 0;
 
@@ -139,6 +153,14 @@ export function QueuePage() {
                   <td data-label="נוצר" className="text-slate-500" title={row.created_at}>{formatRelative(row.created_at)}</td>
                   <td data-actions>
                     {status === 'pending' || status === 'claimed' ? (
+                      <>
+                      {mergeDuplicateId(row) ? (
+                        <button
+                          type="button" className="kf-btn-primary me-1 text-xs"
+                          onClick={() => setPendingMerge({ leadId: row.lead_id, duplicateLeadId: mergeDuplicateId(row)!, label: row.leads?.full_name ?? row.lead_id.slice(0, 8) })}
+                          disabled={merge.isPending}
+                        >מיזוג לידים</button>
+                      ) : null}
                       <button
                         type="button" className="kf-btn text-xs"
                         onClick={() => {
@@ -147,6 +169,7 @@ export function QueuePage() {
                         }}
                         disabled={resolve.isPending}
                       >{t('queue_close')}</button>
+                      </>
                     ) : (
                       <span className="text-xs text-slate-500">{row.resolution_note || t('queue_closed')}</span>
                     )}
@@ -196,8 +219,29 @@ export function QueuePage() {
           />
         </label>
       </ConfirmDialog>
+
+      <ConfirmDialog
+        open={!!pendingMerge}
+        title={`מיזוג לידים — ${pendingMerge?.label ?? ''}`}
+        description="הרשומה הכפולה תמוזג לתוך הליד הזה: שיחות, הודעות, עסקאות והיסטוריה יעברו אליו, והכפילות תסומן ככזו. הפעולה אינה הפיכה."
+        confirmLabel="מיזוג"
+        destructive
+        busy={merge.isPending}
+        onCancel={() => setPendingMerge(null)}
+        onConfirm={() => {
+          if (!pendingMerge) return;
+          merge.mutate({ leadId: pendingMerge.leadId, duplicateLeadId: pendingMerge.duplicateLeadId });
+          setPendingMerge(null);
+        }}
+      />
     </div>
   );
+}
+
+function mergeDuplicateId(row: QueueRow): string | null {
+  if (row.queue_type !== 'manual_review_required') return null;
+  const dup = (row.payload_json ?? {}).duplicate_lead_id;
+  return typeof dup === 'string' && dup.length > 0 ? dup : null;
 }
 
 function queueDisplayLabel(row: QueueRow): string {

@@ -9,13 +9,19 @@ import {
   hashBody,
   storeWebhookIdempotencyResponse,
 } from '../_shared/idempotency.ts';
-import { env, optional } from '../_shared/env.ts';
+import { env, optional, safeEqual } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { classifyLeadIntake } from '../_shared/lead-classifier.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
 import { buildLeadContextFromRow } from '../_shared/event-context.ts';
+
+// Tier 8.B — sources a static-token caller may claim. The token lane
+// exists for integrations that can't compute HMAC (Rav Messer webhook
+// editor has no signing support), so a leaked URL must not be able to
+// impersonate higher-trust sources like presale_form.
+const STATIC_TOKEN_SOURCES = new Set(['responder_form']);
 
 const FALLBACK_ALLOWED_SOURCES = new Set([
   'landing_page',
@@ -148,32 +154,69 @@ Deno.serve(async (req) => {
 
   const correlationId = correlationFromRequest(req);
   const rawBody = await req.text();
-  // Fail-closed: production must have INTAKE_WEBHOOK_SECRET set. A missing
-  // secret used to skip verification entirely (fail-open). Dev/local can
-  // opt out via WEBHOOK_ALLOW_UNSIGNED=true.
-  const secret = env.intakeWebhookSecret();
-  if (!secret) {
-    // Fail closed unless explicitly opted out (dev/local).
-    if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
-      log.error('intake_webhook_misconfigured', { fn: 'leads-intake', correlationId });
-      return jsonResponse(req, { error: 'Webhook not configured' }, 503);
-    }
+  const url = new URL(req.url);
+
+  // Tier 8.B — two auth lanes:
+  //  1. HMAC signature header (canonical — forms, Zapier, internal).
+  //  2. Static ?token= query param for callers that can't sign (Rav
+  //     Messer webhooks). Token lane is restricted to STATIC_TOKEN_SOURCES.
+  const hasSignatureHeader = !!(req.headers.get('x-karnaf-signature') || req.headers.get('x-intake-signature'));
+  const queryToken = url.searchParams.get('token');
+  const staticToken = env.intakeStaticToken();
+  let tokenAuthenticated = false;
+
+  if (!hasSignatureHeader && queryToken && staticToken && safeEqual(queryToken, staticToken)) {
+    tokenAuthenticated = true;
   } else {
-    // Accept both x-karnaf-signature (canonical) and x-intake-signature
-    // (legacy — integration test harness + some pre-prod callers). Drop
-    // the legacy name after the next deploy cycle.
-    const valid = await verifyHmacHeader(req, rawBody, secret, ['x-karnaf-signature', 'x-intake-signature']);
-    if (!valid) {
-      log.warn('intake_signature_invalid', { fn: 'leads-intake', correlationId });
-      return jsonResponse(req, { error: 'Invalid signature' }, 401);
+    // Fail-closed: production must have INTAKE_WEBHOOK_SECRET set. A missing
+    // secret used to skip verification entirely (fail-open). Dev/local can
+    // opt out via WEBHOOK_ALLOW_UNSIGNED=true.
+    const secret = env.intakeWebhookSecret();
+    if (!secret) {
+      // Fail closed unless explicitly opted out (dev/local).
+      if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
+        log.error('intake_webhook_misconfigured', { fn: 'leads-intake', correlationId });
+        return jsonResponse(req, { error: 'Webhook not configured' }, 503);
+      }
+    } else {
+      // Accept both x-karnaf-signature (canonical) and x-intake-signature
+      // (legacy — integration test harness + some pre-prod callers). Drop
+      // the legacy name after the next deploy cycle.
+      const valid = await verifyHmacHeader(req, rawBody, secret, ['x-karnaf-signature', 'x-intake-signature']);
+      if (!valid) {
+        log.warn('intake_signature_invalid', { fn: 'leads-intake', correlationId, tokenPresent: !!queryToken });
+        return jsonResponse(req, { error: 'Invalid signature' }, 401);
+      }
     }
   }
 
   let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(rawBody);
-  } catch {
-    return jsonResponse(req, { error: 'Invalid JSON' }, 400);
+  const contentType = req.headers.get('content-type') ?? '';
+  if (contentType.includes('application/x-www-form-urlencoded')) {
+    // Rav Messer's webhook editor may POST form-encoded rather than JSON.
+    payload = Object.fromEntries(new URLSearchParams(rawBody));
+  } else {
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      return jsonResponse(req, { error: 'Invalid JSON' }, 400);
+    }
+  }
+
+  if (tokenAuthenticated) {
+    // Rav Messer's field mapping can't always add constant fields —
+    // source/contract_key ride on the URL instead, body wins if present.
+    if (!hasValue(payload.source) && url.searchParams.get('source')) {
+      payload.source = url.searchParams.get('source');
+    }
+    if (!hasValue(payload.contract_key) && url.searchParams.get('contract_key')) {
+      payload.contract_key = url.searchParams.get('contract_key');
+    }
+    const claimedSource = String(payload.source ?? '').toLowerCase();
+    if (!STATIC_TOKEN_SOURCES.has(claimedSource)) {
+      log.warn('intake_token_source_rejected', { fn: 'leads-intake', correlationId, claimedSource });
+      return jsonResponse(req, { error: 'Source not allowed for token auth' }, 403);
+    }
   }
 
   const supabase = getServiceSupabase();

@@ -10,6 +10,12 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log, newCorrelationId } from '../_shared/logger.ts';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { sendChannelText } from '../_shared/outbound-channel.ts';
+import { activeProvider, sendWhatsAppTemplate } from '../_shared/whatsapp-provider.ts';
+import { ensureConversation, logLeadEvent } from '../_shared/lead-service.ts';
+import { isFreeformAllowed } from '../_shared/conversation-window.ts';
+import { getRuntimeConfig } from '../_shared/config-service.ts';
 
 interface DispatchRow {
   id: string;
@@ -22,6 +28,89 @@ interface DispatchRow {
 
 const BATCH_SIZE = 10;
 const ORCHESTRATE_TIMEOUT_MS = 25_000;
+
+// Tier 8.E1 — engine/journey template sends carry payload.kind='template'
+// and no conversation_id. Routing them through orchestrate-message used
+// to 400 on the missing conversationId, so every engine-driven template
+// retried itself into the DLQ and never reached the customer. Send them
+// directly instead. Returns 'sent' | 'skipped'; throws on transient
+// failures so the caller's retry/backoff machinery applies.
+async function deliverTemplateRow(
+  supabase: SupabaseClient,
+  row: DispatchRow,
+  correlationId: string,
+): Promise<'sent' | 'skipped'> {
+  const payload = row.payload as { channel?: string; text?: string; template_key?: string };
+  const text = typeof payload.text === 'string' ? payload.text.trim() : '';
+  if (!text) {
+    log.warn('template_dispatch_empty_text', {
+      fn: 'dispatch-outbound', correlationId, dispatchId: row.id, templateKey: payload.template_key,
+    });
+    return 'skipped';
+  }
+  const channel = payload.channel || 'whatsapp';
+
+  const { data: lead, error: leadErr } = await supabase
+    .from('leads')
+    .select('id, phone, do_not_contact, removed_by_request, last_inbound_at')
+    .eq('id', row.lead_id)
+    .maybeSingle();
+  if (leadErr) throw leadErr;
+  if (!lead || lead.do_not_contact || lead.removed_by_request) {
+    log.info('template_dispatch_suppressed', {
+      fn: 'dispatch-outbound', correlationId, dispatchId: row.id, leadId: row.lead_id,
+      reason: !lead ? 'lead_missing' : 'do_not_contact',
+    });
+    return 'skipped';
+  }
+
+  const conversation = await ensureConversation(supabase, row.lead_id, channel, activeProvider());
+
+  const config = await getRuntimeConfig(supabase);
+  const withinWindow = isFreeformAllowed(
+    lead.last_inbound_at as string | null,
+    config.whatsappSession.freeformWindowHours,
+  );
+
+  let sendResult;
+  if (channel === 'whatsapp' && !withinWindow) {
+    // Outside the 24h session window only pre-approved templates pass.
+    // Wrap the rendered text in the fallback template, same as
+    // orchestrate-message does for AI replies.
+    if (!lead.phone) return 'skipped';
+    sendResult = await sendWhatsAppTemplate(
+      lead.phone as string,
+      config.whatsappSession.fallbackTemplateName,
+      [{ name: 'reply', value: text }],
+    );
+  } else {
+    sendResult = await sendChannelText(channel, lead, text);
+  }
+  if (!sendResult.ok) throw new Error(`template send failed: ${sendResult.error ?? 'unknown'}`);
+
+  await supabase.from('messages').insert({
+    conversation_id: conversation.id,
+    lead_id: row.lead_id,
+    provider_message_id: sendResult.providerMessageId ?? null,
+    sender_type: 'system',
+    direction: 'outbound',
+    message_type: 'template',
+    content_text: text,
+    provider_status: 'sent',
+    raw_payload: { source: 'automation_engine', template_key: payload.template_key ?? null },
+  });
+  await logLeadEvent(supabase, row.lead_id, 'automation_template_sent', 'system', {
+    template_key: payload.template_key ?? null,
+    channel,
+    dispatch_id: row.id,
+  }, conversation.id);
+
+  log.info('template_dispatch_sent', {
+    fn: 'dispatch-outbound', correlationId, dispatchId: row.id, leadId: row.lead_id,
+    templateKey: payload.template_key, channel, withinWindow,
+  });
+  return 'sent';
+}
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -60,6 +149,13 @@ Deno.serve(async (req) => {
   for (const row of rows) {
     const rowCorrelationId = row.correlation_id ?? newCorrelationId();
     try {
+      if (row.payload?.kind === 'template') {
+        await deliverTemplateRow(supabase, row, rowCorrelationId);
+        await supabase.rpc('complete_outbound_dispatch', { p_id: row.id });
+        succeeded += 1;
+        continue;
+      }
+
       const ac = new AbortController();
       const timeout = setTimeout(() => ac.abort(), ORCHESTRATE_TIMEOUT_MS);
       const res = await fetch(orchestrateUrl, {

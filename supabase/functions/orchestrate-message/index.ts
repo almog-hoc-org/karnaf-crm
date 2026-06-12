@@ -1,5 +1,6 @@
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '../_shared/whatsapp-provider.ts';
+import { sendInstagramText } from '../_shared/instagram-provider.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared/lead-service.ts';
@@ -65,42 +66,48 @@ Deno.serve(async (req) => {
       lead_status: lead.lead_status,
     });
 
-    // Channel-gating: the AI orchestrator currently only owns the WhatsApp
-    // channel. Other channels (email, IG DM scraped manually, etc.) get
-    // queued for Mia rather than dispatched.
+    // Channel-gating: the AI orchestrator owns WhatsApp + Instagram
+    // (Tier 8.A). Other channels (email, manual) get queued for Mia
+    // rather than dispatched.
     const { data: conversation, error: convErr } = await supabase
       .from('conversations')
       .select('channel')
       .eq('id', conversationId)
       .single();
     if (convErr) return jsonResponse(req, { error: convErr.message }, 500);
-    if (conversation?.channel && conversation.channel !== 'whatsapp') {
+    const channel: string = conversation?.channel ?? 'whatsapp';
+    if (channel !== 'whatsapp' && channel !== 'instagram') {
       await ensurePendingQueueItem(supabase, {
         leadId,
         queueType: 'human_handoff',
         priorityLevel: 2,
-        reason: `שיחה בערוץ ${conversation.channel} דורשת מענה ידני`,
-        payloadJson: { channel: conversation.channel, correlationId },
+        reason: `שיחה בערוץ ${channel} דורשת מענה ידני`,
+        payloadJson: { channel, correlationId },
       });
       log.info('orchestrate_channel_skipped', {
         fn: 'orchestrate',
         correlationId,
         leadId,
-        channel: conversation.channel,
+        channel,
       });
-      return jsonResponse(req, { ok: true, skipped: 'non_whatsapp_channel', channel: conversation.channel });
+      return jsonResponse(req, { ok: true, skipped: 'unsupported_channel', channel });
     }
 
-    if (!lead.phone) {
+    // Identity guard is channel-specific: WhatsApp needs a phone,
+    // Instagram needs an IGSID.
+    const missingIdentity = channel === 'whatsapp' ? !lead.phone : !lead.ig_user_id;
+    if (missingIdentity) {
       await ensurePendingQueueItem(supabase, {
         leadId,
         queueType: 'manual_review_required',
         priorityLevel: 2,
-        reason: 'ליד ללא מספר טלפון, נדרשת בדיקה ידנית',
-        payloadJson: { correlationId },
+        reason: channel === 'whatsapp'
+          ? 'ליד ללא מספר טלפון, נדרשת בדיקה ידנית'
+          : 'ליד אינסטגרם ללא מזהה שיחה, נדרשת בדיקה ידנית',
+        payloadJson: { correlationId, channel },
       });
-      log.info('orchestrate_no_phone', { fn: 'orchestrate', correlationId, leadId });
-      return jsonResponse(req, { ok: true, skipped: 'no_phone' });
+      log.info('orchestrate_no_identity', { fn: 'orchestrate', correlationId, leadId, channel });
+      return jsonResponse(req, { ok: true, skipped: 'no_identity' });
     }
 
     if (lead.ownership_mode !== 'ai_active') {
@@ -254,6 +261,7 @@ Deno.serve(async (req) => {
           classificationSummary: leadClassification.operatorSummary,
           suggestedNextAction: leadClassification.suggestedNextAction,
           handoffReason: leadClassification.handoffReason,
+          channel,
         },
         recentMessages: ordered.map((m) => ({
           senderType: String(m.sender_type ?? ''),
@@ -332,11 +340,30 @@ Deno.serve(async (req) => {
     }
 
     const desiredMode = out.sendMode;
-    const effectiveMode = resolveSendMode(
+    let effectiveMode = resolveSendMode(
       desiredMode,
       lead.last_inbound_at,
       config.whatsappSession.freeformWindowHours,
     );
+    // Tier 8.A — Instagram has no template product: outside the 24h
+    // window nothing can be sent. Queue the AI reply as a pending
+    // manual reply (flushed by the next customer inbound) instead of
+    // attempting an impossible send.
+    if (channel === 'instagram' && effectiveMode === 'template') {
+      effectiveMode = 'manual_only';
+      if (out.replyText) {
+        await supabase.from('pending_manual_replies').insert({
+          lead_id: leadId,
+          conversation_id: conversationId,
+          text: out.replyText.slice(0, 2000),
+          sender_type: 'ai',
+          status: 'queued',
+        });
+        log.info('orchestrate_ig_reply_queued_outside_window', {
+          fn: 'orchestrate', correlationId, leadId, conversationId,
+        });
+      }
+    }
 
     let sendResult: { ok: boolean; providerMessageId?: string; error?: string } = { ok: false };
     let attemptedSend = false;
@@ -345,7 +372,9 @@ Deno.serve(async (req) => {
       attemptedSend = true;
       try {
         if (effectiveMode === 'freeform') {
-          sendResult = await sendWhatsAppText(lead.phone as string, out.replyText);
+          sendResult = channel === 'instagram'
+            ? await sendInstagramText(lead.ig_user_id as string, out.replyText)
+            : await sendWhatsAppText(lead.phone as string, out.replyText);
         } else {
           sendResult = await sendWhatsAppTemplate(
             lead.phone as string,

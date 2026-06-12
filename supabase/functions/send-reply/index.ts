@@ -4,6 +4,7 @@
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '../_shared/whatsapp-provider.ts';
+import { sendInstagramText } from '../_shared/instagram-provider.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
 import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared/lead-service.ts';
 import { canTransition } from '../_shared/state-machine.ts';
@@ -43,19 +44,61 @@ Deno.serve(async (req) => {
   const config = await getRuntimeConfig(supabase);
 
   const { data: lead, error: leadErr } = await supabase.from('leads')
-    .select('id, phone, last_inbound_at, do_not_contact, removed_by_request, ownership_mode, lead_status')
+    .select('id, phone, ig_user_id, last_inbound_at, do_not_contact, removed_by_request, ownership_mode, lead_status')
     .eq('id', leadId)
     .single();
   if (leadErr || !lead) return jsonResponse(req, { error: leadErr?.message ?? 'Lead not found' }, 404);
   if (lead.do_not_contact || lead.removed_by_request) return jsonResponse(req, { error: 'Lead suppressed' }, 409);
-  if (!lead.phone) return jsonResponse(req, { error: 'Lead has no phone number' }, 409);
+
+  // Tier 8.A — replies follow the conversation's channel.
+  const { data: conv } = await supabase.from('conversations')
+    .select('channel').eq('id', conversationId).maybeSingle();
+  const channel: string = conv?.channel ?? 'whatsapp';
+  if (channel === 'instagram') {
+    if (!lead.ig_user_id) return jsonResponse(req, { error: 'Lead has no Instagram identity' }, 409);
+  } else if (!lead.phone) {
+    return jsonResponse(req, { error: 'Lead has no phone number' }, 409);
+  }
 
   const mode = resolveSendMode('freeform', lead.last_inbound_at, config.whatsappSession.freeformWindowHours);
   let result;
   let pendingReplyId: string | null = null;
   try {
     if (mode === 'freeform') {
-      result = await sendWhatsAppText(lead.phone as string, text);
+      result = channel === 'instagram'
+        ? await sendInstagramText(lead.ig_user_id as string, text)
+        : await sendWhatsAppText(lead.phone as string, text);
+    } else if (channel === 'instagram') {
+      // Instagram has no template product — outside the 24h window the
+      // reply can only wait for the customer's next message. Queue it;
+      // instagram-webhook flushes the queue on the next inbound.
+      const { data: pending, error: pendingErr } = await supabase.from('pending_manual_replies').insert({
+        lead_id: leadId,
+        conversation_id: conversationId,
+        text,
+        sender_user_id: staff.userId,
+        sender_type: staff.role === 'sales_rep' ? 'sales_rep' : 'mia',
+        sender_name: staff.fullName || staff.email,
+        status: 'queued',
+        metadata: { correlationId, channel },
+      }).select('id').single();
+      if (pendingErr) throw pendingErr;
+      pendingReplyId = pending?.id as string | null;
+
+      await logLeadEvent(supabase, leadId, 'manual_reply_queued_after_24h', staff.role, {
+        correlation_id: correlationId,
+        pending_reply_id: pendingReplyId,
+        channel: 'instagram',
+        length: text.length,
+      }, conversationId, staff.userId);
+
+      return jsonResponse(req, {
+        ok: true,
+        mode: 'queued_no_template',
+        queued: true,
+        pendingReplyId,
+        warning: 'חלון ה־24 שעות באינסטגרם נסגר — ההודעה תישלח אוטומטית ברגע שהלקוח יכתוב שוב.',
+      });
     } else {
       const { data: pending, error: pendingErr } = await supabase.from('pending_manual_replies').insert({
         lead_id: leadId,

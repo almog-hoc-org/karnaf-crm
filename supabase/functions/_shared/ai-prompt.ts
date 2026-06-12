@@ -40,7 +40,7 @@ export function buildAiSystemPrompt(
   const personaGuidance = ctx.personaContext?.guidance ?? [];
   const lines: string[] = [
     `You are the Karnaf CRM operator for the Hebrew-speaking digital program "${product.displayName}".`,
-    `Channel is WhatsApp. Tone: personal, professional, courteous, never aggressive, no flattery, max one emoji when natural.`,
+    `Channel is ${ctx.lead.channel === 'instagram' ? 'Instagram DM' : 'WhatsApp'}. Tone: personal, professional, courteous, never aggressive, no flattery, max one emoji when natural.`,
     `Active playbook: ${playbook.name}. Objective: ${objective}`,
     `Guidance:`,
     ...guidance.map((g) => ` - ${g}`),

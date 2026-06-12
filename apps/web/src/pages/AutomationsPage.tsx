@@ -352,6 +352,9 @@ function EditRuleDialog({
               <li><code>notify_internal</code> + <code>text</code></li>
               <li><code>create_task</code> + <code>title</code> + <code>kind</code> + <code>due_in_hours</code></li>
               <li><code>set_field</code> + <code>table</code> + <code>field</code> + <code>value</code> (whitelist: leads.heat/next_action_*)</li>
+              <li><code>journey_start</code> + <code>code</code></li>
+              <li><code>assign_partner</code> + <code>domain</code></li>
+              <li><code>add_to_email_list</code> + <code>list_id</code> + <code>list_name</code> — מוסיף לרשימת דיוור ברב מסר (מדלג בלי אימייל / בלי הסכמה)</li>
             </ul>
           </div>
         </details>
