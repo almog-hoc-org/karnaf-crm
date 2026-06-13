@@ -29,6 +29,11 @@ enable_confirmations = false
 [functions.whatsapp-webhook]
 verify_jwt = false
 
+# Tier 8.A — Meta calls this with X-Hub-Signature-256, not a Supabase
+# JWT. Must stay verify_jwt=false; the function does its own HMAC check.
+[functions.instagram-webhook]
+verify_jwt = false
+
 [functions.payment-webhook]
 verify_jwt = false
 
