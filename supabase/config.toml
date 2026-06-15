@@ -34,6 +34,11 @@ verify_jwt = false
 [functions.instagram-webhook]
 verify_jwt = false
 
+# Make.com bridge — called by Make with x-api-key (MAKE_INTAKE_KEY),
+# not a Supabase JWT. Does its own key check + signs/forwards to leads-intake.
+[functions.make-intake]
+verify_jwt = false
+
 [functions.payment-webhook]
 verify_jwt = false
 
