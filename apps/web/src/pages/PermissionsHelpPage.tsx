@@ -15,7 +15,7 @@ const MATRIX: Row[] = [
   { feature: 'תיעוד שיחת טלפון', owner: true, admin: true, mia: true, sales_rep: true, viewer: false },
   { feature: 'עריכת context בסייד-בר', owner: true, admin: true, mia: true, sales_rep: false, viewer: false },
   { feature: 'סימון won / lost / DNC', owner: true, admin: true, mia: true, sales_rep: false, viewer: false },
-  { feature: 'העברה למיה / החזרה ל-AI', owner: true, admin: true, mia: true, sales_rep: false, viewer: false },
+  { feature: 'העברה לנציג / החזרה ל-AI', owner: true, admin: true, mia: true, sales_rep: false, viewer: false },
   { feature: 'סגירת פריט תור', owner: true, admin: true, mia: true, sales_rep: true, viewer: false },
   { feature: 'ניהול משתמשים', owner: true, admin: true, mia: false, sales_rep: false, viewer: false },
   { feature: 'עריכת prompt variants', owner: true, admin: true, mia: false, sales_rep: false, viewer: false },

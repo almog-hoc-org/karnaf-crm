@@ -75,7 +75,7 @@ describe('OwnershipBadge', () => {
   it('uses dedicated ownership tones for Mia and phone-sales', () => {
     const { container, rerender } = render(<OwnershipBadge ownership="mia_active" />);
     expect(container.firstChild).toHaveClass('kf-badge-mia');
-    expect(screen.getByText('מיה')).toBeInTheDocument();
+    expect(screen.getByText('נציג')).toBeInTheDocument();
 
     rerender(<OwnershipBadge ownership="phone_sales_pending" />);
     expect(container.firstChild).toHaveClass('kf-badge-phone');

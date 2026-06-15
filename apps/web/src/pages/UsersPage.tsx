@@ -15,7 +15,7 @@ const ROLES: Array<ProfileRow['role']> = ['owner', 'admin', 'mia', 'sales_rep', 
 const ROLE_LABELS: Record<ProfileRow['role'], string> = {
   owner: 'בעלים',
   admin: 'מנהל',
-  mia: 'מיה',
+  mia: 'נציג',
   sales_rep: 'איש מכירות',
   viewer: 'צופה',
 };

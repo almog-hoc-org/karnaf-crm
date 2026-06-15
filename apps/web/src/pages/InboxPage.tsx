@@ -27,7 +27,7 @@ const LANE_FILTERS: Array<{ key: WorkLane; label: string; hint: string }> = [
 const CLOSE_NOTE_TEMPLATES = [
   'טופל בוואטסאפ — אין צורך בפעולה נוספת כרגע.',
   'נקבעה שיחת טלפון להמשך טיפול.',
-  'הועבר למיה/נציג אנושי להמשך טיפול.',
+  'הועבר לנציג אנושי להמשך טיפול.',
   'הוחזר ל-AI — אין צורך במענה אנושי כרגע.',
   'לא רלוונטי / ביקש לא לפנות — לסמן כאבוד או DNC בכרטיס הליד.',
 ];
@@ -410,7 +410,7 @@ function InboxTrainingGuide() {
         <div className="grid gap-2 text-sm sm:grid-cols-3 lg:min-w-[560px]">
           <TrainingStep number="1" title="לטפל לפי דחיפות" text="מתחילים מבעיה/סיכון ולענות עכשיו, ואז עוברים לשיחות ומעקב." />
           <TrainingStep number="2" title="פותחים את הליד" text="בכרטיס הליד יש פעולה הבאה, למה זה כאן, ומה להגיד ללקוח." />
-          <TrainingStep number="3" title="סוגרים נכון" text="טופל = הלקוח קיבל מענה, הוחזר ל-AI, עבר למיה/שיחה, או נסגר כלא רלוונטי/DNC בכרטיס הליד." />
+          <TrainingStep number="3" title="סוגרים נכון" text="טופל = הלקוח קיבל מענה, הוחזר ל-AI, עבר לנציג/שיחה, או נסגר כלא רלוונטי/DNC בכרטיס הליד." />
         </div>
       </div>
     </section>
