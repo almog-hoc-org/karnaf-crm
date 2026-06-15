@@ -1,534 +1,269 @@
-// The runtime that consumes automation_rules and dispatches their
-// actions. Tier 4.A foundation.
-//
-// Design:
-// * Pure-function condition evaluator (testable in isolation).
-// * Action dispatcher with one switch per type — adding an action
-//   type is one case, no metaprogramming.
-// * Every fire (success / skip / fail) writes to automation_runs via
-//   the Tier 2 helper, so the /automations page surfaces engine
-//   activity the same way it surfaces code-driven activity.
-// * Never throws — the caller (cron tick / event source) treats this
-//   like fire-and-forget telemetry. One bad rule must not break the
-//   whole tick.
-
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { logAutomationRun } from './automation-log.ts';
-import { notifyTelegram } from './notify-telegram.ts';
-import { log } from './logger.ts';
+import { ensureConversation, logLeadEvent, type LeadRow } from './lead-service.ts';
+import { sendWhatsAppTemplate } from './whatsapp-provider.ts';
+import { ensurePendingQueueItem } from './queue-service.ts';
 
-// ── Conditions DSL ────────────────────────────────────────────────────
-
-export type Condition =
-  | { all: Condition[] }
-  | { any: Condition[] }
-  | { field: string; op: ConditionOp; value?: unknown };
-
-export type ConditionOp =
-  | 'eq' | 'neq' | 'in' | 'not_in'
-  | 'gte' | 'lte' | 'gt' | 'lt'
-  | 'exists' | 'not_exists';
-
-// Resolves a dotted path against a nested context object. Returns
-// undefined when any step is missing — leaves the leaf op to decide
-// whether undefined matches.
-export function resolvePath(context: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.');
-  let cur: unknown = context;
-  for (const part of parts) {
-    if (cur === null || cur === undefined) return undefined;
-    if (typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[part];
-  }
-  return cur;
-}
-
-export function evaluateConditions(conditions: unknown, context: Record<string, unknown>): boolean {
-  // Empty conditions = always-match. Useful for "fire on every tick"
-  // rules where the cron schedule is the only gate.
-  if (!conditions || typeof conditions !== 'object') return true;
-  const c = conditions as Record<string, unknown>;
-  if (Object.keys(c).length === 0) return true;
-
-  if (Array.isArray(c.all)) {
-    return (c.all as Condition[]).every((sub) => evaluateConditions(sub, context));
-  }
-  if (Array.isArray(c.any)) {
-    return (c.any as Condition[]).some((sub) => evaluateConditions(sub, context));
-  }
-
-  // Leaf condition.
-  const field = c.field as string | undefined;
-  const op = c.op as ConditionOp | undefined;
-  if (!field || !op) return false;
-  const actual = resolvePath(context, field);
-  const expected = c.value;
-
-  switch (op) {
-    case 'eq': return actual === expected;
-    case 'neq': return actual !== expected;
-    case 'in': return Array.isArray(expected) && (expected as unknown[]).includes(actual);
-    case 'not_in': return Array.isArray(expected) && !(expected as unknown[]).includes(actual);
-    case 'gte': return Number(actual) >= Number(expected);
-    case 'lte': return Number(actual) <= Number(expected);
-    case 'gt': return Number(actual) > Number(expected);
-    case 'lt': return Number(actual) < Number(expected);
-    case 'exists': return actual !== undefined && actual !== null;
-    case 'not_exists': return actual === undefined || actual === null;
-    default: return false;
-  }
-}
-
-// ── Action dispatcher ─────────────────────────────────────────────────
-
-export interface ActionContext {
-  supabase: SupabaseClient;
-  // The same context blob conditions evaluated against. Actions read
-  // from it too (e.g. send_template needs lead.full_name for var
-  // substitution).
-  context: Record<string, unknown>;
-  contactId?: string | null;
-  correlationId?: string;
-}
-
-interface ActionResult {
-  type: string;
-  status: 'ok' | 'skipped' | 'failed';
-  detail?: Record<string, unknown> | string;
-}
-
-// Exported so journey-runner.ts can reuse the same action dispatcher
-// for per-step actions. Keeps a single switch-per-type, one truth.
-export async function dispatchAction(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
-  const type = action.type as string | undefined;
-  if (!type) return { type: 'unknown', status: 'skipped', detail: 'missing type' };
-
-  try {
-    switch (type) {
-      case 'send_template': return await actionSendTemplate(action, ctx);
-      case 'notify_internal': return await actionNotifyInternal(action, ctx);
-      case 'create_task': return await actionCreateTask(action, ctx);
-      case 'set_field': return await actionSetField(action, ctx);
-      case 'journey_start': return await actionJourneyStart(action, ctx);
-      case 'assign_partner': return await actionAssignPartner(action, ctx);
-      case 'add_to_email_list': return await actionAddToEmailList(action, ctx);
-      default:
-        return { type, status: 'skipped', detail: `unknown action type: ${type}` };
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.warn('action_dispatch_failed', { type, err: msg });
-    return { type, status: 'failed', detail: msg };
-  }
-}
-
-// Shared variable substitution — same {{var}} markers the frontend's
-// template-render.ts uses, kept in sync by convention.
-function renderBody(body: string, context: Record<string, unknown>): { text: string; missing: string[] } {
-  const missing: string[] = [];
-  const text = body.replace(/\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g, (_m, name: string) => {
-    const v = resolvePath(context, name) ?? resolvePath(context, `lead.${name}`);
-    if (v === undefined || v === null || v === '') {
-      if (!missing.includes(name)) missing.push(name);
-      return `{{${name}}}`;
-    }
-    return String(v);
-  });
-  return { text, missing };
-}
-
-async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
-  const key = action.key as string | undefined;
-  const channel = (action.channel as string | undefined) ?? 'whatsapp';
-  if (!key) return { type: 'send_template', status: 'skipped', detail: 'missing key' };
-  if (!ctx.contactId) return { type: 'send_template', status: 'skipped', detail: 'no contactId' };
-
-  const { data: tpl, error } = await ctx.supabase
-    .from('message_templates')
-    .select('id, body, status, key')
-    .eq('key', key).eq('channel', channel).maybeSingle();
-  if (error) return { type: 'send_template', status: 'failed', detail: error.message };
-  if (!tpl) return { type: 'send_template', status: 'skipped', detail: `template ${channel}:${key} not found` };
-  if (tpl.status !== 'active') return { type: 'send_template', status: 'skipped', detail: `template ${key} is ${tpl.status}` };
-
-  // Tier 7.A.2 — lazy partner fetch. If the template body references
-  // {{partner_name}} but ctx.context doesn't have it yet (e.g. admin
-  // reordered actions and send_template runs before assign_partner),
-  // try to resolve it from the deal's partner_id before refusing the
-  // send. Cheap one-time query per rendering; ignored on failure
-  // (we fall through to the "missing var" branch below as before).
-  if (tpl.body.includes('{{partner_name}}') && !ctx.context.partner_name) {
-    const dealCtx = ctx.context.deal as Record<string, unknown> | undefined;
-    const partnerId = dealCtx?.partner_id as string | undefined;
-    if (partnerId) {
-      const { data: partnerRow } = await ctx.supabase
-        .from('partners')
-        .select('id, full_name')
-        .eq('id', partnerId)
-        .maybeSingle();
-      if (partnerRow?.full_name) {
-        ctx.context.partner_name = partnerRow.full_name;
-        ctx.context.partner = { id: partnerRow.id, full_name: partnerRow.full_name };
-      }
-    }
-  }
-
-  const { text, missing } = renderBody(tpl.body, ctx.context);
-  if (missing.length > 0) {
-    // Engine refuses half-filled templates. Better to log + skip than
-    // send "{{first_name}}" to a customer.
-    return { type: 'send_template', status: 'skipped', detail: `missing vars: ${missing.join(', ')}` };
-  }
-
-  // Tier 8.E2 — `once: true` caps the send at one per (lead, template,
-  // channel), ever. The unique-insert is the gate: a conflict means a
-  // prior fire already claimed this send (re-published presale project,
-  // re-fired rule), so skip before enqueueing anything.
-  if (action.once === true) {
-    const { data: claim, error: claimErr } = await ctx.supabase
-      .from('engine_template_sends')
-      .upsert(
-        { lead_id: ctx.contactId, template_key: key, channel },
-        { onConflict: 'lead_id,template_key,channel', ignoreDuplicates: true },
-      )
-      .select('id')
-      .maybeSingle();
-    if (claimErr) return { type: 'send_template', status: 'failed', detail: claimErr.message };
-    if (!claim) return { type: 'send_template', status: 'skipped', detail: 'already sent (once gate)' };
-  }
-
-  // Enqueue via outbound_dispatch the same way manual replies do.
-  // outbound_dispatch holds the channel + text inside payload jsonb
-  // and uses lead_id as the FK — matches existing 036 schema.
-  const { data: enq, error: enqErr } = await ctx.supabase.from('outbound_dispatch').insert({
-    lead_id: ctx.contactId,
-    payload: {
-      kind: 'template',
-      channel,
-      text,
-      template_key: key,
-      source: 'automation_engine',
-    },
-    correlation_id: ctx.correlationId ?? null,
-  }).select('id').maybeSingle();
-  if (enqErr) return { type: 'send_template', status: 'failed', detail: enqErr.message };
-
-  return {
-    type: 'send_template', status: 'ok',
-    detail: { dispatch_id: enq?.id, template_key: key, channel, chars: text.length },
-  };
-}
-
-async function actionNotifyInternal(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
-  const text = action.text as string | undefined;
-  if (!text) return { type: 'notify_internal', status: 'skipped', detail: 'missing text' };
-
-  // Render variables so internal notifications can reference lead
-  // fields the same way customer-facing templates do.
-  const { text: rendered } = renderBody(text, ctx.context);
-
-  // Two channels in parallel:
-  //   1. lead_events row (audit log; always written when contactId present).
-  //   2. Telegram message (operator-visible) when env is configured.
-  // Telegram failure does not fail the action — audit row is the
-  // source of truth. Logs the Telegram outcome for ops debugging.
-  let auditWritten = false;
-  if (ctx.contactId) {
-    const { error } = await ctx.supabase.from('lead_events').insert({
-      lead_id: ctx.contactId,
-      event_type: 'engine_internal_note',
-      actor_type: 'system',
-      event_payload: {
-        text: rendered,
-        source: 'automation_engine',
-        correlation_id: ctx.correlationId ?? null,
-      },
-    });
-    if (error) return { type: 'notify_internal', status: 'failed', detail: error.message };
-    auditWritten = true;
-  }
-
-  // Tier 4.D.3 — forward to Telegram if configured. The notifier
-  // silently no-ops when env vars are missing (NotifyResult.sent=false,
-  // skipped='no_token' / 'no_chat'), so this is safe-by-default.
-  const tg = await notifyTelegram({
-    source: 'automation_engine',
-    severity: 'info',
-    title: rendered,
-    correlationId: ctx.correlationId,
-  });
-
-  return {
-    type: 'notify_internal',
-    status: auditWritten || tg.sent ? 'ok' : 'skipped',
-    detail: {
-      chars: rendered.length,
-      audit_written: auditWritten,
-      telegram_sent: tg.sent,
-      telegram_skipped: tg.skipped ?? null,
-    },
-  };
-}
-
-async function actionCreateTask(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
-  const title = action.title as string | undefined;
-  if (!title) return { type: 'create_task', status: 'skipped', detail: 'missing title' };
-  if (!ctx.contactId) return { type: 'create_task', status: 'skipped', detail: 'no contactId' };
-
-  const dueInHours = (action.due_in_hours as number | undefined) ?? 24;
-  const due = new Date(Date.now() + dueInHours * 3600 * 1000).toISOString();
-
-  const { data, error } = await ctx.supabase.from('lead_tasks').insert({
-    lead_id: ctx.contactId,
-    task_type: (action.kind as string | undefined) ?? 'follow_up',
-    owner_type: 'system',
-    title,
-    due_at: due,
-    payload_json: { source: 'automation_engine', correlation_id: ctx.correlationId ?? null },
-  }).select('id').maybeSingle();
-  if (error) return { type: 'create_task', status: 'failed', detail: error.message };
-
-  return { type: 'create_task', status: 'ok', detail: { task_id: data?.id, due_at: due } };
-}
-
-// Tier 4.D.5 — partner round-robin assignment (B3).
-// Picks the active partner with the lowest open_deals_count from
-// partner_workload, updates the deal's partner_id. Self-healing:
-// idempotent on repeat (returns 'skipped' if a partner is already
-// assigned). The picked partner's info goes into action_results so
-// downstream actions (send_template C5/C6, notify_internal) can
-// reference the assignment.
-//
-// Context required:
-//   deal.id   — which deal to assign on
-//   deal.track (optional) — currently always investor_mentorship
-//                          per spec § ז B3; future tracks can opt in
-//                          via the action's `domain` argument.
-async function actionAssignPartner(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
-  const dealCtx = (ctx.context.deal as Record<string, unknown> | undefined) ?? null;
-  const dealId = dealCtx?.id as string | undefined;
-  if (!dealId) return { type: 'assign_partner', status: 'skipped', detail: 'no deal.id in context' };
-
-  // Refresh the deal to avoid racing on partner_id — another tick
-  // may already have assigned it.
-  const { data: deal, error: dealErr } = await ctx.supabase
-    .from('deals')
-    .select('id, partner_id, track')
-    .eq('id', dealId)
-    .maybeSingle();
-  if (dealErr) return { type: 'assign_partner', status: 'failed', detail: dealErr.message };
-  if (!deal) return { type: 'assign_partner', status: 'skipped', detail: 'deal not found' };
-  if (deal.partner_id) {
-    return { type: 'assign_partner', status: 'skipped', detail: `already assigned to ${deal.partner_id}` };
-  }
-
-  const domain = (action.domain as string | undefined) ?? 'investor_mentorship';
-  const { data: pick, error: pickErr } = await ctx.supabase
-    .from('partner_workload')
-    .select('partner_id, full_name, domain, commission_to_karnaf_pct, open_deals_count')
-    .eq('status', 'active')
-    .eq('domain', domain)
-    .order('open_deals_count', { ascending: true })
-    .order('full_name', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (pickErr) return { type: 'assign_partner', status: 'failed', detail: pickErr.message };
-  if (!pick) return { type: 'assign_partner', status: 'skipped', detail: `no active partners in domain ${domain}` };
-
-  const { error: updErr } = await ctx.supabase
-    .from('deals')
-    .update({ partner_id: pick.partner_id })
-    .eq('id', dealId);
-  if (updErr) return { type: 'assign_partner', status: 'failed', detail: updErr.message };
-
-  // Mutate the live context so downstream actions in the SAME rule
-  // can reference partner_name / partner_id without a re-fetch.
-  // This is a per-run mutation; doesn't leak across rules.
-  ctx.context.partner = {
-    id: pick.partner_id,
-    full_name: pick.full_name,
-    domain: pick.domain,
-  };
-  // Also surface partner_name at top level for {{partner_name}}
-  // template variable substitution.
-  ctx.context.partner_name = pick.full_name;
-
-  return {
-    type: 'assign_partner',
-    status: 'ok',
-    detail: {
-      deal_id: dealId,
-      partner_id: pick.partner_id,
-      partner_name: pick.full_name,
-      open_deals_at_pick: pick.open_deals_count,
-    },
-  };
-}
-
-// Tier 8.C — hand the lead to a Rav Messer mailing list; Rav Messer's
-// automations run the email sequence from there. The CRM never sends
-// marketing email directly.
-async function actionAddToEmailList(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
-  const listId = action.list_id as string | undefined;
-  const listName = (action.list_name as string | undefined) ?? null;
-  if (!listId || listId.startsWith('REPLACE_WITH')) {
-    return { type: 'add_to_email_list', status: 'skipped', detail: 'missing list_id' };
-  }
-  if (!ctx.contactId) return { type: 'add_to_email_list', status: 'skipped', detail: 'no contactId' };
-
-  const { isRavmesserConfigured, addSubscriberToList } = await import('./ravmesser.ts');
-  if (!isRavmesserConfigured()) {
-    return { type: 'add_to_email_list', status: 'skipped', detail: 'ravmesser not configured' };
-  }
-
-  const { data: lead, error: leadErr } = await ctx.supabase
-    .from('leads')
-    .select('id, email, full_name, phone, do_not_contact, removed_by_request, consent_email')
-    .eq('id', ctx.contactId)
-    .maybeSingle();
-  if (leadErr) return { type: 'add_to_email_list', status: 'failed', detail: leadErr.message };
-  if (!lead?.email) return { type: 'add_to_email_list', status: 'skipped', detail: 'lead has no email' };
-  if (lead.do_not_contact || lead.removed_by_request) {
-    return { type: 'add_to_email_list', status: 'skipped', detail: 'do_not_contact' };
-  }
-  // חוק הספאם — explicit refusal blocks; null (never asked) passes,
-  // matching how consent is captured at intake today.
-  if (lead.consent_email === false) {
-    return { type: 'add_to_email_list', status: 'skipped', detail: 'consent_email refused' };
-  }
-
-  // Per-(lead, list) dedup via the event log; the API's EMAILS_EXISTING
-  // is the backstop for races.
-  const { data: prior } = await ctx.supabase
-    .from('lead_events')
-    .select('id')
-    .eq('lead_id', ctx.contactId)
-    .eq('event_type', 'email_list_added')
-    .eq('event_payload->>list_id', listId)
-    .limit(1)
-    .maybeSingle();
-  if (prior) return { type: 'add_to_email_list', status: 'skipped', detail: 'already added to list' };
-
-  const result = await addSubscriberToList(listId, {
-    email: lead.email as string,
-    name: lead.full_name as string | null,
-    phone: lead.phone as string | null,
-  });
-  if (!result.ok) return { type: 'add_to_email_list', status: 'failed', detail: result.error ?? 'unknown' };
-
-  await ctx.supabase.from('lead_events').insert({
-    lead_id: ctx.contactId,
-    event_type: 'email_list_added',
-    actor_type: 'system',
-    event_payload: { list_id: listId, list_name: listName, existing: result.existing },
-  });
-
-  return {
-    type: 'add_to_email_list', status: 'ok',
-    detail: { list_id: listId, list_name: listName, created: result.created, existing: result.existing },
-  };
-}
-
-// journey_start delegates to the journey-runner — kept here as a thin
-// wrapper so engine remains the single dispatch entry point and the
-// runner stays the single owner of journey state.
-async function actionJourneyStart(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
-  const code = action.code as string | undefined;
-  if (!code) return { type: 'journey_start', status: 'skipped', detail: 'missing code' };
-  if (!ctx.contactId) return { type: 'journey_start', status: 'skipped', detail: 'no contactId' };
-
-  // Late-import to avoid the runner ↔ engine cycle at module load.
-  const { startJourney } = await import('./journey-runner.ts');
-  const r = await startJourney(ctx.supabase, {
-    code, contactId: ctx.contactId, context: ctx.context, correlationId: ctx.correlationId,
-  });
-  return { type: 'journey_start', status: r.status, detail: { code, run_id: r.run_id, reason: r.reason } };
-}
-
-async function actionSetField(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
-  const table = action.table as string | undefined;
-  const field = action.field as string | undefined;
-  if (!table || !field) return { type: 'set_field', status: 'skipped', detail: 'missing table/field' };
-  if (!ctx.contactId) return { type: 'set_field', status: 'skipped', detail: 'no contactId' };
-
-  // Guardrail: engine can only write to a small whitelist of safe
-  // columns. Opening this up to arbitrary columns is a foot-gun.
-  const allowed: Record<string, string[]> = {
-    leads: ['heat', 'next_action_type', 'next_action_due_at', 'tags'],
-  };
-  if (!allowed[table]?.includes(field)) {
-    return { type: 'set_field', status: 'skipped', detail: `field ${table}.${field} not in safelist` };
-  }
-
-  const { error } = await ctx.supabase.from(table).update({ [field]: action.value }).eq('id', ctx.contactId);
-  if (error) return { type: 'set_field', status: 'failed', detail: error.message };
-
-  return { type: 'set_field', status: 'ok', detail: { table, field, value: action.value } };
-}
-
-// ── Top-level entrypoint ──────────────────────────────────────────────
-
-export interface RunRulesInput {
+export interface EngineContext {
+  lead: LeadRow;
   triggerEvent: string;
-  context: Record<string, unknown>;
-  contactId?: string | null;
-  correlationId?: string;
+  correlationId: string;
+  data?: Record<string, unknown>;
 }
 
-export async function runMatchingRules(
+interface MessageTemplate {
+  key: string;
+  channel: string;
+  body: string;
+  variables_used: string[];
+  metadata: Record<string, unknown>;
+}
+
+interface AutomationAction {
+  type: string;
+  key?: string;
+  channel?: string;
+  code?: string;
+  once?: boolean;
+}
+
+type ActionResult = {
+  type: string;
+  status: 'success' | 'skipped' | 'failed';
+  reason?: string;
+  payload?: Record<string, unknown>;
+};
+
+function firstName(fullName: string | null | undefined): string {
+  const trimmed = (fullName ?? '').trim();
+  if (!trimmed) return 'שם';
+  return trimmed.split(/\s+/)[0] || trimmed;
+}
+
+function valueForVariable(name: string, ctx: EngineContext): string {
+  if (name === 'first_name') return firstName(ctx.lead.full_name as string | null);
+  if (name === 'full_name') return (ctx.lead.full_name as string | null) || firstName(ctx.lead.full_name as string | null);
+  if (name === 'phone') return (ctx.lead.phone as string | null) || '';
+  if (name === 'email') return (ctx.lead.email as string | null) || '';
+
+  const dataValue = ctx.data?.[name];
+  if (dataValue !== undefined && dataValue !== null) return String(dataValue);
+
+  const leadValue = ctx.lead[name];
+  if (leadValue !== undefined && leadValue !== null) return String(leadValue);
+
+  return '';
+}
+
+function renderBody(template: MessageTemplate, ctx: EngineContext): string {
+  let body = template.body;
+  for (const variable of template.variables_used ?? []) {
+    body = body.replaceAll(`{{${variable}}}`, valueForVariable(variable, ctx));
+  }
+  return body;
+}
+
+async function insertRun(
   supabase: SupabaseClient,
-  input: RunRulesInput,
+  ruleCode: string,
+  ctx: EngineContext,
+  status: 'success' | 'skipped' | 'failed' | 'partial',
+  actionResults: ActionResult[],
+  reason?: string,
+  startedAt = Date.now(),
 ): Promise<void> {
-  const { data: rules, error } = await supabase
+  const { data: rule } = await supabase
     .from('automation_rules')
-    .select('id, code, enabled, source, conditions, actions')
-    .eq('source', 'engine')
-    .eq('enabled', true)
-    .eq('trigger_event', input.triggerEvent);
-  if (error) {
-    log.warn('engine_load_rules_failed', { triggerEvent: input.triggerEvent, err: error.message });
-    return;
+    .select('id')
+    .eq('code', ruleCode)
+    .maybeSingle();
+
+  await supabase.from('automation_runs').insert({
+    rule_id: rule?.id ?? null,
+    rule_code: ruleCode,
+    trigger_event: ctx.triggerEvent,
+    contact_id: ctx.lead.id,
+    context: { lead_id: ctx.lead.id, data: ctx.data ?? {}, correlation_id: ctx.correlationId },
+    action_results: actionResults,
+    status,
+    reason: reason ?? null,
+    duration_ms: Date.now() - startedAt,
+    correlation_id: ctx.correlationId,
+  });
+}
+
+export async function startJourney(
+  supabase: SupabaseClient,
+  code: string,
+  ctx: EngineContext,
+): Promise<ActionResult> {
+  const { data: definition, error } = await supabase
+    .from('journey_definitions')
+    .select('id, code, enabled, allow_concurrent')
+    .eq('code', code)
+    .maybeSingle();
+  if (error) return { type: 'journey_start', status: 'failed', reason: error.message };
+  if (!definition || !definition.enabled) {
+    return { type: 'journey_start', status: 'skipped', reason: 'journey_missing_or_disabled', payload: { code } };
   }
 
-  for (const rule of rules ?? []) {
-    const start = Date.now();
-    const passes = evaluateConditions(rule.conditions, input.context);
-    if (!passes) {
-      await logAutomationRun(supabase, {
-        ruleCode: rule.code,
-        triggerEvent: input.triggerEvent,
-        contactId: input.contactId,
-        context: input.context,
-        status: 'skipped',
-        reason: 'conditions did not match',
-        durationMs: Date.now() - start,
-        correlationId: input.correlationId,
-      });
-      continue;
+  if (!definition.allow_concurrent) {
+    const { data: existing, error: existingErr } = await supabase
+      .from('journey_runs')
+      .select('id')
+      .eq('definition_id', definition.id)
+      .eq('contact_id', ctx.lead.id)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (existingErr) return { type: 'journey_start', status: 'failed', reason: existingErr.message };
+    if (existing) {
+      return { type: 'journey_start', status: 'skipped', reason: 'active_journey_exists', payload: { code } };
     }
+  }
 
-    const actions = Array.isArray(rule.actions) ? rule.actions : [];
-    const results: ActionResult[] = [];
-    for (const action of actions) {
-      results.push(await dispatchAction(action as Record<string, unknown>, {
-        supabase, context: input.context, contactId: input.contactId, correlationId: input.correlationId,
-      }));
-    }
+  const { error: insertErr } = await supabase.from('journey_runs').insert({
+    definition_id: definition.id,
+    definition_code: definition.code,
+    contact_id: ctx.lead.id,
+    current_step: 0,
+    scheduled_next_at: new Date().toISOString(),
+    state: { started_by: ctx.triggerEvent, correlation_id: ctx.correlationId },
+  });
+  if (insertErr) return { type: 'journey_start', status: 'failed', reason: insertErr.message, payload: { code } };
+  await logLeadEvent(supabase, ctx.lead.id, 'journey_started', 'system', { code, correlation_id: ctx.correlationId });
+  return { type: 'journey_start', status: 'success', payload: { code } };
+}
 
-    const anyFailed = results.some((r) => r.status === 'failed');
-    const allSkipped = results.length > 0 && results.every((r) => r.status === 'skipped');
-    const status = anyFailed ? 'partial' : allSkipped ? 'skipped' : 'success';
+export async function sendTemplateAction(
+  supabase: SupabaseClient,
+  action: AutomationAction,
+  ctx: EngineContext,
+): Promise<ActionResult> {
+  const key = action.key;
+  const channel = action.channel ?? 'whatsapp';
+  if (!key) return { type: 'send_template', status: 'failed', reason: 'missing_template_key' };
+  if (channel !== 'whatsapp') return { type: 'send_template', status: 'skipped', reason: 'unsupported_channel', payload: { channel } };
+  if (!ctx.lead.phone) return { type: 'send_template', status: 'skipped', reason: 'missing_phone', payload: { key } };
+  if (ctx.lead.do_not_contact || ctx.lead.removed_by_request) {
+    return { type: 'send_template', status: 'skipped', reason: 'lead_suppressed', payload: { key } };
+  }
 
-    await logAutomationRun(supabase, {
-      ruleCode: rule.code,
-      triggerEvent: input.triggerEvent,
-      contactId: input.contactId,
-      context: input.context,
-      actionResults: results as unknown as Array<Record<string, unknown>>,
-      status,
-      reason: anyFailed ? results.find((r) => r.status === 'failed')?.detail as string : undefined,
-      durationMs: Date.now() - start,
-      correlationId: input.correlationId,
+  if (action.once) {
+    const { error: ledgerErr } = await supabase.from('engine_template_sends').insert({
+      lead_id: ctx.lead.id,
+      template_key: key,
+      channel,
     });
+    if (ledgerErr) {
+      if (ledgerErr.code === '23505') {
+        return { type: 'send_template', status: 'skipped', reason: 'already_sent_once', payload: { key } };
+      }
+      return { type: 'send_template', status: 'failed', reason: ledgerErr.message, payload: { key } };
+    }
   }
+
+  const { data: template, error: templateErr } = await supabase
+    .from('message_templates')
+    .select('key, channel, body, variables_used, metadata')
+    .eq('key', key)
+    .eq('channel', channel)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (templateErr) return { type: 'send_template', status: 'failed', reason: templateErr.message, payload: { key } };
+  if (!template) return { type: 'send_template', status: 'failed', reason: 'template_missing', payload: { key } };
+
+  const row = template as MessageTemplate;
+  const metaName = typeof row.metadata?.meta_template_name === 'string'
+    ? row.metadata.meta_template_name
+    : row.key;
+  const language = typeof row.metadata?.meta_language === 'string'
+    ? row.metadata.meta_language
+    : 'he';
+  const params = (row.variables_used ?? []).map((name) => ({ name, value: valueForVariable(name, ctx) }));
+  const contentText = renderBody(row, ctx);
+  const sendResult = await sendWhatsAppTemplate(ctx.lead.phone as string, metaName, params, language);
+  if (!sendResult.ok) {
+    await ensurePendingQueueItem(supabase, {
+      leadId: ctx.lead.id,
+      queueType: 'failed_automation',
+      priorityLevel: 1,
+      reason: 'Lifecycle template send failed',
+      queueSummary: sendResult.error ?? `Template ${key} failed`,
+      payloadJson: { key, metaName, error: sendResult.error, correlationId: ctx.correlationId },
+      createdByActorType: 'system',
+    });
+    return { type: 'send_template', status: 'failed', reason: sendResult.error ?? 'send_failed', payload: { key, metaName } };
+  }
+
+  const conversation = await ensureConversation(supabase, ctx.lead.id, 'whatsapp', 'meta_cloud_api');
+  const { error: messageErr } = await supabase.from('messages').insert({
+    conversation_id: conversation.id,
+    lead_id: ctx.lead.id,
+    provider_message_id: sendResult.providerMessageId ?? null,
+    sender_type: 'system',
+    sender_name: 'Karnaf lifecycle bot',
+    direction: 'outbound',
+    message_type: 'template',
+    content_text: contentText,
+    provider_status: 'sent',
+  });
+  if (messageErr) return { type: 'send_template', status: 'failed', reason: messageErr.message, payload: { key } };
+
+  await supabase.from('leads').update({
+    last_outbound_at: new Date().toISOString(),
+    last_message_at: new Date().toISOString(),
+  }).eq('id', ctx.lead.id);
+  await logLeadEvent(supabase, ctx.lead.id, 'lifecycle_template_sent', 'system', {
+    key,
+    meta_template_name: metaName,
+    correlation_id: ctx.correlationId,
+  }, conversation.id);
+
+  return { type: 'send_template', status: 'success', payload: { key, metaName, providerMessageId: sendResult.providerMessageId } };
+}
+
+export async function runActions(
+  supabase: SupabaseClient,
+  actions: AutomationAction[],
+  ctx: EngineContext,
+): Promise<ActionResult[]> {
+  const results: ActionResult[] = [];
+  for (const action of actions) {
+    if (action.type === 'send_template') {
+      results.push(await sendTemplateAction(supabase, action, ctx));
+    } else if (action.type === 'journey_start' && action.code) {
+      results.push(await startJourney(supabase, action.code, ctx));
+    } else {
+      results.push({ type: action.type, status: 'skipped', reason: 'unsupported_action' });
+    }
+  }
+  return results;
+}
+
+export async function runRuleActions(
+  supabase: SupabaseClient,
+  ruleCode: string,
+  ctx: EngineContext,
+): Promise<ActionResult[]> {
+  const startedAt = Date.now();
+  const { data: rule, error } = await supabase
+    .from('automation_rules')
+    .select('actions, enabled')
+    .eq('code', ruleCode)
+    .maybeSingle();
+  if (error) {
+    const result = [{ type: 'rule', status: 'failed' as const, reason: error.message }];
+    await insertRun(supabase, ruleCode, ctx, 'failed', result, error.message, startedAt);
+    return result;
+  }
+  if (!rule?.enabled || !Array.isArray(rule.actions)) {
+    const result = [{ type: 'rule', status: 'skipped' as const, reason: 'rule_missing_disabled_or_no_actions' }];
+    await insertRun(supabase, ruleCode, ctx, 'skipped', result, 'rule_missing_disabled_or_no_actions', startedAt);
+    return result;
+  }
+
+  const results = await runActions(supabase, rule.actions as AutomationAction[], ctx);
+  const failed = results.some((r) => r.status === 'failed');
+  const success = results.some((r) => r.status === 'success');
+  await insertRun(supabase, ruleCode, ctx, failed ? (success ? 'partial' : 'failed') : 'success', results, failed ? 'one_or_more_actions_failed' : undefined, startedAt);
+  return results;
 }
