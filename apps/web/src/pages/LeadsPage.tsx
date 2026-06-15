@@ -7,7 +7,7 @@ import { BulkActionBar } from '@/components/BulkActionBar';
 import { LeadsTableSkeleton } from '@/components/Skeleton';
 import { useToast } from '@/components/Toast';
 import { useAuth } from '@/auth/auth-context';
-import { formatRelative, STATUS_LABELS, HEAT_LABELS, OWNERSHIP_LABELS } from '@/lib/format';
+import { formatRelative, labelOr, STATUS_LABELS, HEAT_LABELS, OWNERSHIP_LABELS, SOURCE_LABELS } from '@/lib/format';
 import type { IntakeSegment, LeadHeat, LeadRow, LeadStatus, OwnershipMode } from '@/lib/types';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
@@ -129,7 +129,7 @@ function LeadWorkCard({
               <span>אין טלפון</span>
             )}
             {lead.email ? <span className="break-all">{lead.email}</span> : null}
-            <span>מקור: {lead.source || '—'}</span>
+            <span>מקור: {lead.source ? labelOr(SOURCE_LABELS, lead.source) : '—'}</span>
             {lead.product_interest ? (
               <span>מוצר: {PRODUCT_INTEREST_LABELS[lead.product_interest] ?? lead.product_interest}</span>
             ) : null}

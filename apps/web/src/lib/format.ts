@@ -208,6 +208,34 @@ export const PROGRAM_PROGRESS_LABELS: Record<string, string> = {
   // Extend as program states are introduced.
 };
 
+// Lead arrival-source → short Hebrew label (1–2 words), by channel.
+// Mirrors the lead_sources registry display names. Use via
+// labelOr(SOURCE_LABELS, lead.source) so an unregistered slug still
+// renders titleized rather than raw snake_case.
+export const SOURCE_LABELS: Record<string, string> = {
+  website: 'אתר',
+  landing_page: 'אתר',
+  services_page: 'אתר',
+  webinar: 'וובינר',
+  webinar_registration: 'וובינר',
+  responder_form: 'רב מסר',
+  lead_magnet: 'מגנט לידים',
+  instagram: 'אינסטגרם',
+  instagram_dm: 'אינסטגרם',
+  facebook_lead_ads: 'פייסבוק',
+  facebook_lead_ad: 'פייסבוק',
+  facebook_messenger: 'מסנג׳ר',
+  whatsapp: 'וואטסאפ',
+  whatsapp_direct: 'וואטסאפ',
+  whatsapp_topic_selection: 'וואטסאפ',
+  phone_call_request: 'בקשת שיחה',
+  presale_form: 'פריסייל',
+  investor_mentorship_form: 'ליווי משקיעים',
+  manual_entry: 'הזנה ידנית',
+  screenshot_manual: 'צילום מסך',
+  unknown: 'לא ידוע',
+};
+
 export const QUEUE_LABELS: Record<string, string> = {
   first_response_due: 'מענה ראשוני',
   hot_lead: 'ליד חם',

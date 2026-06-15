@@ -32,6 +32,8 @@ import {
   PRD_TRACK_LABELS,
   PROGRAM_PROGRESS_LABELS,
   QUEUE_LABELS,
+  SOURCE_LABELS,
+  labelOr,
   formatDateTime, formatRelative,
 } from '@/lib/format';
 import type {
@@ -304,7 +306,7 @@ export function LeadDetailPage() {
         <dl className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-slate-600">
           <ContactRow label="טלפון" value={lead.phone} kind="phone" />
           <ContactRow label="אימייל" value={lead.email} kind="email" />
-          <DataRow label="מקור" value={lead.source} />
+          <DataRow label="מקור" value={lead.source ? labelOr(SOURCE_LABELS, lead.source) : null} />
         </dl>
 
         {/* Status row — same chips as before, no longer competes with
