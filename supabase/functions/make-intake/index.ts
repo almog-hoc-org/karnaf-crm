@@ -52,7 +52,16 @@ function pick(obj: Record<string, unknown>, names: string[]): string | undefined
 // Normalize an arbitrary inbound payload to the CRM intake shape.
 // Pass-through anything already named correctly; map common variants.
 function normalize(raw: Record<string, unknown>, defaultSource: string): Record<string, unknown> {
-  const full_name = pick(raw, ['full_name', 'name', 'NAME', 'fullname', 'שם', 'שם מלא', 'first_name']);
+  // Rav Messer/Responder splits the name into `first`/`last`; many form
+  // tools use `name`/`NAME`/`full_name`. Try the whole-name fields first,
+  // then fall back to joining first+last.
+  let full_name = pick(raw, ['full_name', 'name', 'NAME', 'fullname', 'שם', 'שם מלא']);
+  if (!full_name) {
+    const first = pick(raw, ['first', 'first_name', 'firstname', 'fname']);
+    const last = pick(raw, ['last', 'last_name', 'lastname', 'lname']);
+    const joined = [first, last].filter(Boolean).join(' ').trim();
+    if (joined) full_name = joined;
+  }
   const phone = pick(raw, ['phone', 'PHONE', 'mobile', 'טלפון', 'נייד', 'cellphone']);
   const email = pick(raw, ['email', 'EMAIL', 'mail', 'אימייל', 'דוא"ל']);
   const source = pick(raw, ['source', 'SOURCE']) ?? defaultSource;
