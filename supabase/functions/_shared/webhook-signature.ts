@@ -39,23 +39,17 @@ export async function verifyMetaSignature(req: Request, body: string, appSecret:
 
 /**
  * Generic HMAC verification used by the payment provider and the intake hook.
- * Accepts a header (or list of headers, tried in order) containing the hex
- * digest; tolerates an optional 'sha256=' prefix to support providers that
- * follow the GitHub convention.
+ * Accepts a header containing the hex digest; tolerates an optional 'sha256='
+ * prefix to support providers that follow the GitHub convention.
  */
 export async function verifyHmacHeader(
   req: Request,
   body: string,
   secret: string,
-  headerName: string | string[],
+  headerName: string,
 ): Promise<boolean> {
   if (!secret) return false;
-  const names = Array.isArray(headerName) ? headerName : [headerName];
-  let raw = '';
-  for (const name of names) {
-    raw = (req.headers.get(name) || '').trim().toLowerCase();
-    if (raw) break;
-  }
+  const raw = (req.headers.get(headerName) || '').trim().toLowerCase();
   if (!raw) return false;
   const provided = raw.startsWith('sha256=') ? raw.slice('sha256='.length) : raw;
   const expected = (await hmacHex(secret, body, 'SHA-256')).toLowerCase();
