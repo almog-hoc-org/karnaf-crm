@@ -27,7 +27,7 @@ const DAY_FORMATTER = new Intl.DateTimeFormat('he-IL', {
 const ACTOR_LABELS: Record<string, string> = {
   lead: 'הלקוח',
   ai: 'AI',
-  mia: 'מיה',
+  mia: 'נציג',
   sales_rep: 'איש מכירות',
   system: 'המערכת',
   admin: 'אדמין',

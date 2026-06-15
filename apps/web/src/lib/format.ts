@@ -58,7 +58,7 @@ export const HEAT_LABELS: Record<LeadHeat, string> = {
 
 export const OWNERSHIP_LABELS: Record<OwnershipMode, string> = {
   ai_active: 'AI פעיל',
-  mia_active: 'מיה',
+  mia_active: 'נציג',
   phone_sales_pending: 'ממתין לשיחת טלפון',
   shared_watch: 'במעקב משותף',
   suppressed: 'מושתק',

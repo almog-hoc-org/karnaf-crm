@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import clsx from 'clsx';
 import {
   fetchAutomationRunsForContact,
@@ -8,6 +8,7 @@ import {
   fetchLeadDetail,
   fetchMessageTemplates,
   postAdminAction,
+  postLeadManage,
   postSendReply,
   postQueueResolve,
   type AdminAction,
@@ -56,6 +57,7 @@ import { useRealtimeInvalidate } from '@/lib/useRealtimeInvalidate';
 export function LeadDetailPage() {
   const { leadId = '' } = useParams<{ leadId: string }>();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const auth = useAuth();
   const toast = useToast();
   const detailQ = useQuery({
@@ -220,6 +222,18 @@ export function LeadDetailPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const deleteLead = useMutation({
+    mutationFn: () => postLeadManage({ action: 'delete', leadId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      toast.success('הליד נמחק');
+      setDeleteOpen(false);
+      navigate('/leads');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
   const updateMeta = useMutation({
     mutationFn: (updates: LeadMetaUpdates) =>
       postAdminAction({ action: 'update_lead_meta', leadId, metaUpdates: updates }),
@@ -354,9 +368,9 @@ export function LeadDetailPage() {
                   <button
                     type="button"
                     className="kf-btn"
-                    onClick={() => action.mutate({ action: 'assign_to_mia', label: 'הועבר למיה' })}
+                    onClick={() => action.mutate({ action: 'assign_to_mia', label: 'הועבר לנציג' })}
                   >
-                    העברה למיה
+                    העברה לנציג
                   </button>
                   <button
                     type="button"
@@ -421,6 +435,17 @@ export function LeadDetailPage() {
                     סימון כ-DNC
                   </button>
                 </ActionGroup>
+                {auth.role === 'owner' || auth.role === 'admin' ? (
+                  <ActionGroup label="מחיקה">
+                    <button
+                      type="button"
+                      className="kf-btn kf-btn-danger"
+                      onClick={() => setDeleteOpen(true)}
+                    >
+                      מחיקת ליד
+                    </button>
+                  </ActionGroup>
+                ) : null}
               </div>
             </details>
           </div>
@@ -436,7 +461,7 @@ export function LeadDetailPage() {
         messages={messages}
         canAct={auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia'}
         busy={action.isPending}
-        onAssignToMia={() => action.mutate({ action: 'assign_to_mia', label: 'הועבר למיה' })}
+        onAssignToMia={() => action.mutate({ action: 'assign_to_mia', label: 'הועבר לנציג' })}
         onReturnToAi={() => action.mutate({ action: 'return_to_ai', label: 'הוחזר ל-AI' })}
         onMarkPhone={() => action.mutate({ action: 'mark_phone_escalation', label: 'סומן לשיחה' })}
       />
@@ -774,6 +799,17 @@ export function LeadDetailPage() {
           });
           setPendingAction(null);
         }}
+      />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        title="מחיקת ליד"
+        description={`למחוק את הליד${detailQ.data?.lead.full_name ? ` "${detailQ.data.lead.full_name}"` : ''}? הוא יוסר מהרשימות הפעילות וההיסטוריה תישמר. ניתן לשחזר דרך מנהל.`}
+        confirmLabel="מחיקה"
+        destructive
+        busy={deleteLead.isPending}
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={() => deleteLead.mutate()}
       />
 
       <ConfirmDialog
@@ -1366,9 +1402,9 @@ function leadResolutionGuide(
       action: 'לסגור פריט תור עם הערה קצרה כדי שלא יקפוץ שוב.',
     },
     {
-      title: 'להעביר למיה',
+      title: 'להעביר לנציג',
       when: 'יש רגישות, התנגדות, בקשה אישית, תשלום, או צורך בשיקול דעת אנושי.',
-      action: primaryAction === 'takeover' ? 'זו הפעולה המומלצת כרגע.' : 'ללחוץ “העברה למיה” ולהשאיר סיכום קצר.',
+      action: primaryAction === 'takeover' ? 'זו הפעולה המומלצת כרגע.' : 'ללחוץ “העברה לנציג” ולהשאיר סיכום קצר.',
     },
     {
       title: 'להחזיר ל-AI',
@@ -1531,7 +1567,7 @@ function HandlerBanner({
         return {
           tone: 'bg-amber-50 text-amber-800 ring-amber-200',
           icon: '👤',
-          label: 'מיה מטפלת',
+          label: 'נציג מטפל',
           detail: lastHumanTouchAt
             ? `מגע אנושי אחרון ${formatRelative(lastHumanTouchAt)}`
             : 'הליד הועבר לטיפול ידני.',
