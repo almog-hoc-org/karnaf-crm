@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { fetchLeadsList, fetchUsersList, postBulkLeadAction, type ProductGroup } from '@/lib/api';
+import { fetchLeadsList, fetchUsersList, postBulkLeadAction, postLeadManage, type ProductGroup } from '@/lib/api';
 import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { BulkActionBar } from '@/components/BulkActionBar';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LeadsTableSkeleton } from '@/components/Skeleton';
 import { useToast } from '@/components/Toast';
 import { useAuth } from '@/auth/auth-context';
@@ -407,6 +408,27 @@ export function LeadsPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
+  // Manual add-lead (owner/admin/mia/sales_rep). Wires to leads-manage create.
+  const [addOpen, setAddOpen] = useState(false);
+  const [newLead, setNewLead] = useState({ fullName: '', phone: '', email: '', source: 'manual_entry' });
+  const addMut = useMutation({
+    mutationFn: () =>
+      postLeadManage({
+        action: 'create',
+        fullName: newLead.fullName.trim() || null,
+        phone: newLead.phone.trim() || null,
+        email: newLead.email.trim() || null,
+        source: newLead.source,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      toast.success('הליד נוסף');
+      setAddOpen(false);
+      setNewLead({ fullName: '', phone: '', email: '', source: 'manual_entry' });
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
   const total = q.data?.total ?? null;
   const start = total != null ? offset + 1 : null;
   const end = total != null ? Math.min(offset + (q.data?.leads.length ?? 0), total) : null;
@@ -426,10 +448,61 @@ export function LeadsPage() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-center justify-between">
+      <header className="flex items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">{t('leads_title')}</h1>
-        <span className="text-sm text-slate-500">{total != null ? `${total} ${t('total_count')}` : ''}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-slate-500">{total != null ? `${total} ${t('total_count')}` : ''}</span>
+          <button type="button" className="kf-btn kf-btn-primary" onClick={() => setAddOpen(true)}>
+            + הוסף ליד
+          </button>
+        </div>
       </header>
+
+      <ConfirmDialog
+        open={addOpen}
+        title="הוספת ליד חדש"
+        description="חובה למלא לפחות טלפון או אימייל."
+        confirmLabel="הוספה"
+        busy={addMut.isPending}
+        onCancel={() => setAddOpen(false)}
+        onConfirm={() => {
+          if (!newLead.phone.trim() && !newLead.email.trim()) {
+            toast.error('צריך טלפון או אימייל');
+            return;
+          }
+          addMut.mutate();
+        }}
+      >
+        <div className="space-y-3">
+          <label className="block text-sm">
+            <span className="text-slate-600">שם מלא</span>
+            <input className="kf-input mt-1" value={newLead.fullName}
+              onChange={(e) => setNewLead((s) => ({ ...s, fullName: e.target.value }))} placeholder="שם הליד" />
+          </label>
+          <label className="block text-sm">
+            <span className="text-slate-600">טלפון</span>
+            <input className="kf-input mt-1 ltr" dir="ltr" value={newLead.phone}
+              onChange={(e) => setNewLead((s) => ({ ...s, phone: e.target.value }))} placeholder="050-1234567" />
+          </label>
+          <label className="block text-sm">
+            <span className="text-slate-600">אימייל</span>
+            <input className="kf-input mt-1 ltr" dir="ltr" type="email" value={newLead.email}
+              onChange={(e) => setNewLead((s) => ({ ...s, email: e.target.value }))} placeholder="name@example.com" />
+          </label>
+          <label className="block text-sm">
+            <span className="text-slate-600">מקור</span>
+            <select className="kf-input mt-1" value={newLead.source}
+              onChange={(e) => setNewLead((s) => ({ ...s, source: e.target.value }))}>
+              <option value="manual_entry">הזנה ידנית</option>
+              <option value="whatsapp_direct">וואטסאפ</option>
+              <option value="responder_form">רב מסר</option>
+              <option value="instagram_dm">אינסטגרם</option>
+              <option value="facebook_lead_ad">פייסבוק</option>
+              <option value="landing_page">אתר</option>
+            </select>
+          </label>
+        </div>
+      </ConfirmDialog>
 
       {/* Tier 6.A — product strip. Coarse-grained tabs by what the
           customer actually wants (program / investor / presale /
