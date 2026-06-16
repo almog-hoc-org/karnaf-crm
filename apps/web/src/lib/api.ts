@@ -399,10 +399,12 @@ export async function postQueueResolve(payload: { queueItemId: string; resolutio
 // lists immediately. Restore is owner/admin only.
 export async function postLeadManage(
   payload:
+    | { action: 'create'; fullName?: string | null; phone?: string | null; email?: string | null;
+        source?: string; city?: string | null; notesInternal?: string | null }
     | { action: 'delete'; leadId: string; reason?: string | null }
     | { action: 'restore'; leadId: string },
 ) {
-  return postJson<{ ok: true; lead: { id: string; removed_by_request: boolean } }>('/leads-manage', payload);
+  return postJson<{ ok: true; lead: { id: string } }>('/leads-manage', payload);
 }
 
 export type BulkLeadAction = 'assign_owner' | 'change_heat';
