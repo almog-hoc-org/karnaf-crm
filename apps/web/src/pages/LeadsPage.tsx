@@ -499,6 +499,8 @@ export function LeadsPage() {
               <option value="instagram_dm">אינסטגרם</option>
               <option value="facebook_lead_ad">פייסבוק</option>
               <option value="landing_page">אתר</option>
+              <option value="webinar">וובינר</option>
+              <option value="lead_magnet">מגנט לידים</option>
             </select>
           </label>
         </div>
