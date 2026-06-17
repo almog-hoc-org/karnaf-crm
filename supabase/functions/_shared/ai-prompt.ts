@@ -5,6 +5,7 @@ import { formatTimeContextForPrompt } from './time-context.ts';
 import { resolveMaxReplyChars } from './reply-length.ts';
 import { summariseTopicsForPrompt, type TopicEntry } from './topics.ts';
 import { formatClaimsForPrompt } from './claim-service.ts';
+import { resolveTrackContext } from './track-context.ts';
 
 export const RESPONSE_SCHEMA_HINT = `Return JSON exactly matching this shape (Hebrew for replyText/notesForMia):
 {
@@ -29,6 +30,7 @@ export function buildAiSystemPrompt(
   overrides: PromptOverrides = {},
 ): string {
   const product = ctx.runtimeConfig.product;
+  const track = resolveTrackContext(ctx.lead.primaryTrack, ctx.lead.productInterest);
   const objective =
     typeof overrides.objective === 'string' && overrides.objective.length > 0
       ? overrides.objective
@@ -39,8 +41,10 @@ export function buildAiSystemPrompt(
       : playbook.guidance;
   const personaGuidance = ctx.personaContext?.guidance ?? [];
   const lines: string[] = [
-    `You are the AI operator for Karnaf — a Hebrew-speaking real-estate education & investment company. Karnaf's flagship offering is the digital program "${product.displayName}", but Karnaf's human team also handles other real-estate needs (investments, land, group purchases, personal consultations).`,
-    `Do NOT assume the lead came for the flagship program. Read the lead's ACTUAL stated interest (see productInterest / classificationSummary / the conversation below) and respond to THAT, not to a script.`,
+    `You are the AI operator for Karnaf — a Hebrew-speaking real-estate education & investment company. Karnaf runs several distinct tracks: the digital program "${product.displayName}", presale projects, and premium 1:1 investor mentorship.`,
+    `THIS lead's relevant track is: ${track.displayName}. ${track.blurb}`,
+    `Your objective for this track: ${track.objective}`,
+    `Do NOT assume the lead came for the flagship program. Engage on THEIR track (above) and on what they ACTUALLY said (see productInterest / classificationSummary / the conversation below) — not a generic script.`,
     `Channel is ${ctx.lead.channel === 'instagram' ? 'Instagram DM' : 'WhatsApp'}. Tone: personal, professional, courteous, never aggressive, no flattery, max one emoji when natural.`,
     `Active playbook: ${playbook.name}. Objective: ${objective}`,
     `Guidance:`,
@@ -49,7 +53,9 @@ export function buildAiSystemPrompt(
     ` - Grounding: only reference facts and events that appear in the lead profile or the conversation below. NEVER claim the lead registered for, joined, or attended a webinar/event/program unless it explicitly appears above. When unsure, do not assert it.`,
     ` - No repeated greeting: greet by name ("היי {name}") only when there is NO prior conversation history. If messages already exist, continue naturally — do not re-introduce yourself or re-greet each turn.`,
     ` - Mirror the need: explicitly acknowledge the lead's stated topic in their own words before steering anywhere. If they named a specific subject (e.g. קרקעות, מילואים, השקעה ספציפית), name it back to them.`,
-    ` - Honest scope + early handoff: if the lead wants something the flagship program does NOT cover, do NOT try to redirect them back to the program and do NOT repeat the same pitch. Acknowledge honestly that a human teammate handles it, then hand off: set escalateToMia=true, createQueueType="human_handoff", sendMode="freeform", and send ONE short bridging message ("אעביר אותך לנציג שיחזור אליך בנושא X"). Losing a lead who wants a real service is a failure.`,
+    ` - Stay on the lead's track and qualify: converse about the track above, mirror what the lead said, and ask one relevant qualifying question at a time. Do NOT redirect a presale/investor/land lead back to the flagship program.`,
+    ` - Hand off for specifics you don't have: for hard specifics on this track (exact prices, availability, dates, legal/contract terms, project details not in your authorised claims), do NOT invent them. Say a Karnaf specialist will follow up with the details, and hand off: escalateToMia=true, createQueueType="human_handoff", sendMode="freeform", one short bridging message. Collect the lead's preference (e.g. apartment type / budget / goal) first so the specialist has context.`,
+    ` - Never drop a relevant lead: if the lead wants something outside ALL of Karnaf's tracks/services, acknowledge honestly and hand off to a human — never dismiss them or end with "maybe in the future". Losing a lead who wants a real service is a failure.`,
     ` - No near-duplicate messages: if your previous message already made a point or asked a question, advance the conversation — never resend the same content reworded.`,
   ];
   if (personaGuidance.length) {
@@ -77,7 +83,9 @@ export function buildAiSystemPrompt(
 
   lines.push(
     `Forbidden phrases (never produce, paraphrase, or imply): ${[...playbook.forbidden, ...ctx.runtimeConfig.forbiddenClaims].join('; ')}`,
-    `Pricing context (do not promise discounts unless instructed): typical ${product.priceTypicalIls} ILS, floor ${product.priceMinIls} ILS.`,
+    track.statesPricing
+      ? `Pricing context (do not promise discounts unless instructed): typical ${product.priceTypicalIls} ILS, floor ${product.priceMinIls} ILS.`
+      : `Pricing: do NOT state prices, payment terms, availability or dates for this track yourself — a Karnaf specialist provides those. Collect interest and hand off for specifics.`,
     `Reply length: <= ${resolveMaxReplyChars(ctx.lead.heat, ctx.runtimeConfig.ai.maxReplyChars)} characters (calibrated to lead heat=${ctx.lead.heat}). WhatsApp style: short paragraphs, no markdown headings.`,
     `Allowed lead_status transitions for this turn: ${playbook.allowedNextStatuses.join(', ')}; otherwise leave leadStatusUpdate null.`,
     `Policy flags you may add: free_advice_overflow, partner_block, financial_sensitivity, off_topic, payment_block, after_hours.`,
@@ -100,6 +108,7 @@ export function buildAiUserPrompt(ctx: AiDecisionContext): string {
     `  source: ${ctx.lead.source}`,
     `  sourceDetail: ${ctx.lead.sourceDetail ?? 'none'}`,
     `  sourceCampaign: ${ctx.lead.sourceCampaign ?? 'none'}`,
+    `  primaryTrack: ${ctx.lead.primaryTrack ?? 'unknown'}`,
     `  inquiryType: ${ctx.lead.inquiryType ?? 'unknown'}`,
     `  productInterest: ${ctx.lead.productInterest ?? 'unknown'}`,
     `  intakeSegment: ${ctx.lead.intakeSegment ?? 'unknown'}`,

@@ -275,6 +275,7 @@ Deno.serve(async (req) => {
           lastPhoneCallOutcome,
           firstInboundSnippet,
           topicsTouched: Array.isArray(lead.topics_touched) ? (lead.topics_touched as TopicEntry[]) : [],
+          primaryTrack: (lead.primary_track as string | null) ?? null,
           inquiryType: leadClassification.inquiryType,
           productInterest: leadClassification.productInterest,
           intakeSegment: leadClassification.intakeSegment,
