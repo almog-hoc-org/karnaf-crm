@@ -39,6 +39,12 @@ describe('classifyLeadIntake', () => {
     expect(r.productInterest).toBe('personal_consultation');
   });
 
+  it('routes land/reservist interest to a human instead of the program (regression: lost lead יוסף)', () => {
+    const r = classifyLeadIntake({ latestMessage: 'מעוניין בתהליך על קרקע, סקירות קרקע למילואים' });
+    expect(r.intakeSegment).toBe('needs_human');
+    expect(r.handoffReason).toContain('קרקעות/מילואים');
+  });
+
   it('detects explicit human handoff need', () => {
     const r = classifyLeadIntake({ latestMessage: 'אפשר שיחה עם נציג בטלפון?' });
     expect(r.intakeSegment).toBe('needs_human');

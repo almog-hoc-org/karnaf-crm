@@ -29,10 +29,12 @@ export const PLAYBOOKS: Playbook[] = [
   {
     name: 'first_contact_form_lead',
     trigger: 'lead_status=new and source in (landing_page,webinar,responder_form,lead_magnet)',
-    objective: 'לעגן את ההקשר של ההרשמה ולעבור לאיתור צרכים.',
+    objective: 'לזהות את הצורך האמיתי של הליד ולהגיב אליו — לא להניח שהגיע בשביל התוכנית.',
     guidance: [
-      'אזכר בקצרה את מקור ההרשמה.',
-      'שאל שאלה אחת לאיתור מוכנות או חסם עיקרי.',
+      'אזכר את מקור ההרשמה רק אם הוא ידוע בוודאות, בלי להמציא אירוע (וובינר/הרשמה) שלא קרה.',
+      'שקף את מה שהליד כתב במילים שלו לפני שאתה מכוון לאנשהו.',
+      'שאל שאלה אחת לאיתור הצורך — לא לדחוף את התוכנית.',
+      'אם הצורך מחוץ למה שהתוכנית מכסה (למשל קרקעות/מילואים/השקעה ספציפית) — אל תנסה להחזיר לתוכנית; אשר בכנות והעבר לנציג (escalateToMia=true, createQueueType=human_handoff).',
     ],
     forbidden: ['התחייבות לתשואה', 'מובטח להצליח'],
     allowedNextStatuses: ['first_contact_sent', 'human_handoff', 'do_not_contact', 'removed_by_request'],
@@ -45,6 +47,7 @@ export const PLAYBOOKS: Playbook[] = [
       'שאלה אחת או שתיים לכל היותר בכל הודעה.',
       'הימנע מסקירה מלאה של התוכנית; השאר מקום לעניין.',
       'אם זוהתה מוכנות גבוהה, סמן heat=hot והעלה בציון.',
+      'אם הליד מבקש נושא שהתוכנית לא עוסקת בו — אל תחזור על אותו הסבר; אשר בכנות והעבר לנציג אנושי (escalateToMia=true, createQueueType=human_handoff).',
     ],
     forbidden: ['התחייבות לתשואה', 'מבטיח להוזיל מחיר', 'הבטחה לרכישה'],
     allowedNextStatuses: ['responded', 'qualified', 'nurture', 'human_handoff', 'lost', 'do_not_contact', 'removed_by_request'],
