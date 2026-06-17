@@ -150,6 +150,27 @@ Deno.serve(async (req) => {
     if (msgErr) return jsonResponse(req, { error: msgErr.message }, 500);
 
     const ordered = (recentMessages ?? []).slice().reverse();
+
+    // Coalescing / anti-double-send guard. orchestrate always answers the
+    // LATEST lead message with full recent context. If the most recent message
+    // is already outbound, this lead has nothing unanswered — this dispatch is
+    // a duplicate or was superseded by a turn that already replied (e.g. two
+    // inbound messages a few seconds apart each enqueued a dispatch). The
+    // conversation lock guarantees the earlier turn's reply is committed before
+    // we get here, so rapid-fire messages collapse into a single reply instead
+    // of producing two (often contradictory) sends.
+    const latestMessage = ordered[ordered.length - 1];
+    if (latestMessage && latestMessage.direction === 'outbound') {
+      log.info('orchestrate_already_answered', {
+        fn: 'orchestrate',
+        correlationId,
+        leadId,
+        conversationId,
+        latestSender: latestMessage.sender_type,
+      });
+      return jsonResponse(req, { ok: true, skipped: 'already_answered' });
+    }
+
     const freeAdviceCount = ordered.filter(
       (m) => m.sender_type === 'lead' && (m.content_text ?? '').length > 80,
     ).length;

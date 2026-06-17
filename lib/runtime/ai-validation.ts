@@ -94,8 +94,15 @@ export function validateAiDecision(input: ValidationInput): ValidationResult {
   out.scoreDelta = Number.isFinite(out.scoreDelta) ? Math.max(-25, Math.min(25, Math.trunc(out.scoreDelta))) : 0;
 
   if (out.createQueueType && !ALLOWED_QUEUES.has(out.createQueueType)) {
-    flags.push('queue_invalid');
-    out.createQueueType = null;
+    // Coerce handoff-like unknown queue values to the canonical human_handoff
+    // instead of dropping the escalation; only nulls genuinely unknown types.
+    if (/handoff|human|mia|escalat/i.test(out.createQueueType)) {
+      out.createQueueType = 'human_handoff';
+      flags.push('queue_normalized');
+    } else {
+      flags.push('queue_invalid');
+      out.createQueueType = null;
+    }
   }
 
   if (!ALLOWED_SEND_MODES.has(out.sendMode)) {

@@ -146,6 +146,8 @@ export interface PlaybookSelectionInput {
     | 'dnc_request'
     | 'unclear';
   intentConfidence?: 'high' | 'medium' | 'low';
+  // True once the bot has already sent at least one message in this conversation.
+  hasPriorBotMessage?: boolean;
 }
 
 export function selectPlaybook(input: PlaybookSelectionInput): Playbook {
@@ -173,6 +175,10 @@ export function selectPlaybook(input: PlaybookSelectionInput): Playbook {
   if (['first_contact_sent', 'responded', 'nurture'].includes(input.leadStatus)) return byName('qualification');
 
   if (input.leadStatus === 'new') {
+    // If we've already greeted (a prior bot message exists) but the status
+    // hasn't advanced yet, don't restart first-contact — move to qualification
+    // so the bot stops re-greeting and re-pitching the same opener.
+    if (input.hasPriorBotMessage) return byName('qualification');
     if (['whatsapp', 'instagram_dm'].includes(input.source)) {
       return byName('first_contact_whatsapp_inbound');
     }

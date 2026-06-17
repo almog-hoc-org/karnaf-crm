@@ -70,10 +70,18 @@ export function validateAiDecision(input: ValidationInput): ValidationResult {
   // Score delta clamp.
   out.scoreDelta = Number.isFinite(out.scoreDelta) ? Math.max(-25, Math.min(25, Math.trunc(out.scoreDelta))) : 0;
 
-  // Queue type validity.
+  // Queue type validity. A model that emits a handoff-like queue value that
+  // isn't in the canonical set (e.g. "human_handoff_general_inquiry") still
+  // clearly wants a handoff — coerce it to human_handoff instead of dropping
+  // the escalation. Only genuinely unrecognised types are nulled.
   if (out.createQueueType && !ALLOWED_QUEUES.has(out.createQueueType)) {
-    flags.push('queue_invalid');
-    out.createQueueType = null;
+    if (/handoff|human|mia|escalat/i.test(out.createQueueType)) {
+      out.createQueueType = 'human_handoff';
+      flags.push('queue_normalized');
+    } else {
+      flags.push('queue_invalid');
+      out.createQueueType = null;
+    }
   }
 
   // Send mode validity.
