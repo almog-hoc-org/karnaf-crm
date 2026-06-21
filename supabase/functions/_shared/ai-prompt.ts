@@ -6,6 +6,7 @@ import { resolveMaxReplyChars } from './reply-length.ts';
 import { summariseTopicsForPrompt, type TopicEntry } from './topics.ts';
 import { formatClaimsForPrompt } from './claim-service.ts';
 import { resolveTrackContext } from './track-context.ts';
+import { linksForTrack } from './links.ts';
 
 export const RESPONSE_SCHEMA_HINT = `Return JSON exactly matching this shape (Hebrew for replyText/notesForMia):
 {
@@ -21,7 +22,10 @@ export const RESPONSE_SCHEMA_HINT = `Return JSON exactly matching this shape (He
   "nextActionDueAt": string|null,
   "notesForMia": string|null,
   "sendMode": "freeform"|"template"|"manual_only"|"no_send",
-  "policyFlags": string[]
+  "policyFlags": string[],
+  "extractedName": string|null,
+  "estimatedEquity": string|null,
+  "interestSummary": string|null
 }`;
 
 export function buildAiSystemPrompt(
@@ -57,6 +61,9 @@ export function buildAiSystemPrompt(
     ` - Hand off for specifics you don't have: for hard specifics on this track (exact prices, availability, dates, legal/contract terms, project details not in your authorised claims), do NOT invent them. Say a Karnaf specialist will follow up with the details, and hand off: escalateToMia=true, createQueueType="human_handoff", sendMode="freeform", one short bridging message. Collect the lead's preference (e.g. apartment type / budget / goal) first so the specialist has context.`,
     ` - Never drop a relevant lead: if the lead wants something outside ALL of Karnaf's tracks/services, acknowledge honestly and hand off to a human — never dismiss them or end with "maybe in the future". Losing a lead who wants a real service is a failure.`,
     ` - No near-duplicate messages: if your previous message already made a point or asked a question, advance the conversation — never resend the same content reworded.`,
+    ` - Lead capture is a core goal. Early in the chat get the lead's NAME and a one-line description of what they want. Ask for estimated equity (הון עצמי) only LATER and in context — after their interest is clear, framed as matching them to the right option/track. NEVER ask for equity in the first message. When you learn the name / estimated equity / interest from the conversation, return them in extractedName / estimatedEquity / interestSummary (else null).`,
+    ` - Be sharp and concise: 2–4 short sentences per reply. Your job is to capture the lead, collect basic info, answer basic questions or present the relevant service, and hand to a human — not to write essays. Keep the good, accurate explanations but trim everything else.`,
+    ` - No filler or repetition: do not pad replies with openers like "אני מבין ש…" or restate the lead's message every turn; vary phrasing; never repeat an offer, push, or question you already made.`,
   ];
   if (personaGuidance.length) {
     lines.push(`Persona (${ctx.personaContext?.persona ?? 'unknown'}) guidance:`);
@@ -68,6 +75,16 @@ export function buildAiSystemPrompt(
       `Authorised product claims (these are the ONLY product specifics you may reference; do not invent new features, prices, or commitments):`,
     );
     for (const c of claimLines) lines.push(c);
+  }
+  const links = linksForTrack(track.code);
+  if (links.length) {
+    lines.push(
+      `Authorised links — share ONLY these exact URLs, and only when the lead asks for a link or it clearly helps. NEVER invent or guess a URL:`,
+    );
+    for (const l of links) lines.push(` - ${l.label}: ${l.url}`);
+    lines.push(
+      ` - NEVER send a payment/checkout link yourself. If the lead wants to pay or get a checkout link, tell them a Karnaf specialist will send it and hand off.`,
+    );
   }
   const lastSender = ctx.recentMessages.slice(-1)[0]?.senderType ?? null;
   const ownership = ctx.lead.ownershipMode;

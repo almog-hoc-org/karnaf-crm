@@ -47,6 +47,19 @@ export const TRACKS: Record<string, TrackContext> = {
   },
 };
 
+// Track-neutral context for a generic consultation/agent request when no specific
+// track is established — the bot understands the need and routes to a human/the
+// right track, instead of defaulting to a flagship-program pitch.
+const CONSULTATION: TrackContext = {
+  code: 'consultation',
+  displayName: 'ייעוץ והכוונה בקרנף נדל״ן',
+  blurb:
+    'הלקוח מבקש ייעוץ/שיחה כללית. קרנף מציעה כמה מסלולים (תוכנית דיגיטלית, פריסייל, ליווי משקיעים פרימיום) — עוד לא ברור מה הכי מתאים לו.',
+  objective:
+    'להבין בקצרה מה הלקוח צריך ולחבר אותו למסלול המתאים או לנציג. אל תניח שהוא רוצה את התוכנית הדיגיטלית; אל תדחוף מוצר ספציפי לפני שהבנת את הצורך.',
+  statesPricing: false,
+};
+
 export function resolveTrackContext(
   primaryTrack?: string | null,
   productInterest?: string | null,
@@ -56,5 +69,6 @@ export function resolveTrackContext(
   const pi = (productInterest ?? '').trim();
   if (pi === 'investor_mentorship' || pi === 'mentorship') return TRACKS.investor_mentorship;
   if (pi === 'contractor_group_purchase') return TRACKS.presale;
+  if (pi === 'personal_consultation') return CONSULTATION;
   return FLAGSHIP;
 }

@@ -133,4 +133,8 @@ export interface AiDecisionOutput {
   sendMode: SendMode;
   policyFlags: string[];
   playbookName: string;
+  /** Lead data the bot extracted from the conversation (fill-only persistence). */
+  extractedName?: string | null;
+  estimatedEquity?: string | null;
+  interestSummary?: string | null;
 }

@@ -2,7 +2,7 @@
 // explainable so operators and tests can see why a lead was tagged before
 // any LLM decision runs.
 //
-// Mirrored by supabase/functions/_shared/lead-classifier.ts.
+// Mirrored by lib/runtime/lead-classifier.ts.
 
 export type InquiryType =
   | 'program_details'
@@ -117,9 +117,12 @@ export function classifyLeadIntake(input: LeadClassificationInput): LeadClassifi
   else if (program) inquiryType = 'program_details';
 
   let productInterest: ProductInterest = 'unknown';
+  // Explicit track interest wins over a generic "consultation/agent" request, and
+  // the `human` keyword (נציג/שיחה/טלפון) only drives a handoff intent below — it must
+  // NOT relabel the product (it used to hijack leads to personal_consultation→flagship).
   if (contractorGroup) productInterest = 'contractor_group_purchase';
-  else if (consultation || human) productInterest = 'personal_consultation';
   else if (investorMentorship) productInterest = 'investor_mentorship';
+  else if (consultation) productInterest = 'personal_consultation';
   else if (program || price || buy || eligibility || property || financing) productInterest = 'digital_program';
 
   let intakeSegment: IntakeSegment = 'unknown';

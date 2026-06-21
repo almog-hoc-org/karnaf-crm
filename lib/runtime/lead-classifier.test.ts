@@ -51,6 +51,16 @@ describe('classifyLeadIntake', () => {
     expect(r.handoffReason).toBe('הליד ביקש שיחה/נציג אנושי');
   });
 
+  it('the "נציג/שיחה" keyword no longer relabels the product as personal_consultation', () => {
+    const r = classifyLeadIntake({ latestMessage: 'אפשר שיחה עם נציג?' });
+    expect(r.productInterest).not.toBe('personal_consultation');
+  });
+
+  it('explicit mentorship wins over a consultation/agent phrase in the same message', () => {
+    const r = classifyLeadIntake({ latestMessage: 'מעוניין בליווי משקיעים, אפשר שיחה?' });
+    expect(r.productInterest).toBe('investor_mentorship');
+  });
+
   it('detects existing student/support context', () => {
     const r = classifyLeadIntake({ latestMessage: 'אני תלמיד וכבר נרשמתי אבל אין לי גישה' });
     expect(r.inquiryType).toBe('support');
