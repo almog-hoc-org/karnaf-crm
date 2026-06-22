@@ -94,6 +94,7 @@ const META_TEXT_FIELDS = new Set([
   'decision_context',
   'lost_reason',
   'interest_topic',
+  'notes_internal',
 ]);
 const META_ENUM_FIELDS: Record<string, Set<string>> = {
   lead_heat: new Set(['cold', 'cool', 'warm', 'hot']),

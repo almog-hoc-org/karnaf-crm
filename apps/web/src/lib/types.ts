@@ -438,6 +438,7 @@ export interface LeadDetail extends LeadRow {
   goal_summary: string | null;
   main_blocker: string | null;
   notes_internal: string | null;
+  estimated_equity: string | null;
   next_action_type: string | null;
   next_action_due_at: string | null;
   payment_completed_at: string | null;

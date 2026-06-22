@@ -41,6 +41,7 @@ const lead: LeadDetail = {
   goal_summary: 'דירה ראשונה',
   main_blocker: null,
   notes_internal: null,
+  estimated_equity: null,
   next_action_type: null,
   next_action_due_at: null,
   payment_completed_at: null,

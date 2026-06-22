@@ -30,6 +30,7 @@ import {
   MEETING_STATUS_LABELS, MEETING_TYPE_LABELS,
   PARTNER_DOMAIN_LABELS,
   PRD_TRACK_LABELS,
+  PRODUCT_LABELS,
   PROGRAM_PROGRESS_LABELS,
   QUEUE_LABELS,
   SOURCE_LABELS,
@@ -509,6 +510,47 @@ export function LeadDetailPage() {
         </div>
 
         <aside className="space-y-4">
+          {/* Lead brief — a compact at-a-glance summary so a sales rep can get
+              to know the lead and focus the call before diving into the full
+              record. Read-only (pulled from AI capture) + manual operator notes. */}
+          <div className="kf-card border-brand-300 bg-brand-50/50 p-4">
+            <h2 className="font-semibold">תקציר ליד</h2>
+            <p className="mt-0.5 text-xs text-slate-500">מבט מהיר לפני שיחה</p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <HeatBadge heat={lead.lead_heat} />
+              {lead.primary_track && (
+                <span className="rounded-full bg-white px-2 py-0.5 text-xs text-slate-700 ring-1 ring-slate-200">
+                  {labelOr(PRD_TRACK_LABELS, lead.primary_track)}
+                </span>
+              )}
+              {lead.product_interest && (
+                <span className="rounded-full bg-white px-2 py-0.5 text-xs text-slate-700 ring-1 ring-slate-200">
+                  {labelOr(PRODUCT_LABELS, lead.product_interest)}
+                </span>
+              )}
+            </div>
+            <dl className="mt-3 space-y-1 text-sm">
+              {lead.estimated_equity && <BriefRow k="הון עצמי" v={lead.estimated_equity} />}
+              {(lead.goal_summary || lead.interest_topic) && (
+                <BriefRow k="מה מעניין" v={lead.goal_summary || lead.interest_topic} />
+              )}
+              {(lead.pain_point_summary || lead.main_blocker) && (
+                <BriefRow k="כאב / חסם" v={lead.pain_point_summary || lead.main_blocker} />
+              )}
+            </dl>
+            {lead.conversation_summary && (
+              <div className="mt-3 rounded-md bg-white/80 p-2 text-sm text-slate-700 ring-1 ring-slate-200">
+                <div className="mb-1 text-xs font-medium text-slate-500">סיכום שיחה</div>
+                <p className="whitespace-pre-wrap">{lead.conversation_summary}</p>
+              </div>
+            )}
+            <NotesEditor
+              value={lead.notes_internal}
+              editable={canEditMeta}
+              saving={updateMeta.isPending && 'notes_internal' in (updateMeta.variables ?? {})}
+              onSave={(next) => updateMeta.mutate({ notes_internal: next })}
+            />
+          </div>
           {/* Operator-editable identity card. Phone is intentionally read-only
               (it's the routing key for inbound webhooks; rewriting it would
               orphan the conversation history). */}
@@ -1626,6 +1668,92 @@ function Row({ k, v }: { k: string; v: string | null | undefined }) {
     <div className="grid grid-cols-3 gap-2">
       <dt className="col-span-1 text-slate-500">{k}</dt>
       <dd className="col-span-2 text-slate-800">{v || '—'}</dd>
+    </div>
+  );
+}
+
+// Brief-panel row: full value (wraps), no truncation — the rep should read it.
+function BriefRow({ k, v }: { k: string; v: string | null | undefined }) {
+  if (!v) return null;
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <dt className="col-span-1 text-slate-500">{k}</dt>
+      <dd className="col-span-2 whitespace-pre-wrap text-slate-800">{v}</dd>
+    </div>
+  );
+}
+
+// Free-text operator notes (multi-line). Persists to notes_internal via update_lead_meta.
+function NotesEditor({
+  value,
+  editable,
+  saving = false,
+  onSave,
+}: {
+  value: string | null | undefined;
+  editable: boolean;
+  saving?: boolean;
+  onSave: (next: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? '');
+  useEffect(() => {
+    if (!editing) setDraft(value ?? '');
+  }, [value, editing]);
+  useEffect(() => {
+    if (saving) setEditing(false);
+  }, [saving]);
+
+  return (
+    <div className="mt-3 border-t border-slate-200 pt-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-slate-500">הערות נציג</span>
+        {saving ? (
+          <span className="text-xs text-slate-500" aria-live="polite">שומר...</span>
+        ) : (
+          editable && !editing && (
+            <button
+              type="button"
+              className="text-xs text-brand-700 hover:underline"
+              onClick={() => setEditing(true)}
+            >
+              {value ? 'עריכה' : '+ הוספת הערה'}
+            </button>
+          )
+        )}
+      </div>
+      {editing ? (
+        <div className="mt-2 space-y-2">
+          <textarea
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={4}
+            maxLength={2000}
+            className="kf-input w-full text-sm"
+            placeholder="הערות חשובות על הליד לטובת הצוות..."
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="kf-btn kf-btn-primary text-xs"
+              onClick={() => {
+                const next = draft.trim();
+                onSave(next.length ? next : null);
+              }}
+            >
+              שמירה
+            </button>
+            <button type="button" className="kf-btn text-xs" onClick={() => setEditing(false)}>
+              ביטול
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+          {value || (editable ? 'אין עדיין — לחצו "הוספת הערה".' : 'אין הערות')}
+        </p>
+      )}
     </div>
   );
 }

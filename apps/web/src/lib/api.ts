@@ -362,6 +362,7 @@ export interface LeadMetaUpdates {
   intake_segment?: IntakeSegment | null;
   primary_track?: 'program' | 'presale' | 'investor_mentorship' | null;
   interest_topic?: string | null;
+  notes_internal?: string | null;
 }
 
 export async function postAdminAction(payload: {
