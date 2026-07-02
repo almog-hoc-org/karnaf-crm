@@ -410,6 +410,7 @@ Deno.serve(async (req) => {
     do_not_contact: lead.do_not_contact as boolean,
     primary_track: prdTrack,
     source,
+    source_campaign: sourceCampaign,
   });
   leadCtx.product_interest = classification.productInterest;
   leadCtx.intake_segment = classification.intakeSegment;

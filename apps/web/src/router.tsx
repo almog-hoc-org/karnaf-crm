@@ -26,6 +26,7 @@ const TemplatesPage = lazy(() => import('@/pages/TemplatesPage').then((m) => ({ 
 const AutomationsPage = lazy(() => import('@/pages/AutomationsPage').then((m) => ({ default: m.AutomationsPage })));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
 const JourneysPage = lazy(() => import('@/pages/JourneysPage').then((m) => ({ default: m.JourneysPage })));
+const BroadcastsPage = lazy(() => import('@/pages/BroadcastsPage').then((m) => ({ default: m.BroadcastsPage })));
 const AdminHubPage = lazy(() => import('@/pages/AdminHubPage').then((m) => ({ default: m.AdminHubPage })));
 const WhatsAppRouterOptionsPage = lazy(() => import('@/pages/WhatsAppRouterOptionsPage').then((m) => ({ default: m.WhatsAppRouterOptionsPage })));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
@@ -65,6 +66,7 @@ const router = createBrowserRouter([
           { path: '/automations', element: <Suspense fallback={<PageFallback />}><AutomationsPage /></Suspense> },
           { path: '/reports', element: <Suspense fallback={<PageFallback />}><ReportsPage /></Suspense> },
           { path: '/journeys', element: <Suspense fallback={<PageFallback />}><JourneysPage /></Suspense> },
+          { path: '/broadcasts', element: <Suspense fallback={<PageFallback />}><BroadcastsPage /></Suspense> },
           { path: '/admin', element: <Suspense fallback={<PageFallback />}><AdminHubPage /></Suspense> },
           { path: '/admin/whatsapp-router', element: <Suspense fallback={<PageFallback />}><WhatsAppRouterOptionsPage /></Suspense> },
           { path: '/admin/settings', element: <Suspense fallback={<PageFallback />}><SettingsPage /></Suspense> },

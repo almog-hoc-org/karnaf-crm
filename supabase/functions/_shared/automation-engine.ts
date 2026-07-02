@@ -200,6 +200,15 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
   // Enqueue via outbound_dispatch the same way manual replies do.
   // outbound_dispatch holds the channel + text inside payload jsonb
   // and uses lead_id as the FK — matches existing 036 schema.
+  // Cold-audience sends (e.g. a webinar registrant who never messaged
+  // the bot) must go out as a pre-approved Meta template BY NAME, not
+  // wrapped in the fallback template. A rule opts into that by carrying
+  // `meta_template: { name, lang?, params? }`; dispatch-outbound sends it
+  // directly. `text` is still stored for the message record + preview.
+  const metaTemplate = (action.meta_template as
+    | { name?: string; lang?: string; params?: string[] }
+    | undefined) ?? undefined;
+
   const { data: enq, error: enqErr } = await ctx.supabase.from('outbound_dispatch').insert({
     lead_id: ctx.contactId,
     payload: {
@@ -208,6 +217,9 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
       text,
       template_key: key,
       source: 'automation_engine',
+      ...(metaTemplate?.name
+        ? { meta_template: { name: metaTemplate.name, lang: metaTemplate.lang ?? 'he', params: metaTemplate.params ?? [] } }
+        : {}),
     },
     correlation_id: ctx.correlationId ?? null,
   }).select('id').maybeSingle();

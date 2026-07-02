@@ -22,6 +22,11 @@ import type {
   MeetingRow,
   MessageRow,
   MessageTemplateRow,
+  BroadcastRow,
+  BroadcastStats,
+  BroadcastSegment,
+  BroadcastChannel,
+  BroadcastMetaTemplate,
   PartnerDomain,
   PartnerRow,
   PartnerWorkloadRow,
@@ -800,4 +805,34 @@ export async function postUpdatePromptVariant(payload: {
 
 export async function postDeletePromptVariant(id: string) {
   return deleteJson<{ ok: true }>('/prompt-variants', { action: 'delete', id });
+}
+
+// === Broadcasts (הודעות תפוצה) ============================================
+
+export async function fetchBroadcasts() {
+  return getJson<{ ok: true; broadcasts: BroadcastRow[] }>('/broadcasts');
+}
+
+export async function fetchBroadcast(id: string) {
+  return getJson<{ ok: true; broadcast: BroadcastRow; stats: BroadcastStats }>('/broadcasts', { id });
+}
+
+export async function previewBroadcastSegment(segment: BroadcastSegment) {
+  return postJson<{ ok: true; count: number; sample: Array<{ id: string; full_name: string | null; phone: string | null }> }>(
+    '/broadcasts',
+    { action: 'preview_count', segment },
+  );
+}
+
+export type BroadcastAction =
+  | { action: 'create'; name: string; channel: BroadcastChannel; template_key?: string | null;
+      meta_template?: BroadcastMetaTemplate | null; segment: BroadcastSegment; scheduled_at?: string | null }
+  | { action: 'update'; id: string; name?: string; channel?: BroadcastChannel; template_key?: string | null;
+      meta_template?: BroadcastMetaTemplate | null; segment?: BroadcastSegment; scheduled_at?: string | null }
+  | { action: 'schedule'; id: string }
+  | { action: 'cancel'; id: string }
+  | { action: 'delete'; id: string };
+
+export async function postBroadcastAction(payload: BroadcastAction) {
+  return postJson<{ ok: true; broadcast?: BroadcastRow }>('/broadcasts', payload as unknown as Record<string, unknown>);
 }

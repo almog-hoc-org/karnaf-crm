@@ -72,6 +72,11 @@ verify_jwt = false
 [functions.dispatch-outbound]
 verify_jwt = false
 
+# Paced worker that fills the outbound queue from scheduled broadcasts.
+# Auth via BROADCAST_DISPATCH_SECRET bearer, not a Supabase JWT.
+[functions.broadcast-dispatch]
+verify_jwt = false
+
 [functions.orchestrate-message]
 verify_jwt = false
 

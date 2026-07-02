@@ -340,6 +340,55 @@ export interface MessageTemplateRow {
   updated_at: string;
 }
 
+// === Broadcasts (הודעות תפוצה) ============================================
+
+export type BroadcastChannel = 'whatsapp' | 'email';
+export type BroadcastStatus =
+  | 'draft' | 'scheduled' | 'sending' | 'sent' | 'cancelled' | 'failed';
+
+export interface BroadcastSegment {
+  source?: string | null;
+  source_campaign?: string | null;
+  primary_track?: string | null;
+  product_interest?: string | null;
+}
+
+export interface BroadcastMetaTemplate {
+  name: string;
+  lang?: string;
+  params?: string[];
+}
+
+export interface BroadcastRow {
+  id: string;
+  name: string;
+  channel: BroadcastChannel;
+  template_key: string | null;
+  meta_template: BroadcastMetaTemplate | null;
+  body_snapshot: string | null;
+  segment: BroadcastSegment;
+  scheduled_at: string | null;
+  status: BroadcastStatus;
+  recipients_count: number;
+  sent_count: number;
+  failed_count: number;
+  skipped_count: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BroadcastStats {
+  total: number;
+  pending: number;
+  enqueued: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  delivered: number;
+  read: number;
+}
+
 // Tier 1.D — Commission ledger. One row per partner-mediated deal,
 // created automatically by trigger when deals.seriousness_deposit_paid_at
 // gets set. status walks pending → to_bill → paid; either of the first

@@ -62,6 +62,7 @@ export interface LeadRowForContext {
   do_not_contact?: boolean | null;
   removed_by_request?: boolean | null;
   source?: string | null;
+  source_campaign?: string | null;
   created_at?: string | null;
   last_inbound_at?: string | null;
   last_outbound_at?: string | null;
@@ -93,6 +94,7 @@ export interface LeadContext {
   do_not_contact: boolean;
   removed_by_request: boolean;
   source: string | null;
+  source_campaign: string | null;
   hours_since_intake: number | null;
   hours_since_last_inbound: number | null;
   hours_since_last_outbound: number | null;
@@ -106,7 +108,7 @@ export interface LeadContext {
 const LEAD_SELECT_COLUMNS =
   'id, full_name, phone, email, city, product_interest, intake_segment, ' +
   'primary_track, lead_status, ownership_mode, lead_heat, do_not_contact, ' +
-  'removed_by_request, source, created_at, last_inbound_at, last_outbound_at';
+  'removed_by_request, source, source_campaign, created_at, last_inbound_at, last_outbound_at';
 
 // Resolve the lead from id then delegate. The common case for one-off
 // emitters (mark_won, mark_lost, dormant).
@@ -153,6 +155,7 @@ export async function buildLeadContextFromRow(
     do_not_contact: !!row.do_not_contact,
     removed_by_request: !!row.removed_by_request,
     source: row.source ?? null,
+    source_campaign: row.source_campaign ?? null,
     hours_since_intake: hoursSince(row.created_at),
     hours_since_last_inbound: hoursSince(row.last_inbound_at),
     hours_since_last_outbound: hoursSince(row.last_outbound_at),

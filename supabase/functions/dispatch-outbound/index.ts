@@ -40,12 +40,31 @@ async function deliverTemplateRow(
   row: DispatchRow,
   correlationId: string,
 ): Promise<'sent' | 'skipped'> {
-  const payload = row.payload as { channel?: string; text?: string; template_key?: string };
+  const payload = row.payload as {
+    channel?: string;
+    text?: string;
+    template_key?: string;
+    // Campaign/broadcast sends to cold contacts (outside the 24h window)
+    // must go out as a pre-approved Meta template BY NAME, not wrapped in
+    // the generic fallback template. When present we send it directly.
+    meta_template?: { name: string; lang?: string; params?: string[] };
+    broadcast_id?: string;
+  };
+  const markRecipientSkipped = async (reason: string) => {
+    if (!payload.broadcast_id) return;
+    await supabase
+      .from('broadcast_recipients')
+      .update({ status: 'skipped', error: reason })
+      .eq('broadcast_id', payload.broadcast_id)
+      .eq('lead_id', row.lead_id);
+  };
+
   const text = typeof payload.text === 'string' ? payload.text.trim() : '';
   if (!text) {
     log.warn('template_dispatch_empty_text', {
       fn: 'dispatch-outbound', correlationId, dispatchId: row.id, templateKey: payload.template_key,
     });
+    await markRecipientSkipped('empty_text');
     return 'skipped';
   }
   const channel = payload.channel || 'whatsapp';
@@ -57,10 +76,11 @@ async function deliverTemplateRow(
     .maybeSingle();
   if (leadErr) throw leadErr;
   if (!lead || lead.do_not_contact || lead.removed_by_request) {
+    const reason = !lead ? 'lead_missing' : 'do_not_contact';
     log.info('template_dispatch_suppressed', {
-      fn: 'dispatch-outbound', correlationId, dispatchId: row.id, leadId: row.lead_id,
-      reason: !lead ? 'lead_missing' : 'do_not_contact',
+      fn: 'dispatch-outbound', correlationId, dispatchId: row.id, leadId: row.lead_id, reason,
     });
+    await markRecipientSkipped(reason);
     return 'skipped';
   }
 
@@ -73,11 +93,26 @@ async function deliverTemplateRow(
   );
 
   let sendResult;
-  if (channel === 'whatsapp' && !withinWindow) {
+  if (channel === 'whatsapp' && payload.meta_template?.name) {
+    // Pre-approved Meta template sent by name — the correct path for
+    // marketing/campaign sends to cold contacts. Positional body params
+    // map to {{1}}, {{2}}, ... in the approved template.
+    if (!lead.phone) { await markRecipientSkipped('no_phone'); return 'skipped'; }
+    const params = (payload.meta_template.params ?? []).map((value, i) => ({
+      name: String(i + 1),
+      value,
+    }));
+    sendResult = await sendWhatsAppTemplate(
+      lead.phone as string,
+      payload.meta_template.name,
+      params,
+      payload.meta_template.lang ?? 'he',
+    );
+  } else if (channel === 'whatsapp' && !withinWindow) {
     // Outside the 24h session window only pre-approved templates pass.
     // Wrap the rendered text in the fallback template, same as
     // orchestrate-message does for AI replies.
-    if (!lead.phone) return 'skipped';
+    if (!lead.phone) { await markRecipientSkipped('no_phone'); return 'skipped'; }
     sendResult = await sendWhatsAppTemplate(
       lead.phone as string,
       config.whatsappSession.fallbackTemplateName,
@@ -88,7 +123,7 @@ async function deliverTemplateRow(
   }
   if (!sendResult.ok) throw new Error(`template send failed: ${sendResult.error ?? 'unknown'}`);
 
-  await supabase.from('messages').insert({
+  const { data: msg } = await supabase.from('messages').insert({
     conversation_id: conversation.id,
     lead_id: row.lead_id,
     provider_message_id: sendResult.providerMessageId ?? null,
@@ -97,17 +132,40 @@ async function deliverTemplateRow(
     message_type: 'template',
     content_text: text,
     provider_status: 'sent',
-    raw_payload: { source: 'automation_engine', template_key: payload.template_key ?? null },
-  });
+    raw_payload: {
+      source: payload.broadcast_id ? 'broadcast' : 'automation_engine',
+      template_key: payload.template_key ?? null,
+      meta_template: payload.meta_template?.name ?? null,
+      broadcast_id: payload.broadcast_id ?? null,
+    },
+  }).select('id').maybeSingle();
+
+  // Broadcast analytics — mark the recipient sent and link the message so
+  // provider-status-webhook's delivered/read updates roll up per broadcast.
+  if (payload.broadcast_id) {
+    await supabase
+      .from('broadcast_recipients')
+      .update({
+        status: 'sent',
+        message_id: msg?.id ?? null,
+        dispatch_id: row.id,
+        sent_at: new Date().toISOString(),
+      })
+      .eq('broadcast_id', payload.broadcast_id)
+      .eq('lead_id', row.lead_id);
+  }
+
   await logLeadEvent(supabase, row.lead_id, 'automation_template_sent', 'system', {
     template_key: payload.template_key ?? null,
     channel,
     dispatch_id: row.id,
+    broadcast_id: payload.broadcast_id ?? null,
   }, conversation.id);
 
   log.info('template_dispatch_sent', {
     fn: 'dispatch-outbound', correlationId, dispatchId: row.id, leadId: row.lead_id,
-    templateKey: payload.template_key, channel, withinWindow,
+    templateKey: payload.template_key, metaTemplate: payload.meta_template?.name,
+    broadcastId: payload.broadcast_id, channel, withinWindow,
   });
   return 'sent';
 }

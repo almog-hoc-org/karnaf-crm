@@ -51,7 +51,11 @@ function pick(obj: Record<string, unknown>, names: string[]): string | undefined
 
 // Normalize an arbitrary inbound payload to the CRM intake shape.
 // Pass-through anything already named correctly; map common variants.
-function normalize(raw: Record<string, unknown>, defaultSource: string): Record<string, unknown> {
+function normalize(
+  raw: Record<string, unknown>,
+  defaultSource: string,
+  defaultCampaign: string | null,
+): Record<string, unknown> {
   // Rav Messer/Responder splits the name into `first`/`last`; many form
   // tools use `name`/`NAME`/`full_name`. Try the whole-name fields first,
   // then fall back to joining first+last.
@@ -70,6 +74,11 @@ function normalize(raw: Record<string, unknown>, defaultSource: string): Record<
   if (phone) out.phone = phone;
   if (email) out.email = email;
   out.source = source;
+  // Campaign tag: prefer any field already in the payload, else the
+  // `?campaign=` query param. leads-intake maps `campaign_name` →
+  // leads.source_campaign, the robust segmentation key for broadcasts.
+  const campaign = pick(raw, ['campaign_name', 'campaign', 'CAMPAIGN', 'source_campaign']) ?? defaultCampaign ?? undefined;
+  if (campaign) out.campaign_name = campaign;
   const notes = pick(raw, ['notes', 'message', 'הערות', 'list_name', 'LIST_NAME']);
   if (notes && !out.notes) out.notes = notes;
   return out;
@@ -97,9 +106,11 @@ Deno.serve(async (req) => {
     try { raw = JSON.parse(rawText || '{}'); } catch { return jsonResponse(req, { error: 'Invalid body' }, 400); }
   }
 
-  // `source` can also ride on the query string (?source=responder_form).
+  // `source` and `campaign` can also ride on the query string
+  // (?source=webinar&campaign=launch_webinar_2026).
   const defaultSource = url.searchParams.get('source') || 'unknown';
-  const normalized = normalize(raw, defaultSource);
+  const defaultCampaign = url.searchParams.get('campaign');
+  const normalized = normalize(raw, defaultSource, defaultCampaign);
   const body = JSON.stringify(normalized);
   const signature = await hmacHex(SIGN_SECRET, body);
 

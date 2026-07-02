@@ -35,8 +35,54 @@ const ACTOR_LABELS: Record<string, string> = {
   human: 'אנושי',
 };
 
+// Low-value system events that only add noise to the operator's feed.
+// Some duplicate a message bubble (inbound_message_received); others are
+// internal plumbing (ai replay loop, router prompts, provider receipts).
+// Hidden from the timeline so the operator sees the conversation, not the
+// machinery. Nothing is deleted — these still live in lead_events.
+const HIDDEN_EVENT_TYPES = new Set<string>([
+  'manual_return_to_ai',
+  'ai_replay',
+  'ai_replay_completed',
+  'inbound_message_received',
+  'provider_message_status_updated',
+  'whatsapp_router_prompted',
+  'whatsapp_router_routed',
+  'intake_received',
+  'engine_internal_note',
+  'summary_refreshed',
+]);
+
+// Human-readable Hebrew for the event slugs we do keep.
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  automation_template_sent: 'נשלחה תבנית אוטומטית',
+  human_reply_sent: 'נשלחה תשובת נציג',
+  pending_manual_reply_sent: 'נשלחה תשובה ידנית',
+  manual_reply_queued_template_missing: 'תשובה ידנית בהמתנה (חסרה תבנית)',
+  payment_completed: 'תשלום הושלם',
+  sla_breach: 'חריגת זמן מענה',
+  queue_resolved: 'משימה נסגרה',
+  webinar_event_received: 'אירוע וובינר',
+  whatsapp_router_human_requested: 'ביקש נציג אנושי',
+  email_inbound_received: 'התקבל מייל',
+  lead_created: 'ליד נוצר',
+  lead_manual_created: 'ליד נוצר ידנית',
+  lead_manual_updated: 'ליד עודכן ידנית',
+};
+
+function eventLabel(activity: ActivityRow): string {
+  const key = activity.title ?? activity.activity_type;
+  return EVENT_TYPE_LABELS[key] ?? key;
+}
+
 export function UnifiedTimeline({ activities, className }: UnifiedTimelineProps) {
-  const grouped = useMemo(() => groupByDay(activities), [activities]);
+  // Drop the noisy system events before grouping, so a retry loop or a
+  // burst of router events can't bury the actual conversation.
+  const visible = useMemo(
+    () => activities.filter((a) => !(a.activity_type === 'event' && HIDDEN_EVENT_TYPES.has(a.title ?? ''))),
+    [activities],
+  );
+  const grouped = useMemo(() => groupByDay(visible), [visible]);
   const bottomRef = useRef<HTMLLIElement | null>(null);
 
   // WhatsApp-style "stick to bottom" behaviour — the operator expects
@@ -67,8 +113,8 @@ export function UnifiedTimeline({ activities, className }: UnifiedTimelineProps)
             <span className="h-px flex-1 bg-slate-200" />
           </div>
           <ul className="space-y-2">
-            {items.map((activity) => (
-              <ActivityRowView key={activity.id} activity={activity} />
+            {collapseConsecutiveEvents(items).map((unit) => (
+              <ActivityRowView key={unit.activity.id} activity={unit.activity} count={unit.count} />
             ))}
           </ul>
         </li>
@@ -78,7 +124,7 @@ export function UnifiedTimeline({ activities, className }: UnifiedTimelineProps)
   );
 }
 
-function ActivityRowView({ activity }: { activity: ActivityRow }) {
+function ActivityRowView({ activity, count = 1 }: { activity: ActivityRow; count?: number }) {
   switch (activity.activity_type) {
     case 'message':
       return <MessageBubble activity={activity} />;
@@ -93,8 +139,30 @@ function ActivityRowView({ activity }: { activity: ActivityRow }) {
       return <NoteCard activity={activity} />;
     case 'event':
     default:
-      return <EventLine activity={activity} />;
+      return <EventLine activity={activity} count={count} />;
   }
+}
+
+// Collapse runs of the same consecutive event (same title) into a single
+// row with an "×N" badge — a burst of identical system events reads as
+// one line instead of dozens. Non-event activities pass through as count 1.
+function collapseConsecutiveEvents(items: ActivityRow[]): Array<{ activity: ActivityRow; count: number }> {
+  const units: Array<{ activity: ActivityRow; count: number }> = [];
+  for (const activity of items) {
+    const last = units[units.length - 1];
+    if (
+      last &&
+      activity.activity_type === 'event' &&
+      last.activity.activity_type === 'event' &&
+      (last.activity.title ?? '') === (activity.title ?? '')
+    ) {
+      last.count += 1;
+      last.activity = activity; // keep the most recent timestamp
+    } else {
+      units.push({ activity, count: 1 });
+    }
+  }
+  return units;
 }
 
 function MessageBubble({ activity }: { activity: ActivityRow }) {
@@ -197,14 +265,17 @@ function NoteCard({ activity }: { activity: ActivityRow }) {
   );
 }
 
-function EventLine({ activity }: { activity: ActivityRow }) {
+function EventLine({ activity, count = 1 }: { activity: ActivityRow; count?: number }) {
   // Events are signal, not content — kept visually quiet so the
   // operator's eye scans past unless they're looking for system
-  // history. Title (event_type from lead_events) carries the meaning.
+  // history. Humanised Hebrew label; consecutive repeats collapse to ×N.
   return (
     <li className="flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1 text-xs text-slate-600 ring-1 ring-slate-200">
       <span aria-hidden="true">●</span>
-      <span className="font-medium text-slate-700">{activity.title || activity.activity_type}</span>
+      <span className="font-medium text-slate-700">{eventLabel(activity)}</span>
+      {count > 1 ? (
+        <span className="rounded-full bg-slate-200 px-1.5 text-[10px] font-semibold text-slate-600">×{count}</span>
+      ) : null}
       <span className="text-slate-400">·</span>
       <span>{ACTOR_LABELS[activity.actor_type] ?? activity.actor_type}</span>
       <span className="ms-auto" title={activity.occurred_at}>{formatRelative(activity.occurred_at)}</span>

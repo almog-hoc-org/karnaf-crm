@@ -539,10 +539,12 @@ export function LeadDetailPage() {
               )}
             </dl>
             {lead.conversation_summary && (
-              <div className="mt-3 rounded-md bg-white/80 p-2 text-sm text-slate-700 ring-1 ring-slate-200">
-                <div className="mb-1 text-xs font-medium text-slate-500">סיכום שיחה</div>
-                <p className="whitespace-pre-wrap">{lead.conversation_summary}</p>
-              </div>
+              <details className="mt-3 rounded-md bg-white/80 p-2 text-sm text-slate-700 ring-1 ring-slate-200">
+                <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
+                  סיכום שיחה מלא
+                </summary>
+                <p className="mt-1 whitespace-pre-wrap">{lead.conversation_summary}</p>
+              </details>
             )}
             <NotesEditor
               value={lead.notes_internal}
