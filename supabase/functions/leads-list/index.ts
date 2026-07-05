@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
   let query = supabase
     .from('leads')
     .select(
-      'id, full_name, phone, email, source, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, intake_segment, suggested_next_action',
+      'id, full_name, phone, email, source, source_campaign, interest_topic, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, intake_segment, suggested_next_action',
       { count: 'exact' },
     )
     .order('updated_at', { ascending: false })
@@ -62,7 +62,14 @@ Deno.serve(async (req) => {
   if (status) query = query.eq('lead_status', status);
   if (heat) query = query.eq('lead_heat', heat);
   if (ownershipMode) query = query.eq('ownership_mode', ownershipMode);
-  if (source) query = query.eq('source', source.slice(0, 120));
+  // A single Hebrew source label can map to several raw slugs (e.g.
+  // "וואטסאפ" → whatsapp / whatsapp_direct / whatsapp_topic_selection), so
+  // the UI passes a comma-separated slug list and we match with IN.
+  if (source) {
+    const slugs = source.split(',').map((s) => s.trim().slice(0, 120)).filter(Boolean);
+    if (slugs.length > 1) query = query.in('source', slugs);
+    else if (slugs.length === 1) query = query.eq('source', slugs[0] as string);
+  }
   // Map coarse product groups → real enum values across both columns.
   // The mapping is in code (not data) so a typo in the UI param
   // produces a deterministic empty result, not a malformed query.

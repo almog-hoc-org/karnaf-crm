@@ -24,6 +24,7 @@ const ProjectsPage = lazy(() => import('@/pages/ProjectsPage').then((m) => ({ de
 const CommissionsPage = lazy(() => import('@/pages/CommissionsPage').then((m) => ({ default: m.CommissionsPage })));
 const TemplatesPage = lazy(() => import('@/pages/TemplatesPage').then((m) => ({ default: m.TemplatesPage })));
 const AutomationsPage = lazy(() => import('@/pages/AutomationsPage').then((m) => ({ default: m.AutomationsPage })));
+const BroadcastsPage = lazy(() => import('@/pages/BroadcastsPage').then((m) => ({ default: m.BroadcastsPage })));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
 const JourneysPage = lazy(() => import('@/pages/JourneysPage').then((m) => ({ default: m.JourneysPage })));
 const AdminHubPage = lazy(() => import('@/pages/AdminHubPage').then((m) => ({ default: m.AdminHubPage })));
@@ -63,6 +64,7 @@ const router = createBrowserRouter([
           { path: '/commissions', element: <Suspense fallback={<PageFallback />}><CommissionsPage /></Suspense> },
           { path: '/templates', element: <Suspense fallback={<PageFallback />}><TemplatesPage /></Suspense> },
           { path: '/automations', element: <Suspense fallback={<PageFallback />}><AutomationsPage /></Suspense> },
+          { path: '/admin/broadcasts', element: <Suspense fallback={<PageFallback />}><BroadcastsPage /></Suspense> },
           { path: '/reports', element: <Suspense fallback={<PageFallback />}><ReportsPage /></Suspense> },
           { path: '/journeys', element: <Suspense fallback={<PageFallback />}><JourneysPage /></Suspense> },
           { path: '/admin', element: <Suspense fallback={<PageFallback />}><AdminHubPage /></Suspense> },

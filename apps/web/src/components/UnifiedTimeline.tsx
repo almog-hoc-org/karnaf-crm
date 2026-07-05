@@ -35,8 +35,54 @@ const ACTOR_LABELS: Record<string, string> = {
   human: 'אנושי',
 };
 
+// Noisy system events that add no operator signal in the unified feed:
+// duplicate inbound receipts (already a message bubble), provider status
+// pings, router menu prompts, and the AI-handback churn. Nothing is
+// deleted — these rows still live in lead_events; they're just hidden
+// from the timeline. Tier: broadcast-handoff §3.6.
+const HIDDEN_EVENT_TYPES = new Set<string>([
+  'inbound_message_received',
+  'provider_message_status_updated',
+  'whatsapp_router_prompted',
+  'manual_return_to_ai',
+]);
+
+// Hebrew labels for the event types that DO stay visible. Unmapped types
+// fall back to their raw name so a newly-added event is never invisible.
+const EVENT_LABELS: Record<string, string> = {
+  intake_received: 'ליד נקלט',
+  payment_completed: 'תשלום הושלם',
+  sla_breach: 'חריגת SLA',
+  queue_resolved: 'פריט תור נסגר',
+  human_reply_sent: 'נשלחה תשובה אנושית',
+  pending_manual_reply_sent: 'תשובה ידנית נשלחה',
+  manual_reply_queued_template_missing: 'תשובה ידנית ממתינה (חסרה תבנית)',
+  engine_internal_note: 'הערת מערכת',
+  webinar_event_received: 'אירוע וובינר',
+  email_inbound_received: 'מייל נכנס',
+  whatsapp_router_routed: 'נותב בוואטסאפ',
+  whatsapp_router_human_requested: 'התבקש נציג אנושי',
+  ai_suppressed_human_owner: 'AI הושתק — בעלות אנושית',
+};
+
+// One rendered row: an activity plus how many identical consecutive
+// events it stands in for (1 for everything that isn't a folded run).
+interface DisplayItem {
+  activity: ActivityRow;
+  count: number;
+}
+
+function eventLabel(activity: ActivityRow): string {
+  const raw = activity.title || activity.activity_type;
+  return EVENT_LABELS[raw] ?? raw;
+}
+
 export function UnifiedTimeline({ activities, className }: UnifiedTimelineProps) {
-  const grouped = useMemo(() => groupByDay(activities), [activities]);
+  const visible = useMemo(
+    () => activities.filter((a) => !(a.activity_type === 'event' && HIDDEN_EVENT_TYPES.has(a.title || ''))),
+    [activities],
+  );
+  const grouped = useMemo(() => groupByDay(visible), [visible]);
   const bottomRef = useRef<HTMLLIElement | null>(null);
 
   // WhatsApp-style "stick to bottom" behaviour — the operator expects
@@ -67,8 +113,8 @@ export function UnifiedTimeline({ activities, className }: UnifiedTimelineProps)
             <span className="h-px flex-1 bg-slate-200" />
           </div>
           <ul className="space-y-2">
-            {items.map((activity) => (
-              <ActivityRowView key={activity.id} activity={activity} />
+            {items.map(({ activity, count }) => (
+              <ActivityRowView key={activity.id} activity={activity} count={count} />
             ))}
           </ul>
         </li>
@@ -78,7 +124,7 @@ export function UnifiedTimeline({ activities, className }: UnifiedTimelineProps)
   );
 }
 
-function ActivityRowView({ activity }: { activity: ActivityRow }) {
+function ActivityRowView({ activity, count = 1 }: { activity: ActivityRow; count?: number }) {
   switch (activity.activity_type) {
     case 'message':
       return <MessageBubble activity={activity} />;
@@ -93,7 +139,7 @@ function ActivityRowView({ activity }: { activity: ActivityRow }) {
       return <NoteCard activity={activity} />;
     case 'event':
     default:
-      return <EventLine activity={activity} />;
+      return <EventLine activity={activity} count={count} />;
   }
 }
 
@@ -197,14 +243,18 @@ function NoteCard({ activity }: { activity: ActivityRow }) {
   );
 }
 
-function EventLine({ activity }: { activity: ActivityRow }) {
+function EventLine({ activity, count = 1 }: { activity: ActivityRow; count?: number }) {
   // Events are signal, not content — kept visually quiet so the
   // operator's eye scans past unless they're looking for system
-  // history. Title (event_type from lead_events) carries the meaning.
+  // history. The Hebrew label carries the meaning; a folded run of the
+  // same event shows a ×N badge instead of N identical rows.
   return (
     <li className="flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1 text-xs text-slate-600 ring-1 ring-slate-200">
       <span aria-hidden="true">●</span>
-      <span className="font-medium text-slate-700">{activity.title || activity.activity_type}</span>
+      <span className="font-medium text-slate-700">{eventLabel(activity)}</span>
+      {count > 1 ? (
+        <span className="rounded-full bg-slate-200 px-1.5 text-[10px] font-semibold text-slate-600">×{count}</span>
+      ) : null}
       <span className="text-slate-400">·</span>
       <span>{ACTOR_LABELS[activity.actor_type] ?? activity.actor_type}</span>
       <span className="ms-auto" title={activity.occurred_at}>{formatRelative(activity.occurred_at)}</span>
@@ -212,7 +262,7 @@ function EventLine({ activity }: { activity: ActivityRow }) {
   );
 }
 
-function groupByDay(activities: ActivityRow[]): Array<{ day: string; items: ActivityRow[] }> {
+function groupByDay(activities: ActivityRow[]): Array<{ day: string; items: DisplayItem[] }> {
   // Sort ascending so the bottom-ref scroll behaviour lands at the
   // newest activity — the input is descending from the API.
   const sorted = [...activities].sort((a, b) => Date.parse(a.occurred_at) - Date.parse(b.occurred_at));
@@ -223,5 +273,28 @@ function groupByDay(activities: ActivityRow[]): Array<{ day: string; items: Acti
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(activity);
   }
-  return Array.from(groups.entries()).map(([day, items]) => ({ day, items }));
+  return Array.from(groups.entries()).map(([day, items]) => ({ day, items: collapseRuns(items) }));
+}
+
+// Fold consecutive identical events (same event type) into one row with a
+// count. Only 'event' rows collapse — messages/tasks/etc. always stand
+// alone. Keeps the most-recent occurrence as the representative row so its
+// timestamp reflects the latest of the run.
+function collapseRuns(items: ActivityRow[]): DisplayItem[] {
+  const out: DisplayItem[] = [];
+  for (const activity of items) {
+    const prev = out[out.length - 1];
+    if (
+      prev &&
+      activity.activity_type === 'event' &&
+      prev.activity.activity_type === 'event' &&
+      (prev.activity.title || '') === (activity.title || '')
+    ) {
+      prev.count += 1;
+      prev.activity = activity; // keep latest timestamp
+    } else {
+      out.push({ activity, count: 1 });
+    }
+  }
+  return out;
 }

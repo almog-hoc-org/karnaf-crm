@@ -62,6 +62,12 @@ verify_jwt = false
 [functions.dispatch-outbound]
 verify_jwt = false
 
+[functions.broadcast-dispatch]
+verify_jwt = false
+
+[functions.broadcasts]
+verify_jwt = true
+
 [functions.orchestrate-message]
 verify_jwt = false
 

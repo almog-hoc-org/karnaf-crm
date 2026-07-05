@@ -33,6 +33,7 @@ export const env = {
   slaWorkerSecret: () => optional('SLA_WORKER_SECRET'),
   automationTickSecret: () => optional('AUTOMATION_TICK_SECRET'),
   outboundDispatchSecret: () => optional('OUTBOUND_DISPATCH_SECRET'),
+  broadcastDispatchSecret: () => optional('BROADCAST_DISPATCH_SECRET'),
   aiProvider: () => optional('AI_PROVIDER', 'openai').toLowerCase(),
   openaiApiKey: () => optional('OPENAI_API_KEY'),
   openaiModel: () => optional('OPENAI_MODEL', 'gpt-4o-mini'),

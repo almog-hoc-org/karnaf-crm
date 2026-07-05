@@ -54,6 +54,7 @@ export interface LeadRow {
   primary_track?: PrdTrack | null;
   active_tracks?: PrdTrack[] | null;
   interest_topic?: string | null;
+  source_campaign?: string | null;
   tags?: string[] | null;
   consent_whatsapp?: boolean | null;
   consent_email?: boolean | null;
@@ -338,6 +339,56 @@ export interface MessageTemplateRow {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+// Campaign broadcasts — send an approved template to a filtered segment.
+export type BroadcastChannel = 'whatsapp' | 'email';
+export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'canceled' | 'failed';
+
+// Selector over durable lead columns; each field is a value or an array
+// (matched with IN). The resolver always excludes DNC / removed leads.
+export interface BroadcastSegment {
+  source?: string | string[];
+  source_campaign?: string | string[];
+  primary_track?: string | string[];
+  product_interest?: string | string[];
+}
+
+// Approved Meta template descriptor. body is preview-only.
+export interface BroadcastMetaTemplate {
+  name: string;
+  lang?: string;
+  params?: Array<{ name: string; value: string }>;
+}
+
+export interface BroadcastRow {
+  id: string;
+  name: string;
+  channel: BroadcastChannel;
+  template_key: string | null;
+  meta_template: BroadcastMetaTemplate | null;
+  body_snapshot: string | null;
+  segment: BroadcastSegment;
+  scheduled_at: string | null;
+  status: BroadcastStatus;
+  recipient_count: number;
+  sent_count: number;
+  skipped_count: number;
+  failed_count: number;
+  created_at: string;
+  updated_at: string;
+  sent_at: string | null;
+}
+
+export interface BroadcastStats {
+  total: number;
+  pending: number;
+  queued: number;
+  sent: number;
+  skipped: number;
+  failed: number;
+  delivered: number;
+  read: number;
 }
 
 // Tier 1.D — Commission ledger. One row per partner-mediated deal,
