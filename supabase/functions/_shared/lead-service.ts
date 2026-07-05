@@ -110,17 +110,16 @@ export async function logLeadEvent(
   payload: Record<string, unknown> = {},
   conversationId?: string,
   actorId?: string,
-): Promise<{ id: string } | null> {
-  const { data, error } = await supabase.from('lead_events').insert({
+): Promise<void> {
+  const { error } = await supabase.from('lead_events').insert({
     lead_id: leadId,
     conversation_id: conversationId ?? null,
     event_type: eventType,
     actor_type: actorType,
     actor_id: actorId ?? null,
     event_payload: payload,
-  }).select('id').single();
+  });
   if (error) throw error;
-  return data ? { id: data.id as string } : null;
 }
 
 export async function transitionLeadStatus(
@@ -149,20 +148,4 @@ export async function updateLeadFields(
 ): Promise<void> {
   const { error } = await supabase.from('leads').update(updates).eq('id', leadId);
   if (error) throw error;
-
-  // Keep the conversation router in sync with the lead-level owner. The
-  // WhatsApp webhook always dispatches by conversation, while the operator UI
-  // and lifecycle actions reason mostly from leads.ownership_mode; if those two
-  // drift, a lead can be marked "Mia active" yet still receive AI replies.
-  if (Object.prototype.hasOwnProperty.call(updates, 'ownership_mode')) {
-    const ownershipMode = updates.ownership_mode;
-    if (typeof ownershipMode === 'string') {
-      const { error: convError } = await supabase
-        .from('conversations')
-        .update({ ownership_mode: ownershipMode })
-        .eq('lead_id', leadId)
-        .eq('is_open', true);
-      if (convError) throw convError;
-    }
-  }
 }
