@@ -25,7 +25,12 @@ const FLAGSHIP: TrackContext = {
   statesPricing: true,
 };
 
-export const TRACKS: Record<string, TrackContext> = {
+export const TRACKS: {
+  program: TrackContext;
+  presale: TrackContext;
+  investor_mentorship: TrackContext;
+  [key: string]: TrackContext | undefined;
+} = {
   program: FLAGSHIP,
   presale: {
     code: 'presale',
@@ -65,7 +70,8 @@ export function resolveTrackContext(
   productInterest?: string | null,
 ): TrackContext {
   const t = (primaryTrack ?? '').trim();
-  if (t && TRACKS[t]) return TRACKS[t];
+  const known = t ? TRACKS[t] : undefined;
+  if (known) return known;
   const pi = (productInterest ?? '').trim();
   if (pi === 'investor_mentorship' || pi === 'mentorship') return TRACKS.investor_mentorship;
   if (pi === 'contractor_group_purchase') return TRACKS.presale;

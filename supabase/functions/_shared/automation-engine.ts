@@ -450,7 +450,7 @@ async function actionJourneyStart(action: Record<string, unknown>, ctx: ActionCo
   if (!ctx.contactId) return { type: 'journey_start', status: 'skipped', detail: 'no contactId' };
 
   // Late-import to avoid the runner ↔ engine cycle at module load.
-  const { startJourney } = await import('./journey-runner.ts');
+  const { startJourney } = await import('./journey-start.ts');
   const r = await startJourney(ctx.supabase, {
     code, contactId: ctx.contactId, context: ctx.context, correlationId: ctx.correlationId,
   });

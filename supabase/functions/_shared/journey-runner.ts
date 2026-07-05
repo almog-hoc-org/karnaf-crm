@@ -1,5 +1,5 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { runActions, type EngineContext } from './automation-engine.ts';
+import { runActions, type EngineContext } from './journey-actions.ts';
 import type { LeadRow } from './lead-service.ts';
 
 interface JourneyRunRow {
