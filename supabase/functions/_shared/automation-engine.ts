@@ -142,13 +142,53 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
   if (!key) return { type: 'send_template', status: 'skipped', detail: 'missing key' };
   if (!ctx.contactId) return { type: 'send_template', status: 'skipped', detail: 'no contactId' };
 
+  // A named Meta-approved template to send by name (cold audience, outside
+  // the 24h window). When present, `message_templates.body` is preview-only
+  // — the customer receives the Meta template text, and the params come
+  // from meta_template, not from rendering body. See §3.2 of the broadcast
+  // handoff. Shape: { name, lang?, params?: [{name,value}] }.
+  const metaTemplate = (action.meta_template as Record<string, unknown> | undefined) ?? null;
+
+  // once:true — fire at most once per (lead, key). Guards the webinar
+  // confirmation from double-sending if lead.created re-fires (re-intake,
+  // dedup miss). The unique(lead_id, once_key) ledger is the arbiter.
+  const once = action.once === true;
+  const onceKey = (action.once_key as string | undefined) ?? `${channel}:${key}`;
+  if (once) {
+    const { error: claimErr } = await ctx.supabase
+      .from('engine_template_sends')
+      .insert({ lead_id: ctx.contactId, once_key: onceKey, correlation_id: ctx.correlationId ?? null });
+    if (claimErr) {
+      // 23505 = unique_violation → already sent to this lead. Any other
+      // error means we couldn't guarantee once-ness; fail loudly rather
+      // than risk a duplicate customer message.
+      if ((claimErr as { code?: string }).code === '23505') {
+        return { type: 'send_template', status: 'skipped', detail: `once:already-sent ${onceKey}` };
+      }
+      return { type: 'send_template', status: 'failed', detail: `once-claim failed: ${claimErr.message}` };
+    }
+  }
+  // Undo the once-claim when we bail before enqueuing, so a genuine retry
+  // (transient DB error below) isn't permanently blocked.
+  const releaseOnce = async () => {
+    if (once && ctx.contactId) {
+      await ctx.supabase.from('engine_template_sends')
+        .delete().eq('lead_id', ctx.contactId).eq('once_key', onceKey);
+    }
+  };
+
   const { data: tpl, error } = await ctx.supabase
     .from('message_templates')
     .select('id, body, status, key')
     .eq('key', key).eq('channel', channel).maybeSingle();
-  if (error) return { type: 'send_template', status: 'failed', detail: error.message };
-  if (!tpl) return { type: 'send_template', status: 'skipped', detail: `template ${channel}:${key} not found` };
-  if (tpl.status !== 'active') return { type: 'send_template', status: 'skipped', detail: `template ${key} is ${tpl.status}` };
+  if (error) { await releaseOnce(); return { type: 'send_template', status: 'failed', detail: error.message }; }
+  // A named Meta template carries its own approved content, so a missing
+  // local preview row is not fatal — send anyway. Without meta_template we
+  // still require an active local template (the body IS the message).
+  if (!metaTemplate) {
+    if (!tpl) { await releaseOnce(); return { type: 'send_template', status: 'skipped', detail: `template ${channel}:${key} not found` }; }
+    if (tpl.status !== 'active') { await releaseOnce(); return { type: 'send_template', status: 'skipped', detail: `template ${key} is ${tpl.status}` }; }
+  }
 
   // Tier 7.A.2 — lazy partner fetch. If the template body references
   // {{partner_name}} but ctx.context doesn't have it yet (e.g. admin
@@ -172,16 +212,20 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
     }
   }
 
-  const { text, missing } = renderBody(tpl.body, ctx.context);
-  if (missing.length > 0) {
+  const { text, missing } = tpl?.body ? renderBody(tpl.body, ctx.context) : { text: '', missing: [] };
+  if (missing.length > 0 && !metaTemplate) {
     // Engine refuses half-filled templates. Better to log + skip than
-    // send "{{first_name}}" to a customer.
+    // send "{{first_name}}" to a customer. With a Meta template the
+    // approved copy is fixed, so unresolved preview vars don't block.
+    await releaseOnce();
     return { type: 'send_template', status: 'skipped', detail: `missing vars: ${missing.join(', ')}` };
   }
 
   // Enqueue via outbound_dispatch the same way manual replies do.
   // outbound_dispatch holds the channel + text inside payload jsonb
-  // and uses lead_id as the FK — matches existing 036 schema.
+  // and uses lead_id as the FK — matches existing 036 schema. When
+  // meta_template is set, dispatch-outbound sends the approved template
+  // by name (right path for cold audiences); otherwise it sends `text`.
   const { data: enq, error: enqErr } = await ctx.supabase.from('outbound_dispatch').insert({
     lead_id: ctx.contactId,
     payload: {
@@ -190,14 +234,18 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
       text,
       template_key: key,
       source: 'automation_engine',
+      ...(metaTemplate ? { meta_template: metaTemplate } : {}),
     },
     correlation_id: ctx.correlationId ?? null,
   }).select('id').maybeSingle();
-  if (enqErr) return { type: 'send_template', status: 'failed', detail: enqErr.message };
+  if (enqErr) { await releaseOnce(); return { type: 'send_template', status: 'failed', detail: enqErr.message }; }
 
   return {
     type: 'send_template', status: 'ok',
-    detail: { dispatch_id: enq?.id, template_key: key, channel, chars: text.length },
+    detail: {
+      dispatch_id: enq?.id, template_key: key, channel, chars: text.length,
+      ...(metaTemplate ? { meta_template: metaTemplate.name } : {}),
+    },
   };
 }
 

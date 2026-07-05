@@ -176,6 +176,19 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { error: 'Invalid JSON' }, 400);
   }
 
+  // Query-string fallbacks for form providers (רב מסר / Make) that pin
+  // campaign + source on the webhook URL rather than in the JSON body,
+  // e.g. `?source=webinar&campaign=launch_webinar_2026`. Body values win;
+  // the query only fills gaps. `campaign` maps to the canonical
+  // `campaign_name` field the classifier + segmentation read. This is
+  // segmentation metadata only — not part of the HMAC-signed body — so it
+  // never gates auth or identity.
+  const qs = new URL(req.url).searchParams;
+  const qsCampaign = qs.get('campaign');
+  if (qsCampaign && !hasValue(payload.campaign_name)) payload.campaign_name = qsCampaign;
+  const qsSource = qs.get('source');
+  if (qsSource && !hasValue(payload.source)) payload.source = qsSource;
+
   const supabase = getServiceSupabase();
   const allowed = await checkRateLimit(supabase, {
     key: `intake:${clientIdentifier(req)}`,
@@ -367,6 +380,7 @@ Deno.serve(async (req) => {
     do_not_contact: lead.do_not_contact as boolean,
     primary_track: prdTrack,
     source,
+    source_campaign: sourceCampaign,
   });
   leadCtx.product_interest = classification.productInterest;
   leadCtx.intake_segment = classification.intakeSegment;

@@ -58,6 +58,19 @@ const PRODUCT_INTEREST_LABELS: Record<string, string> = {
   unknown: 'לא ידוע',
 };
 
+// One Hebrew source label can front several raw slugs (e.g. "וואטסאפ" →
+// whatsapp / whatsapp_direct / …). The filter offers one option per label
+// and sends the joined slug list; leads-list matches it with IN.
+const SOURCE_FILTER_OPTIONS: Array<{ label: string; value: string }> = (() => {
+  const byLabel = new Map<string, string[]>();
+  for (const [slug, label] of Object.entries(SOURCE_LABELS)) {
+    const arr = byLabel.get(label) ?? [];
+    arr.push(slug);
+    byLabel.set(label, arr);
+  }
+  return Array.from(byLabel.entries()).map(([label, slugs]) => ({ label, value: slugs.join(',') }));
+})();
+
 interface SavedView {
   id: string;
   name: string;
@@ -131,9 +144,11 @@ function LeadWorkCard({
             )}
             {lead.email ? <span className="break-all">{lead.email}</span> : null}
             <span>מקור: {lead.source ? labelOr(SOURCE_LABELS, lead.source) : '—'}</span>
+            {lead.source_campaign ? <span>קמפיין: {lead.source_campaign}</span> : null}
             {lead.product_interest ? (
               <span>מוצר: {PRODUCT_INTEREST_LABELS[lead.product_interest] ?? lead.product_interest}</span>
             ) : null}
+            {lead.interest_topic ? <span>נושא: {lead.interest_topic}</span> : null}
             {lead.last_inbound_at ? <span>הודעה אחרונה: {formatRelative(lead.last_inbound_at)}</span> : null}
           </div>
           <p className="text-sm leading-6 text-slate-700">{lead.suggested_next_action || guidance.detail}</p>
@@ -632,6 +647,21 @@ export function LeadsPage() {
           {OWNERS.map((o) => (
             <option key={o} value={o}>
               {OWNERSHIP_LABELS[o]}
+            </option>
+          ))}
+        </select>
+        <select
+          className="kf-input"
+          value={source}
+          onChange={(e) => {
+            setSource(e.target.value);
+            setOffset(0);
+          }}
+        >
+          <option value="">כל המקורות</option>
+          {SOURCE_FILTER_OPTIONS.map((o) => (
+            <option key={o.label} value={o.value}>
+              {o.label}
             </option>
           ))}
         </select>

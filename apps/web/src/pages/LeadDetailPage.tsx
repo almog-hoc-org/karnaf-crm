@@ -666,7 +666,7 @@ export function LeadDetailPage() {
                       : null
                   }
                 />
-                <Row k="סיכום" v={lead.classification_summary} />
+                <CollapsibleRow k="סיכום" v={lead.classification_summary} />
                 <Row k="פעולה מומלצת" v={lead.suggested_next_action} />
                 <Row k="סיבת העברה" v={lead.handoff_reason} />
                 <Row
@@ -1662,6 +1662,30 @@ function Row({ k, v }: { k: string; v: string | null | undefined }) {
     <div className="grid grid-cols-3 gap-2">
       <dt className="col-span-1 text-slate-500">{k}</dt>
       <dd className="col-span-2 text-slate-800">{v || '—'}</dd>
+    </div>
+  );
+}
+
+// Like Row, but a long AI summary is truncated behind a "show more"
+// toggle so it doesn't dominate the diagnosis panel. Short values render
+// exactly like Row. Tier: broadcast-handoff §3.6.
+const SUMMARY_TRUNCATE_AT = 180;
+function CollapsibleRow({ k, v }: { k: string; v: string | null | undefined }) {
+  const [open, setOpen] = useState(false);
+  if (!v || v.length <= SUMMARY_TRUNCATE_AT) return <Row k={k} v={v} />;
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <dt className="col-span-1 text-slate-500">{k}</dt>
+      <dd className="col-span-2 text-slate-800">
+        <span className="whitespace-pre-wrap">{open ? v : `${v.slice(0, SUMMARY_TRUNCATE_AT)}…`}</span>
+        <button
+          type="button"
+          className="ms-1 text-xs font-medium text-brand-600 hover:underline"
+          onClick={() => setOpen((o) => !o)}
+        >
+          {open ? 'הצג פחות' : 'הצג עוד'}
+        </button>
+      </dd>
     </div>
   );
 }

@@ -4,6 +4,11 @@ import type {
   AttentionRow,
   AutomationRuleRow,
   AutomationRunRow,
+  BroadcastChannel,
+  BroadcastMetaTemplate,
+  BroadcastRow,
+  BroadcastSegment,
+  BroadcastStats,
   JourneyDefinitionRow,
   JourneyRunRow,
   JourneyStepDef,
@@ -234,6 +239,58 @@ export type MessageTemplateAction =
 
 export async function postMessageTemplateAction(payload: MessageTemplateAction) {
   return postJson<{ ok: true; template: MessageTemplateRow }>('/message-templates', payload as unknown as Record<string, unknown>);
+}
+
+// === Campaign broadcasts ==================================================
+
+export async function fetchBroadcasts() {
+  const r = await getJson<{ ok: true; broadcasts: BroadcastRow[] }>('/broadcasts');
+  return r.broadcasts;
+}
+
+export async function fetchBroadcast(id: string) {
+  return getJson<{ ok: true; broadcast: BroadcastRow; stats: BroadcastStats }>('/broadcasts', { id });
+}
+
+export async function previewBroadcastSegment(segment: BroadcastSegment, channel: BroadcastChannel = 'whatsapp') {
+  const r = await postJson<{ ok: true; count: number }>('/broadcasts', { action: 'preview_count', segment, channel });
+  return r.count;
+}
+
+export async function fetchBroadcastStats(id: string) {
+  const r = await postJson<{ ok: true; stats: BroadcastStats }>('/broadcasts', { action: 'stats', id });
+  return r.stats;
+}
+
+export type BroadcastAction =
+  | {
+      action: 'create';
+      name: string;
+      channel?: BroadcastChannel;
+      template_key?: string | null;
+      meta_template?: BroadcastMetaTemplate | null;
+      body_snapshot?: string | null;
+      segment?: BroadcastSegment;
+      scheduled_at?: string | null;
+    }
+  | {
+      action: 'update';
+      id: string;
+      name?: string;
+      template_key?: string | null;
+      meta_template?: BroadcastMetaTemplate | null;
+      body_snapshot?: string | null;
+      segment?: BroadcastSegment;
+      scheduled_at?: string | null;
+    }
+  | { action: 'schedule'; id: string; scheduled_at?: string | null }
+  | { action: 'cancel'; id: string };
+
+export async function postBroadcastAction(payload: BroadcastAction) {
+  return postJson<{ ok: true; broadcast: BroadcastRow; recipient_count?: number }>(
+    '/broadcasts',
+    payload as unknown as Record<string, unknown>,
+  );
 }
 
 // === Automations catalog + runs (Tier 2.B + 2.C) ==========================
