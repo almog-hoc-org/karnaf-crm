@@ -196,7 +196,7 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
   // try to resolve it from the deal's partner_id before refusing the
   // send. Cheap one-time query per rendering; ignored on failure
   // (we fall through to the "missing var" branch below as before).
-  if (tpl.body.includes('{{partner_name}}') && !ctx.context.partner_name) {
+  if (tpl?.body?.includes('{{partner_name}}') && !ctx.context.partner_name) {
     const dealCtx = ctx.context.deal as Record<string, unknown> | undefined;
     const partnerId = dealCtx?.partner_id as string | undefined;
     if (partnerId) {

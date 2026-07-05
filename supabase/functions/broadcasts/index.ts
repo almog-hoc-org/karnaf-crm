@@ -217,7 +217,7 @@ async function computeStats(supabase: ReturnType<typeof getServiceSupabase>, id:
     .eq('broadcast_id', id)
     .limit(20_000);
   if (error) throw new Error(error.message);
-  for (const r of (data ?? []) as Array<{ status: string; message: { provider_status: string | null } | null }>) {
+  for (const r of (data ?? []) as unknown as Array<{ status: string; message: { provider_status: string | null } | null }>) {
     s.total += 1;
     if (r.status in s) (s as unknown as Record<string, number>)[r.status] += 1;
     const ps = r.message?.provider_status;

@@ -126,7 +126,9 @@ export async function buildLeadContext(
     .eq('id', leadId)
     .maybeSingle();
   if (error || !data) return null;
-  return buildLeadContextFromRow(supabase, data as LeadRowForContext, opts);
+  // The select string is built by concatenation, so supabase-js can't infer
+  // a row type and widens `data` to GenericStringError — cast through unknown.
+  return buildLeadContextFromRow(supabase, data as unknown as LeadRowForContext, opts);
 }
 
 // The path automation-tick uses: it already has the row in memory from

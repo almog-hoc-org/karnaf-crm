@@ -187,7 +187,7 @@ async function sendDirectTemplate(
   if (leadErr) throw new Error(`lead lookup: ${leadErr.message}`);
   if (!lead) return skip(supabase, row, 'lead_not_found');
 
-  const l = lead as LeadForSend;
+  const l = lead as unknown as LeadForSend;
   // Never message a suppressed lead. Terminal skip — broadcast analytics
   // count it as skipped, not failed.
   if (l.do_not_contact || l.removed_by_request) return skip(supabase, row, 'dnc_or_removed');

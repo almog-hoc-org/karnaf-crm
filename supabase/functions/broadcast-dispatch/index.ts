@@ -59,13 +59,14 @@ Deno.serve(async (req) => {
   }
 
   const results: Array<Record<string, unknown>> = [];
-  for (const b of due ?? []) {
+  for (const row of due ?? []) {
+    const b = row as unknown as BroadcastRow;
     try {
-      results.push(await advanceBroadcast(supabase, b as BroadcastRow, correlationId));
+      results.push(await advanceBroadcast(supabase, b, correlationId));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.error('broadcast_advance_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId: (b as BroadcastRow).id, err: msg });
-      results.push({ id: (b as BroadcastRow).id, error: msg });
+      log.error('broadcast_advance_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, err: msg });
+      results.push({ id: b.id, error: msg });
     }
   }
 
