@@ -28,6 +28,19 @@ const STATUSES: LeadStatus[] = [
   'dormant',
 ];
 const HEATS: LeadHeat[] = ['hot', 'warm', 'cool', 'cold'];
+
+// One option per distinct Hebrew source label. SOURCE_LABELS maps several
+// slugs to the same label (e.g. instagram/instagram_dm → אינסטגרם), so the
+// option value is ALL slugs for that label, comma-joined — the backend
+// matches any of them with an IN filter so nothing is missed.
+const SOURCE_FILTER_OPTIONS = (() => {
+  const byLabel = new Map<string, string[]>();
+  for (const [slug, label] of Object.entries(SOURCE_LABELS)) {
+    if (!byLabel.has(label)) byLabel.set(label, []);
+    byLabel.get(label)!.push(slug);
+  }
+  return Array.from(byLabel.entries()).map(([label, slugs]) => ({ value: slugs.join(','), label }));
+})();
 const OWNERS: OwnershipMode[] = [
   'ai_active',
   'mia_active',
@@ -134,6 +147,8 @@ function LeadWorkCard({
             {lead.product_interest ? (
               <span>מוצר: {PRODUCT_INTEREST_LABELS[lead.product_interest] ?? lead.product_interest}</span>
             ) : null}
+            {lead.interest_topic ? <span>נושא: {lead.interest_topic}</span> : null}
+            {lead.source_campaign ? <span>קמפיין: {lead.source_campaign}</span> : null}
             {lead.last_inbound_at ? <span>הודעה אחרונה: {formatRelative(lead.last_inbound_at)}</span> : null}
           </div>
           <p className="text-sm leading-6 text-slate-700">{lead.suggested_next_action || guidance.detail}</p>
@@ -632,6 +647,22 @@ export function LeadsPage() {
           {OWNERS.map((o) => (
             <option key={o} value={o}>
               {OWNERSHIP_LABELS[o]}
+            </option>
+          ))}
+        </select>
+        <select
+          className="kf-input"
+          value={source}
+          onChange={(e) => {
+            setSource(e.target.value);
+            setOffset(0);
+          }}
+          aria-label="סינון לפי מקור"
+        >
+          <option value="">כל המקורות</option>
+          {SOURCE_FILTER_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
             </option>
           ))}
         </select>

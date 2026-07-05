@@ -35,6 +35,7 @@ export interface LeadRow {
   phone: string | null;
   email: string | null;
   source: string;
+  source_campaign?: string | null;
   lead_status: LeadStatus;
   lead_heat: LeadHeat;
   ownership_mode: OwnershipMode;
