@@ -92,6 +92,12 @@ describe('selectPlaybook status-driven defaults', () => {
     );
   });
 
+  it('new + already greeted → qualification (regression: no re-greeting loop)', () => {
+    expect(
+      selectPlaybook(baseInput({ leadStatus: 'new', source: 'landing_page', hasPriorBotMessage: true })).name,
+    ).toBe('qualification');
+  });
+
   it('unknown lead_status falls back to qualification', () => {
     expect(selectPlaybook(baseInput({ leadStatus: 'something_unrecognized' })).name).toBe('qualification');
   });

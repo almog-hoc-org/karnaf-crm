@@ -12,6 +12,13 @@ export interface RuntimeConfig extends AiRuntimeConfig {
     freeformWindowHours: number;
     fallbackTemplateName: string;
   };
+  reengagement: {
+    // OFF until an approved Meta template exists (24h-window sends require it).
+    enabled: boolean;
+    checkinDays: number;
+    reactivationDays: number;
+    templateName: string;
+  };
 }
 
 const DEFAULT: RuntimeConfig = {
@@ -30,6 +37,7 @@ const DEFAULT: RuntimeConfig = {
   ],
   ai: { model: 'gpt-4o-mini', promptVersion: 'v1', maxReplyChars: 900 },
   whatsappSession: { freeformWindowHours: 24, fallbackTemplateName: 'karnaf_followup_v1' },
+  reengagement: { enabled: false, checkinDays: 7, reactivationDays: 60, templateName: '' },
 };
 
 export async function getRuntimeConfig(supabase: SupabaseClient): Promise<RuntimeConfig> {
@@ -49,5 +57,6 @@ export async function getRuntimeConfig(supabase: SupabaseClient): Promise<Runtim
     forbiddenClaims: get('forbidden_claims', DEFAULT.forbiddenClaims),
     ai: get('ai_runtime', DEFAULT.ai),
     whatsappSession: get('whatsapp_session', DEFAULT.whatsappSession),
+    reengagement: get('reengagement', DEFAULT.reengagement),
   };
 }

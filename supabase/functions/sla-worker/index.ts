@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
 
   const counters: Record<string, number> = {
     sla_risk: 0, sla_breach: 0, payment_pending: 0, dormant: 0, ai_stuck: 0,
-    deal_stalled: 0, meeting_outcome_pending: 0, phone_overdue: 0,
+    deal_stalled: 0, meeting_outcome_pending: 0, phone_overdue: 0, handoff_stale: 0,
   };
   const queryErrors: Array<{ stage: string; message: string }> = [];
 
@@ -313,13 +313,34 @@ Deno.serve(async (req) => {
     }
   }
 
+  // C — handoff_stale: a human_handoff queue item left unresolved past SLA.
+  // B3 (phone_overdue) covers the phone_sales_pending ownership path; this covers
+  // the mia handoff path where the bot may still be replying (so sla_breach won't
+  // fire) yet no human has actually taken the lead — the live-test failure where a
+  // hot lead waited 36h ("שכחתם לחזור אלי").
+  const HANDOFF_STALE_HOURS = 6;
+  const handoffStaleCutoff = new Date(now - HANDOFF_STALE_HOURS * 3600 * 1000).toISOString();
+  const { data: staleHandoffs, error: staleHandoffErr } = await supabase
+    .from('work_queue')
+    .select('id')
+    .eq('queue_type', 'human_handoff')
+    .eq('status', 'pending')
+    .lt('created_at', handoffStaleCutoff);
+  if (staleHandoffErr) {
+    queryErrors.push({ stage: 'handoff_stale_query', message: staleHandoffErr.message });
+    log.error('handoff_stale_query_failed', { fn: 'sla-worker', correlationId, err: staleHandoffErr.message });
+  }
+  counters.handoff_stale = (staleHandoffs ?? []).length;
+
   const hasUrgent = counters.sla_breach > 0 || counters.payment_pending > 0
     || counters.ai_stuck > 0 || counters.deal_stalled > 0
-    || counters.meeting_outcome_pending > 0 || counters.phone_overdue > 0;
+    || counters.meeting_outcome_pending > 0 || counters.phone_overdue > 0
+    || counters.handoff_stale > 0;
   if (hasUrgent) {
     const lines: string[] = [];
     if (counters.sla_breach > 0) lines.push(`• פריצת SLA: ${counters.sla_breach} לידים ללא מענה`);
     if (counters.phone_overdue > 0) lines.push(`• שיחת טלפון באיחור: ${counters.phone_overdue} לידים מעל 24ש׳`);
+    if (counters.handoff_stale > 0) lines.push(`• העברה לנציג לא טופלה: ${counters.handoff_stale} לידים מעל ${HANDOFF_STALE_HOURS}ש׳`);
     if (counters.deal_stalled > 0) lines.push(`• עסקאות תקועות: ${counters.deal_stalled}`);
     if (counters.meeting_outcome_pending > 0) lines.push(`• פגישות לסיכום: ${counters.meeting_outcome_pending}`);
     if (counters.ai_stuck > 0) lines.push(`• AI תקוע: ${counters.ai_stuck} לידים מחכים מעל ${stuckMinutes} דק׳`);
@@ -328,7 +349,7 @@ Deno.serve(async (req) => {
     if (counters.dormant > 0) lines.push(`• הועברו ל-dormant: ${counters.dormant}`);
     await notifyTelegram({
       source: 'sla-worker',
-      severity: counters.sla_breach > 0 || counters.phone_overdue > 0 ? 'error' : 'warn',
+      severity: counters.sla_breach > 0 || counters.phone_overdue > 0 || counters.handoff_stale > 0 ? 'error' : 'warn',
       title: 'Karnaf CRM — SLA tick',
       lines,
       link: 'https://karnaf-crm.vercel.app/inbox',

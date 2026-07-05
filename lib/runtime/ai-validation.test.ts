@@ -52,6 +52,21 @@ describe('validateAiDecision', () => {
     expect(r.flags).toContain('suppressed_dnc');
   });
 
+  it('coerces a handoff-like unknown queue type to human_handoff (regression: lost handoff)', () => {
+    const r = validateAiDecision({
+      output: baseOutput({ createQueueType: 'human_handoff_general_inquiry' }),
+      currentStatus: 'first_contact_sent',
+      forbiddenClaims: FORBIDDEN,
+      playbook,
+      maxReplyChars: 900,
+      isDoNotContact: false,
+      isRemovedByRequest: false,
+    });
+    expect(r.output.createQueueType).toBe('human_handoff');
+    expect(r.flags).toContain('queue_normalized');
+    expect(r.flags).not.toContain('queue_invalid');
+  });
+
   it('rejects illegal state transition (new -> won)', () => {
     const r = validateAiDecision({
       output: baseOutput({ leadStatusUpdate: 'won' }),

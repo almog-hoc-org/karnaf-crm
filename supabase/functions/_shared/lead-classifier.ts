@@ -62,6 +62,8 @@ const PROPERTY_HINTS = ['דירה', 'נכס', 'עסקה', 'השקעה', 'אזו�
 const INVESTOR_MENTORSHIP_HINTS = ['ליווי משקיעים', 'ליווי למשקיעים', 'ליווי השקעות', 'מנטור', 'מנטורינג', 'ליווי'];
 const CONTRACTOR_GROUP_HINTS = ['קבוצת רכישה', 'קבוצה מקבלן', 'מקבלן', 'קבלן', 'יזם', 'פרויקט חדש', 'דירה מקבלן'];
 const CONSULTATION_HINTS = ['שיחת ייעוץ', 'ייעוץ אישי', 'שיחה אישית', 'שיחה עם יועץ', 'פגישת ייעוץ', 'פגישה אישית'];
+// Topics the flagship digital program does NOT cover — must go to a human, never into the program funnel.
+const LAND_HINTS = ['קרקעות', 'קרקע', 'מילואים', 'משתכן', 'הפשרת קרקע', 'קרקע חקלאית', 'מגרש'];
 const BUY_HINTS = ['רוצה להירשם', 'רוצה להתחיל', 'איך נרשמים', 'איך משלמים', 'לסגור', 'לרכוש'];
 const HUMAN_HINTS = ['נציג', 'בן אדם', 'בנאדם', 'שיחה', 'תתקשרו', 'טלפון', 'מיה'];
 const SUPPORT_HINTS = ['כבר נרשמתי', 'אני תלמיד', 'גישה', 'התחברות', 'חשבונית', 'תמיכה'];
@@ -100,11 +102,13 @@ export function classifyLeadIntake(input: LeadClassificationInput): LeadClassifi
   const investorMentorship = hit('investor_mentorship', INVESTOR_MENTORSHIP_HINTS);
   const contractorGroup = hit('contractor_group_purchase', CONTRACTOR_GROUP_HINTS);
   const consultation = hit('personal_consultation', CONSULTATION_HINTS);
+  const land = hit('land', LAND_HINTS);
   const program = hit('program', PROGRAM_HINTS);
 
   let inquiryType: InquiryType = 'unknown';
   if (support) inquiryType = 'support';
   else if (buy) inquiryType = 'purchase_ready';
+  else if (land) inquiryType = 'property_search';
   else if (price) inquiryType = 'pricing';
   else if (financing) inquiryType = 'financing';
   else if (eligibility) inquiryType = 'eligibility';
@@ -113,20 +117,28 @@ export function classifyLeadIntake(input: LeadClassificationInput): LeadClassifi
   else if (program) inquiryType = 'program_details';
 
   let productInterest: ProductInterest = 'unknown';
+  // Explicit track interest wins over a generic "consultation/agent" request, and
+  // the `human` keyword (נציג/שיחה/טלפון) only drives a handoff intent below — it must
+  // NOT relabel the product (it used to hijack leads to personal_consultation→flagship).
   if (contractorGroup) productInterest = 'contractor_group_purchase';
-  else if (consultation || human) productInterest = 'personal_consultation';
   else if (investorMentorship) productInterest = 'investor_mentorship';
+  else if (consultation) productInterest = 'personal_consultation';
   else if (program || price || buy || eligibility || property || financing) productInterest = 'digital_program';
 
   let intakeSegment: IntakeSegment = 'unknown';
   if (support) intakeSegment = 'support_or_existing';
   else if (buy) intakeSegment = 'hot_sales';
+  else if (land) intakeSegment = 'needs_human';
   else if (human) intakeSegment = 'needs_human';
   else if (price || financing || eligibility) intakeSegment = 'needs_nurture';
   else if (program || property || investorMentorship || contractorGroup || consultation) intakeSegment = 'info_seeker';
 
   const confidence = matched.length >= 3 ? 'high' : matched.length >= 1 ? 'medium' : 'low';
-  return buildSignal(inquiryType, productInterest, intakeSegment, matched, confidence);
+  // Land/reservist interest is outside the digital program — hand to a human with a specific reason.
+  const handoffReasonOverride = land && !support && !buy
+    ? 'עניין בקרקעות/מילואים — מחוץ לתוכנית הדיגיטלית, דורש בדיקת נציג אנושי'
+    : null;
+  return buildSignal(inquiryType, productInterest, intakeSegment, matched, confidence, handoffReasonOverride);
 }
 
 function buildSignal(
@@ -135,15 +147,17 @@ function buildSignal(
   intakeSegment: IntakeSegment,
   matchedKeywords: string[],
   confidence: LeadClassificationSignal['confidence'],
+  handoffReasonOverride: string | null = null,
 ): LeadClassificationSignal {
   const handoffReason =
-    intakeSegment === 'needs_human'
+    handoffReasonOverride ??
+    (intakeSegment === 'needs_human'
       ? 'הליד ביקש שיחה/נציג אנושי'
       : intakeSegment === 'hot_sales'
         ? 'כוונת רכישה גבוהה — מומלץ נציג מכירות אם יש חסם או שאלת תשלום'
         : intakeSegment === 'support_or_existing'
           ? 'נראה כמו תלמיד/לקוח קיים — טיפול תמיכה אנושי'
-          : null;
+          : null);
 
   return {
     inquiryType,

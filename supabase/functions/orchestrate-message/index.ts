@@ -150,6 +150,27 @@ Deno.serve(async (req) => {
     if (msgErr) return jsonResponse(req, { error: msgErr.message }, 500);
 
     const ordered = (recentMessages ?? []).slice().reverse();
+
+    // Coalescing / anti-double-send guard. orchestrate always answers the
+    // LATEST lead message with full recent context. If the most recent message
+    // is already outbound, this lead has nothing unanswered — this dispatch is
+    // a duplicate or was superseded by a turn that already replied (e.g. two
+    // inbound messages a few seconds apart each enqueued a dispatch). The
+    // conversation lock guarantees the earlier turn's reply is committed before
+    // we get here, so rapid-fire messages collapse into a single reply instead
+    // of producing two (often contradictory) sends.
+    const latestMessage = ordered[ordered.length - 1];
+    if (latestMessage && latestMessage.direction === 'outbound') {
+      log.info('orchestrate_already_answered', {
+        fn: 'orchestrate',
+        correlationId,
+        leadId,
+        conversationId,
+        latestSender: latestMessage.sender_type,
+      });
+      return jsonResponse(req, { ok: true, skipped: 'already_answered' });
+    }
+
     const freeAdviceCount = ordered.filter(
       (m) => m.sender_type === 'lead' && (m.content_text ?? '').length > 80,
     ).length;
@@ -213,15 +234,34 @@ Deno.serve(async (req) => {
       metadata: (lead.raw_import_snapshot as Record<string, unknown> | null) ?? null,
     });
 
+    // Track stickiness: once a specific track is known it must not be lost when a
+    // later message reclassifies (e.g. "פגישות ייעוץ" → consultation → flagship).
+    const SPECIFIC_INTERESTS = new Set(['investor_mentorship', 'mentorship', 'contractor_group_purchase']);
+    const trackFromInterest = (pi: string | null | undefined): string | null =>
+      pi === 'investor_mentorship' || pi === 'mentorship'
+        ? 'investor_mentorship'
+        : pi === 'contractor_group_purchase'
+          ? 'presale'
+          : null;
+    // Don't downgrade an established specific product_interest to a generic one.
+    const effectiveProductInterest =
+      SPECIFIC_INTERESTS.has(String(lead.product_interest)) && !SPECIFIC_INTERESTS.has(leadClassification.productInterest)
+        ? (lead.product_interest as string)
+        : leadClassification.productInterest;
+    // Persist primary_track when a specific track is newly detected and none is set.
+    const persistTrack = !lead.primary_track ? trackFromInterest(effectiveProductInterest) : null;
+    const effectiveTrack = (lead.primary_track as string | null) ?? persistTrack;
+
     await updateLeadFields(supabase, leadId, {
       inquiry_type: leadClassification.inquiryType,
-      product_interest: leadClassification.productInterest,
+      product_interest: effectiveProductInterest,
       intake_segment: leadClassification.intakeSegment,
       classification_confidence: leadClassification.confidence,
       classification_summary: leadClassification.operatorSummary,
       suggested_next_action: leadClassification.suggestedNextAction,
       handoff_reason: leadClassification.handoffReason,
       classification_updated_at: new Date().toISOString(),
+      ...(persistTrack ? { primary_track: persistTrack } : {}),
     });
 
     const authorisedClaims = await loadProductClaims(supabase, config.product.code);
@@ -254,8 +294,9 @@ Deno.serve(async (req) => {
           lastPhoneCallOutcome,
           firstInboundSnippet,
           topicsTouched: Array.isArray(lead.topics_touched) ? (lead.topics_touched as TopicEntry[]) : [],
+          primaryTrack: effectiveTrack,
           inquiryType: leadClassification.inquiryType,
-          productInterest: leadClassification.productInterest,
+          productInterest: effectiveProductInterest,
           intakeSegment: leadClassification.intakeSegment,
           classificationConfidence: leadClassification.confidence,
           classificationSummary: leadClassification.operatorSummary,
@@ -404,14 +445,19 @@ Deno.serve(async (req) => {
       const updates: Record<string, unknown> = {
         lead_score: nextScore,
         inquiry_type: leadClassification.inquiryType,
-        product_interest: leadClassification.productInterest,
+        product_interest: effectiveProductInterest,
         intake_segment: leadClassification.intakeSegment,
         classification_confidence: leadClassification.confidence,
         classification_summary: leadClassification.operatorSummary,
         suggested_next_action: leadClassification.suggestedNextAction,
         handoff_reason: leadClassification.handoffReason,
         classification_updated_at: new Date().toISOString(),
+        ...(persistTrack ? { primary_track: persistTrack } : {}),
       };
+      // Persist lead data the bot captured (fill-only — never clobber existing).
+      if (out.extractedName && !lead.full_name) updates.full_name = out.extractedName;
+      if (out.estimatedEquity) updates.estimated_equity = out.estimatedEquity;
+      if (out.interestSummary) updates.goal_summary = out.interestSummary;
       if (out.leadHeatUpdate) updates.lead_heat = out.leadHeatUpdate;
       if (out.nextActionType) updates.next_action_type = out.nextActionType;
       if (out.nextActionDueAt) updates.next_action_due_at = out.nextActionDueAt;
