@@ -17,10 +17,11 @@ import {
   type ReopenTarget,
 } from '@/lib/api';
 import { contextFromLead, renderTemplate } from '@/lib/template-render';
-import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
+import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
-import { UnifiedTimeline } from '@/components/UnifiedTimeline';
+import { ChatTimeline } from '@/components/ChatTimeline';
+import { ActivityFeed } from '@/components/ActivityFeed';
 import { t } from '@/lib/i18n';
 import {
   AI_PLAYBOOK_STAGE_LABELS,
@@ -205,6 +206,7 @@ export function LeadDetailPage() {
   const [pendingQueueClose, setPendingQueueClose] = useState<{ id: string; label: string } | null>(null);
   const [queueCloseNote, setQueueCloseNote] = useState('');
   const [reopenOpen, setReopenOpen] = useState(false);
+  const [conversationTab, setConversationTab] = useState<'chat' | 'activity'>('chat');
   const [reopenTarget, setReopenTarget] = useState<ReopenTarget>('responded');
   const [reopenNote, setReopenNote] = useState('');
 
@@ -276,6 +278,13 @@ export function LeadDetailPage() {
   const deals = detailQ.data.deals ?? [];
   const meetings = detailQ.data.meetings ?? [];
   const programMember = detailQ.data.programMember ?? null;
+  // Badge on the "פעילות" tab: open tasks + pending queue items keep
+  // ActionCards discoverable now that they left the chat pane.
+  const openItemsCount = activities.filter(
+    (a) =>
+      (a.activity_type === 'task' || a.activity_type === 'queue_item') &&
+      (a.status === 'open' || a.status === 'pending' || a.status === 'claimed'),
+  ).length;
 
   return (
     <div className="space-y-4">
@@ -313,11 +322,21 @@ export function LeadDetailPage() {
         {/* Status row — same chips as before, no longer competes with
             a duplicate CurrentOwnerLine banner. */}
         <div className="mt-3 flex flex-wrap items-center gap-2 sm:gap-3">
+          <MemberBadge isMember={!!programMember} />
           <StatusBadge status={lead.lead_status} />
           <OwnershipBadge ownership={lead.ownership_mode} />
           <HeatBadge heat={lead.lead_heat} />
           <span className="kf-badge kf-badge-mute">ציון {lead.lead_score}</span>
           <NextActionBadge actionType={lead.next_action_type} dueAt={lead.next_action_due_at} />
+          {!programMember && (auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia') ? (
+            <button
+              type="button"
+              className="rounded-full border border-emerald-200 bg-white px-2.5 py-0.5 text-xs text-emerald-700 hover:bg-emerald-50"
+              onClick={() => action.mutate({ action: 'mark_program_member', label: 'סומן כחבר תוכנית' })}
+            >
+              סמן כחבר תוכנית
+            </button>
+          ) : null}
         </div>
 
         {/* Long-tail metadata collapses behind a disclosure. AI playbook
@@ -472,7 +491,12 @@ export function LeadDetailPage() {
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="kf-card p-4 lg:col-span-2">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">שיחה</h2>
+            <h2 className="font-semibold">
+              שיחה
+              {detailQ.data?.conversations[0]?.channel === 'instagram' ? (
+                <span className="ms-2 inline-flex items-center rounded-full bg-fuchsia-100 px-2 py-0.5 text-xs font-medium text-fuchsia-700">אינסטגרם</span>
+              ) : null}
+            </h2>
             {lead.phone ? (
               <a
                 href={waLink(lead.phone)}
@@ -489,17 +513,57 @@ export function LeadDetailPage() {
             ) : null}
           </div>
           <HandlerBanner ownership={lead.ownership_mode} lastHumanTouchAt={lead.last_human_touch_at} />
-          {/* Tier 0.F.1 — Universal Record Screen feed. UnifiedTimeline
-              replaces the legacy Transcript with one chronological pane
-              that absorbs messages + events + tasks + queue items into
-              the same scroll surface, matching the v4 spec § ג'. */}
-          <UnifiedTimeline activities={activities} />
+          {/* Chat/activity split: the conversation pane shows message
+              bubbles only (a clean WhatsApp view for the rep); system
+              events, tasks, queue items, meetings and calls live behind
+              the "פעילות" tab with a badge for open items. */}
+          <div className="mt-3 flex gap-1 border-b border-slate-200" role="tablist" aria-label="שיחה ופעילות">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={conversationTab === 'chat'}
+              onClick={() => setConversationTab('chat')}
+              className={clsx(
+                'rounded-t-lg px-4 py-1.5 text-sm',
+                conversationTab === 'chat'
+                  ? 'border border-b-0 border-slate-200 bg-white font-semibold text-slate-900'
+                  : 'text-slate-500 hover:text-slate-700',
+              )}
+            >
+              שיחה
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={conversationTab === 'activity'}
+              onClick={() => setConversationTab('activity')}
+              className={clsx(
+                'inline-flex items-center gap-1.5 rounded-t-lg px-4 py-1.5 text-sm',
+                conversationTab === 'activity'
+                  ? 'border border-b-0 border-slate-200 bg-white font-semibold text-slate-900'
+                  : 'text-slate-500 hover:text-slate-700',
+              )}
+            >
+              פעילות
+              {openItemsCount > 0 ? (
+                <span className="rounded-full bg-amber-100 px-1.5 text-[10px] font-semibold text-amber-800">
+                  {openItemsCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
+          {conversationTab === 'chat' ? (
+            <ChatTimeline activities={activities} />
+          ) : (
+            <ActivityFeed activities={activities} />
+          )}
           <ReplyBox
             disabled={!conversationId || lead.do_not_contact || lead.removed_by_request}
             onSend={(text) => sendReply.mutate(text)}
             sending={sendReply.isPending}
             errorMessage={sendReply.error ? (sendReply.error as Error).message : null}
             lead={lead}
+            channel={detailQ.data?.conversations[0]?.channel ?? 'whatsapp'}
           />
         </div>
 
@@ -533,10 +597,12 @@ export function LeadDetailPage() {
               )}
             </dl>
             {lead.conversation_summary && (
-              <div className="mt-3 rounded-md bg-white/80 p-2 text-sm text-slate-700 ring-1 ring-slate-200">
-                <div className="mb-1 text-xs font-medium text-slate-500">סיכום שיחה</div>
-                <p className="whitespace-pre-wrap">{lead.conversation_summary}</p>
-              </div>
+              <details className="mt-3 rounded-md bg-white/80 p-2 text-sm text-slate-700 ring-1 ring-slate-200">
+                <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
+                  סיכום שיחה מלא
+                </summary>
+                <p className="mt-1 whitespace-pre-wrap">{lead.conversation_summary}</p>
+              </details>
             )}
             <NotesEditor
               value={lead.notes_internal}
@@ -666,7 +732,7 @@ export function LeadDetailPage() {
                       : null
                   }
                 />
-                <CollapsibleRow k="סיכום" v={lead.classification_summary} />
+                <Row k="סיכום" v={lead.classification_summary} />
                 <Row k="פעולה מומלצת" v={lead.suggested_next_action} />
                 <Row k="סיבת העברה" v={lead.handoff_reason} />
                 <Row
@@ -1666,30 +1732,6 @@ function Row({ k, v }: { k: string; v: string | null | undefined }) {
   );
 }
 
-// Like Row, but a long AI summary is truncated behind a "show more"
-// toggle so it doesn't dominate the diagnosis panel. Short values render
-// exactly like Row. Tier: broadcast-handoff §3.6.
-const SUMMARY_TRUNCATE_AT = 180;
-function CollapsibleRow({ k, v }: { k: string; v: string | null | undefined }) {
-  const [open, setOpen] = useState(false);
-  if (!v || v.length <= SUMMARY_TRUNCATE_AT) return <Row k={k} v={v} />;
-  return (
-    <div className="grid grid-cols-3 gap-2">
-      <dt className="col-span-1 text-slate-500">{k}</dt>
-      <dd className="col-span-2 text-slate-800">
-        <span className="whitespace-pre-wrap">{open ? v : `${v.slice(0, SUMMARY_TRUNCATE_AT)}…`}</span>
-        <button
-          type="button"
-          className="ms-1 text-xs font-medium text-brand-600 hover:underline"
-          onClick={() => setOpen((o) => !o)}
-        >
-          {open ? 'הצג פחות' : 'הצג עוד'}
-        </button>
-      </dd>
-    </div>
-  );
-}
-
 // Brief-panel row: full value (wraps), no truncation — the rep should read it.
 function BriefRow({ k, v }: { k: string; v: string | null | undefined }) {
   if (!v) return null;
@@ -2084,6 +2126,7 @@ function ReplyBox({
   sending,
   errorMessage,
   lead,
+  channel = 'whatsapp',
 }: {
   disabled: boolean;
   onSend: (text: string) => void;
@@ -2093,6 +2136,10 @@ function ReplyBox({
   // {{first_name}} and other markers against the actual contact
   // when Mia inserts a template into the reply.
   lead: { full_name: string | null; phone: string | null; email: string | null; city: string | null };
+  // Tier 8.A — conversation channel; Instagram hides the WhatsApp
+  // template picker and gets its own 24h-window copy (IG has no
+  // template fallback — late replies queue until the next inbound).
+  channel?: string;
 }) {
   const [text, setText] = useState('');
 
@@ -2130,12 +2177,16 @@ function ReplyBox({
       />
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
         <div className="flex items-center gap-2 text-xs">
-          <button type="button" className="kf-btn text-xs" disabled={disabled}
-            onClick={() => setPickerOpen((open) => !open)}>
-            {pickerOpen ? 'סגור תבניות' : '+ הכנס תבנית'}
-          </button>
+          {channel !== 'instagram' ? (
+            <button type="button" className="kf-btn text-xs" disabled={disabled}
+              onClick={() => setPickerOpen((open) => !open)}>
+              {pickerOpen ? 'סגור תבניות' : '+ הכנס תבנית'}
+            </button>
+          ) : null}
           <span className="text-slate-500">
-            ייצא דרך WhatsApp. מחוץ לחלון 24 שעות תישלח תבנית.
+            {channel === 'instagram'
+              ? 'ייצא דרך אינסטגרם. מחוץ לחלון 24 שעות ההודעה תמתין עד שהלקוח יכתוב שוב.'
+              : 'ייצא דרך WhatsApp. מחוץ לחלון 24 שעות תישלח תבנית.'}
           </span>
         </div>
         <button

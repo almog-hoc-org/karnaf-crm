@@ -94,9 +94,6 @@ export interface LeadContext {
   do_not_contact: boolean;
   removed_by_request: boolean;
   source: string | null;
-  // Segmentation key for campaign broadcasts. Set at intake from the
-  // form's campaign field (e.g. 'launch_webinar_2026'); durable so a
-  // rule listening on lead.created can gate a confirmation send on it.
   source_campaign: string | null;
   hours_since_intake: number | null;
   hours_since_last_inbound: number | null;
@@ -126,8 +123,6 @@ export async function buildLeadContext(
     .eq('id', leadId)
     .maybeSingle();
   if (error || !data) return null;
-  // The select string is built by concatenation, so supabase-js can't infer
-  // a row type and widens `data` to GenericStringError — cast through unknown.
   return buildLeadContextFromRow(supabase, data as unknown as LeadRowForContext, opts);
 }
 

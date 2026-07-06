@@ -39,9 +39,9 @@ const SECTIONS: HubSection[] = [
     hint: 'מה נשלח ללקוחות, ומה נשלח מעצמו',
     links: [
       { to: '/templates',     title: 'תבניות הודעה',    blurb: '16 התבניות מהמסמך + תצוגה מקדימה + הוצאה משימוש' },
-      { to: '/admin/broadcasts', title: 'הודעות תפוצה', blurb: 'שליחת תבנית מאושרת לסגמנט לידים מסונן + אנליטיקת מסירה' },
       { to: '/automations',   title: 'מנוע אוטומציה',  blurb: 'קטלוג כל הכללים + יומן הרצות + עריכת DSL' },
       { to: '/journeys',      title: 'מסעות לקוח',     blurb: 'רצפים אוטומטיים: program 14-day, investor 21-day, retention' },
+      { to: '/broadcasts',    title: 'הודעות תפוצה',   blurb: 'שליחת וואטסאפ מתוזמנת לסגמנטים של לידים + אנליטיקת מסירה' },
       { to: '/prompts',       title: 'AI Prompts',     blurb: 'גרסאות prompt לבוט החכם + ניסויי A/B' },
     ],
   },

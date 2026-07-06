@@ -7,6 +7,7 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { env } from '../_shared/env.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
 import { buildLeadContext } from '../_shared/event-context.ts';
+import { ensureProgramMember } from '../_shared/member-service.ts';
 
 type ActionName =
   | 'assign_to_mia'
@@ -21,7 +22,9 @@ type ActionName =
   | 'schedule_meeting'
   | 'update_meeting_status'
   | 'advance_deal_stage'
-  | 'update_lead_meta';
+  | 'update_lead_meta'
+  | 'merge_lead_duplicate'
+  | 'mark_program_member';
 
 const REOPEN_TARGETS = new Set(['responded', 'qualified', 'nurture', 'human_handoff']);
 
@@ -45,6 +48,10 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   update_meeting_status: ['owner', 'admin', 'mia', 'sales_rep'],
   advance_deal_stage: ['owner', 'admin', 'mia', 'sales_rep'],
   update_lead_meta: ['owner', 'admin', 'mia'],
+  // The case body re-checks owner/admin; listed here so the generic
+  // role gate lets the request through to that check.
+  merge_lead_duplicate: ['owner', 'admin'],
+  mark_program_member: ['owner', 'admin', 'mia'],
 };
 
 interface ActionPayload {
@@ -65,6 +72,7 @@ interface ActionPayload {
   meetingUrl?: string | null;
   meetingId?: string;
   meetingStatus?: 'scheduled' | 'held' | 'cancelled' | 'no_show';
+  duplicateLeadId?: string;
   metaUpdates?: {
     goal_summary?: string | null;
     pain_point_summary?: string | null;
@@ -461,7 +469,29 @@ Deno.serve(async (req) => {
           correlationId,
         });
       }
+      // A won program deal makes the lead a member — same record the
+      // payment webhook creates, so both paths land in one place.
+      if (wonDeal?.track === 'program') {
+        await ensureProgramMember(supabase, {
+          leadId,
+          joinedVia: 'won',
+          actorType: staff.role,
+          actorId: staff.userId,
+          correlationId,
+        });
+      }
       break;
+    }
+    case 'mark_program_member': {
+      const result = await ensureProgramMember(supabase, {
+        leadId,
+        joinedVia: 'manual',
+        actorType: staff.role,
+        actorId: staff.userId,
+        correlationId,
+      });
+      log.info('admin_action', { fn: 'admin-actions', correlationId, userId: staff.userId, action, leadId });
+      return jsonResponse(req, { ok: true, action, created: result.created });
     }
     case 'reopen_lead': {
       // The RPC is the source of truth: it role-gates (owner/admin only),
@@ -531,6 +561,33 @@ Deno.serve(async (req) => {
           }),
         );
       }
+      break;
+    }
+    case 'merge_lead_duplicate': {
+      // Tier 8.E3 — collapse a duplicate row into the lead being viewed.
+      // The RPC repoints every linked table, fills missing contact
+      // fields, neutralizes the duplicate, and audits both sides.
+      if (staff.role !== 'owner' && staff.role !== 'admin') {
+        return jsonResponse(req, { error: 'merge requires owner/admin' }, 403);
+      }
+      const duplicateLeadId = typeof body.duplicateLeadId === 'string' ? body.duplicateLeadId : null;
+      if (!duplicateLeadId) return jsonResponse(req, { error: 'Missing duplicateLeadId' }, 400);
+      const { error: mergeErr } = await supabase.rpc('merge_leads', {
+        p_survivor: leadId,
+        p_duplicate: duplicateLeadId,
+      });
+      if (mergeErr) {
+        log.warn('merge_leads_failed', { fn: 'admin-actions', correlationId, leadId, duplicateLeadId, err: mergeErr.message });
+        return jsonResponse(req, { error: mergeErr.message }, 400);
+      }
+      // Close any pending merge-review queue items that referenced this pair.
+      await supabase
+        .from('work_queue')
+        .update({ status: 'resolved', resolved_at: new Date().toISOString(), resolution_note: 'מוזג' })
+        .eq('queue_type', 'manual_review_required')
+        .eq('status', 'pending')
+        .eq('lead_id', leadId)
+        .eq('payload_json->>duplicate_lead_id', duplicateLeadId);
       break;
     }
     case 'update_lead_meta': {

@@ -1,122 +1,67 @@
-# Runbook — פריסת קמפיין וובינר "הדרך לדירה" + מודול הודעות תפוצה
+# Runbook — קמפיין וובינר "הדרך לדירה" + מודול תפוצה
 
-צעדי פריסה מדויקים למודול התפוצה ולכלל אישור ההרשמה לוובינר. משלים את
-[HANDOFF-campaign-broadcasts.md](HANDOFF-campaign-broadcasts.md).
+ענף: `feat/campaign-broadcasts`. הכל committed מקומית, בדוק (typecheck + lint + 298 טסטים).
 
-עודכן: 2026-07-05.
+## שלב 0 — תיקון הבוט (חוסם, ~2 דקות, ב-Meta)
+הבוט לא עונה בגלל שגיאת Meta `#132000`: תבנית ה-fallback `karnaf_followup_v1`
+מוגדרת עם 0 משתנים, אבל הקוד שולח לה משתנה אחד (טקסט התשובה).
 
----
+1. Meta Business Manager → WhatsApp Manager → Message templates → `karnaf_followup_v1`.
+2. הוסף בגוף משתנה `{{1}}` במקום שבו נכנס טקסט התשובה (למשל: `... {{1}}`).
+3. שלח לאישור מחדש. ברגע שיאושר — הבוט חוזר לענות וכל הלידים התקועים משתחררים.
 
-## 0. מה מתפרס
-מיגרציה אחת (`085_broadcasts.sql`) + פונקציות edge חדשות/מעודכנות:
+> בדיקה: אחרי אישור, שלח הודעת וואטסאפ לבוט ממספר שמחוץ לחלון 24ש → אמור לקבל תשובה.
+
+## שלב 1 — פריסה למערכת החיה
+מהשורש, על הענף `feat/campaign-broadcasts`:
 
 ```bash
+# 1. סכימה: טבלאות תפוצה + נמענים, עמודת priority, כלל האישור, תבניות
 supabase db push
 
-supabase functions deploy \
-  broadcasts broadcast-dispatch dispatch-outbound \
-  leads-intake leads-list
+# 2. קוד השרת החדש/המעודכן
+supabase functions deploy broadcasts broadcast-dispatch dispatch-outbound \
+  make-intake leads-intake leads-list leads-manage
 ```
 
-> ⚠️ `dispatch-outbound` **כן** נפרס כאן — הוא קיבל נתיב שליחה ישיר חדש
-> (`meta_template`). זו תוספת בלבד: נתיב ה-AI (מסירה ל-`orchestrate-message`)
-> לא השתנה. **אין** צורך לפרוס `orchestrate-message`.
-
----
-
-## 1. תבניות Meta — קריטי (#132000)
-לכל תבנית: **שם + מספר משתנים חייבים להתאים בדיוק** למה שהקוד שולח, אחרת
-`(#132000) number of localizable_params does not match`.
-
-| תבנית | משתנים | מי שולח | הערה |
-|---|---|---|---|
-| `webinar_launch_confirm` | **0** | כלל המנוע `campaign_webinar_launch_confirm` | הקוד שולח 0 ✅ |
-| `webinar_launch_reminder` | 0 או 1 | תפוצה ידנית מ-`/admin/broadcasts` | אם קישור הזום הוא `{{1}}` — מלא בשדה "קישור זום" בטופס. אם קבוע בגוף התבנית — השאר ריק. |
-
-הגש את שתי התבניות ל-Meta בעברית והמתן לאישור (24–72ש).
-
-> באג הפרוד הקיים: תבנית ה-fallback `karnaf_followup_v1` (env
-> `WHATSAPP_FALLBACK_TEMPLATE`) אושרה עם 0 משתנים אבל `orchestrate-message`
-> שולח לה `{{1}}`. תיקון ב-Meta: הוסף `{{1}}` בגוף התבנית ושלח לאישור מחדש.
-> זה נפרד ממודול התפוצה אך משחרר לידי רב מסר תקועים.
-
----
-
-## 2. Secrets + cron config
-מודול התפוצה מונע ע"י cron (`karnaf_broadcast_dispatch`, כל דקה) שפולט ל-worker
-`broadcast-dispatch`. שני הצדדים no-op בשקט עד שמוגדרים:
-
+הדלקת המתזמן האוטומטי של התפוצות (SQL editor):
 ```sql
--- URL של פונקציית ה-worker
 alter database postgres set app.broadcast_dispatch_url =
-  'https://<project-ref>.supabase.co/functions/v1/broadcast-dispatch';
-
--- הסוד שה-cron חותם איתו (Bearer)
-select vault.create_secret('<random-secret>', 'broadcast_dispatch_secret');
+  'https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/broadcast-dispatch';
+select vault.create_secret('<בחר-סוד-אקראי>', 'broadcast_dispatch_secret');
 ```
-
 ```bash
-# אותו סוד, כ-env ל-worker כדי שיאמת את הקריאה
-supabase secrets set BROADCAST_DISPATCH_SECRET=<random-secret>
+supabase secrets set BROADCAST_DISPATCH_SECRET=<אותו-סוד>
 ```
 
-בדיקה:
-```sql
-select jobname, schedule from cron.job where jobname = 'karnaf_broadcast_dispatch';
+פרונט: push לענף → Vercel בונה אוטומטית (או `vercel --prod`).
+
+## שלב 2 — webhook רב מסר (תיוג קמפיין)
+ברשימת הוובינר ברב מסר, כוון את ה-webhook ל:
 ```
-
----
-
-## 3. חיווט הטופס (רב מסר)
-דף הנחיתה `webinar.karnafnadlan.com` צריך לירות ל-`leads-intake` עם סיווג הקמפיין.
-הקמפיין נלקח מ-`campaign_name` בגוף ה-JSON **או** מפרמטר ה-query `?campaign=`:
-
+https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/make-intake?token=<MAKE_INTAKE_KEY>&source=webinar&campaign=launch_webinar_2026
 ```
-POST https://<project-ref>.supabase.co/functions/v1/leads-intake?source=webinar&campaign=launch_webinar_2026
-X-Karnaf-Signature: <HMAC של הגוף עם INTAKE_WEBHOOK_SECRET>
-{ "full_name": "...", "phone": "..." }
-```
+(`MAKE_INTAKE_KEY` נמצא ב-`~/.config/karnaf/make_intake_key`.)
 
-- `source=webinar` → תווית "וובינר".
-- `campaign=launch_webinar_2026` → `leads.source_campaign` (מפתח הסגמנטציה).
-- החתימה מחושבת על **הגוף בלבד**; ה-query הוא מטא-דאטה ולא חלק מהחתימה.
+## שלב 3 — אימות end-to-end
+1. הרשמת בדיקה בדף הנחיתה → בדוק שהליד נכנס עם הקמפיין:
+   ```sql
+   select full_name, source, source_campaign, created_at
+   from leads where created_at > now() - interval '10 min' order by created_at desc;
+   ```
+2. אותו ליד אמור לקבל וואטסאפ אישור. בדיקה:
+   ```sql
+   select rule_code, status, created_at from automation_runs
+   where rule_code = 'campaign_webinar_launch_confirm' order by created_at desc limit 5;
+   ```
+3. בעמוד `/broadcasts` → "תפוצה חדשה" → סגמנט `source_campaign = launch_webinar_2026`,
+   בחר תבנית `webinar_launch_reminder`, תזמן → בדוק שהאנליטיקה מתמלאת (נשלח→נמסר→נקרא).
 
-תוצאה: ליד נכנס עם `source_campaign=launch_webinar_2026`, המנוע פולט `lead.created`,
-והכלל `campaign_webinar_launch_confirm` שולח הודעת אישור **פעם אחת** (מכבד DNC).
+## תבניות Meta — התאמה
+- `webinar_launch_confirm` — 0 משתנים (טקסט קבוע). הקוד שולח 0. ✅
+- `webinar_launch_reminder` — אם קישור הזום הוא `{{1}}`, מלא אותו בטופס התפוצה;
+  אם קבוע בטקסט, השאר ריק. מספר המשתנים חייב להתאים (אחרת #132000).
 
----
-
-## 4. שליחת תזכורת ביום הוובינר
-1. `/admin` → "הודעות תפוצה" → **תפוצה חדשה**.
-2. סגמנט: קמפיין `launch_webinar_2026` (אפשר להוסיף מקור/מסלול). ה-preview החי
-   מראה כמה נמענים זמינים (ללא DNC/מוסרים).
-3. תבנית Meta: `webinar_launch_reminder` (+ קישור זום אם התבנית כוללת `{{1}}`).
-4. תזמן לעכשיו או לתאריך. `/admin/broadcasts` מציג נשלח→נמסר→נקרא.
-
----
-
-## 5. אימות אחרי פריסה
-1. **קליטה:** הרשמת בדיקה →
-   `select source, source_campaign from leads where created_at > now()-interval '10 min';`
-   (מצופה `webinar` / `launch_webinar_2026`).
-2. **אישור:**
-   `select rule_code, status from automation_runs where rule_code='campaign_webinar_launch_confirm' order by created_at desc limit 3;`
-   ובדוק `select once_key from engine_template_sends order by created_at desc limit 3;`
-3. **אין-כפילות:** הרשמה חוזרת עם אותו טלפון לא שולחת אישור שני (ledger).
-4. **תפוצה:** צור תפוצה קטנה → תזמן → ראה `broadcast_recipients` עוברים
-   pending→queued→sent, ואת האנליטיקה מתמלאת.
-5. **עדיפות:** תפוצה גדולה בזמן שיחת בוט — הבוט (priority 0) מנקז לפני התפוצה
-   (priority 10). בדוק `select priority, count(*) from outbound_dispatch where status='pending' group by 1;`
-
----
-
-## 6. ויסות (rate) למספר וואטסאפ חדש
-מספר חדש מוגבל ל-~250–1000 נמענים/יום ע"י Meta. הוויסות בפועל הוא ב-`dispatch-outbound`
-(מנקז 10 בדקה, אחרי תעבורת הבוט). ה-UI מציג אזהרה מעל 250 נמענים. לתפוצה גדולה —
-המסירה תתפרס על פני יותר מיום; זה תקין.
-
----
-
-## 7. פתוח
-- **מייל (שלב 2):** ערוץ `email` קיים בסכמה אך מנוטרל ב-UI וב-worker.
-- **התראת #132000:** אפשר לזהות בקוד שגיאת param-mismatch ולהתריע במקום retry.
+## מה נשאר פתוח (לא חוסם)
+- לידי וובינר יופיעו גם בתור "מענה ראשוני" — זה מכוון (ליד חם לטיפול, "אף ליד לא נופל").
+- הנוסח ב-CRM (תצוגה מקדימה) עשוי להיות שונה מטקסט תבנית Meta — שלח נוסח מדויק ליישור.

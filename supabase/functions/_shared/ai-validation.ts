@@ -70,10 +70,18 @@ export function validateAiDecision(input: ValidationInput): ValidationResult {
   // Score delta clamp.
   out.scoreDelta = Number.isFinite(out.scoreDelta) ? Math.max(-25, Math.min(25, Math.trunc(out.scoreDelta))) : 0;
 
-  // Queue type validity.
+  // Queue type validity. A model that emits a handoff-like queue value that
+  // isn't in the canonical set (e.g. "human_handoff_general_inquiry") still
+  // clearly wants a handoff — coerce it to human_handoff instead of dropping
+  // the escalation. Only genuinely unrecognised types are nulled.
   if (out.createQueueType && !ALLOWED_QUEUES.has(out.createQueueType)) {
-    flags.push('queue_invalid');
-    out.createQueueType = null;
+    if (/handoff|human|mia|escalat/i.test(out.createQueueType)) {
+      out.createQueueType = 'human_handoff';
+      flags.push('queue_normalized');
+    } else {
+      flags.push('queue_invalid');
+      out.createQueueType = null;
+    }
   }
 
   // Send mode validity.
@@ -124,11 +132,23 @@ export function validateAiDecision(input: ValidationInput): ValidationResult {
     flags.push('no_send_no_text');
   }
 
+  // Captured lead data — trim + cap, null when empty (benign, never blocks).
+  out.extractedName = cleanShort(out.extractedName, 100);
+  out.estimatedEquity = cleanShort(out.estimatedEquity, 120);
+  out.interestSummary = cleanShort(out.interestSummary, 400);
+
   // Track the playbook used for auditability.
   out.policyFlags = Array.from(new Set([...(out.policyFlags || []), ...flags]));
   out.playbookName = input.playbook.name;
 
   return { output: out, flags };
+}
+
+function cleanShort(v: string | null | undefined, maxChars: number): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  if (!t) return null;
+  return t.length > maxChars ? t.slice(0, maxChars) : t;
 }
 
 function sanitizeReply(reply: string | null, maxChars: number): string | null {

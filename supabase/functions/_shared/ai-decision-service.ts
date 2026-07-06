@@ -36,6 +36,13 @@ export async function runAiDecision(
     ? (Date.now() - Date.parse(context.lead.lastInboundAt)) / (1000 * 60 * 60)
     : null;
 
+  // Whether the bot already greeted/replied in this conversation. Used to
+  // break the "stuck in first_contact" loop when lead_status hasn't advanced
+  // yet (e.g. the status transition from a prior turn hasn't committed).
+  const hasPriorBotMessage = context.recentMessages.some(
+    (m) => m.senderType === 'ai' || m.senderType === 'system',
+  );
+
   const playbook = selectPlaybook({
     inboundText: lastInbound,
     leadStatus: context.lead.status,
@@ -45,6 +52,7 @@ export async function runAiDecision(
     freeAdviceCount: context.freeAdviceCount,
     inferredIntent: context.intentContext?.intent,
     intentConfidence: context.intentContext?.confidence,
+    hasPriorBotMessage,
   });
 
   // A/B variant: weighted random pick from active rows for this playbook.
@@ -134,7 +142,11 @@ export async function runAiDecision(
 
     const validated = validateAiDecision({ output: merged, ...validateInput });
     recordSuccess(provider);
-    const status = validated.flags.length ? 'validation_blocked' : `${provider}_success`;
+    // Benign normalisations (e.g. coercing a handoff-like queue type to the
+    // canonical value) should not be reported as a blocked decision — that
+    // mislabels a successful turn as a failure in the operator dashboards.
+    const blockingFlags = validated.flags.filter((f) => f !== 'queue_normalized');
+    const status = blockingFlags.length ? 'validation_blocked' : `${provider}_success`;
     await logDecision(supabase, context, validated.output, status, parsed, correlationId, promptVersion);
     return { output: validated.output, executionStatus: status, rawOutput: parsed, promptVersion };
   } catch (err) {

@@ -4,11 +4,13 @@
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '../_shared/whatsapp-provider.ts';
+import { sendInstagramText } from '../_shared/instagram-provider.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
 import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared/lead-service.ts';
 import { canTransition } from '../_shared/state-machine.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { fallbackTemplateParams, isTemplateConfigError } from '../_shared/provider-errors.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 
@@ -43,19 +45,61 @@ Deno.serve(async (req) => {
   const config = await getRuntimeConfig(supabase);
 
   const { data: lead, error: leadErr } = await supabase.from('leads')
-    .select('id, phone, last_inbound_at, do_not_contact, removed_by_request, ownership_mode, lead_status')
+    .select('id, phone, ig_user_id, last_inbound_at, do_not_contact, removed_by_request, ownership_mode, lead_status')
     .eq('id', leadId)
     .single();
   if (leadErr || !lead) return jsonResponse(req, { error: leadErr?.message ?? 'Lead not found' }, 404);
   if (lead.do_not_contact || lead.removed_by_request) return jsonResponse(req, { error: 'Lead suppressed' }, 409);
-  if (!lead.phone) return jsonResponse(req, { error: 'Lead has no phone number' }, 409);
+
+  // Tier 8.A — replies follow the conversation's channel.
+  const { data: conv } = await supabase.from('conversations')
+    .select('channel').eq('id', conversationId).maybeSingle();
+  const channel: string = conv?.channel ?? 'whatsapp';
+  if (channel === 'instagram') {
+    if (!lead.ig_user_id) return jsonResponse(req, { error: 'Lead has no Instagram identity' }, 409);
+  } else if (!lead.phone) {
+    return jsonResponse(req, { error: 'Lead has no phone number' }, 409);
+  }
 
   const mode = resolveSendMode('freeform', lead.last_inbound_at, config.whatsappSession.freeformWindowHours);
   let result;
   let pendingReplyId: string | null = null;
   try {
     if (mode === 'freeform') {
-      result = await sendWhatsAppText(lead.phone as string, text);
+      result = channel === 'instagram'
+        ? await sendInstagramText(lead.ig_user_id as string, text)
+        : await sendWhatsAppText(lead.phone as string, text);
+    } else if (channel === 'instagram') {
+      // Instagram has no template product — outside the 24h window the
+      // reply can only wait for the customer's next message. Queue it;
+      // instagram-webhook flushes the queue on the next inbound.
+      const { data: pending, error: pendingErr } = await supabase.from('pending_manual_replies').insert({
+        lead_id: leadId,
+        conversation_id: conversationId,
+        text,
+        sender_user_id: staff.userId,
+        sender_type: staff.role === 'sales_rep' ? 'sales_rep' : 'mia',
+        sender_name: staff.fullName || staff.email,
+        status: 'queued',
+        metadata: { correlationId, channel },
+      }).select('id').single();
+      if (pendingErr) throw pendingErr;
+      pendingReplyId = pending?.id as string | null;
+
+      await logLeadEvent(supabase, leadId, 'manual_reply_queued_after_24h', staff.role, {
+        correlation_id: correlationId,
+        pending_reply_id: pendingReplyId,
+        channel: 'instagram',
+        length: text.length,
+      }, conversationId, staff.userId);
+
+      return jsonResponse(req, {
+        ok: true,
+        mode: 'queued_no_template',
+        queued: true,
+        pendingReplyId,
+        warning: 'חלון ה־24 שעות באינסטגרם נסגר — ההודעה תישלח אוטומטית ברגע שהלקוח יכתוב שוב.',
+      });
     } else {
       const { data: pending, error: pendingErr } = await supabase.from('pending_manual_replies').insert({
         lead_id: leadId,
@@ -71,9 +115,14 @@ Deno.serve(async (req) => {
       if (pendingErr) throw pendingErr;
       pendingReplyId = pending?.id as string | null;
 
-      result = await sendWhatsAppTemplate(lead.phone as string, config.whatsappSession.fallbackTemplateName, [
-        { name: 'name', value: lead.phone as string },
-      ]);
+      // Canonical single-param wrap — the approved template's {{1}} body
+      // variable carries the reply text. Sending anything else (this used
+      // to send the lead's phone under name:'name') risks #132000.
+      result = await sendWhatsAppTemplate(
+        lead.phone as string,
+        config.whatsappSession.fallbackTemplateName,
+        fallbackTemplateParams(text.slice(0, 600)),
+      );
     }
   } catch (err) {
     result = { ok: false, error: String(err) };
@@ -177,19 +226,21 @@ Deno.serve(async (req) => {
 });
 
 function formatManualReplyFailure(error: string, mode: string, templateName: string) {
-  const templateMissing =
-    mode === 'template' &&
-    (error.includes('132001') || error.toLowerCase().includes('template name does not exist'));
+  // #132001 (template missing) and #132000 (approved variable count
+  // doesn't match what we send) are both configuration problems in Meta —
+  // retrying won't help. Queue the reply for the next inbound instead of
+  // hard-failing the operator.
+  const templateBroken = mode === 'template' && isTemplateConfigError(error);
 
-  if (templateMissing) {
+  if (templateBroken) {
     return {
       status: 409,
       code: 'WHATSAPP_TEMPLATE_MISSING',
-      queueReason: 'Manual reply failed; WhatsApp fallback template is missing',
+      queueReason: 'Manual reply failed; WhatsApp fallback template is missing or misconfigured',
       userMessage:
         `אי אפשר לשלוח הודעה חופשית כי חלון ה־24 שעות בוואטסאפ נסגר, ` +
-        `והתבנית המאושרת "${templateName}" לא קיימת ב־Meta בעברית. ` +
-        `צריך שהלקוח ישלח הודעה חדשה או להגדיר/לאשר תבנית WhatsApp מתאימה.`,
+        `והתבנית המאושרת "${templateName}" חסרה או לא תואמת ב־Meta (מספר משתנים שגוי). ` +
+        `ההודעה נשמרה ותישלח כשהלקוח יכתוב שוב; לתיקון קבוע יש לעדכן את התבנית ב־Meta.`,
     };
   }
 

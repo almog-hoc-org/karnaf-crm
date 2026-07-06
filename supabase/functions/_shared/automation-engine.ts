@@ -111,6 +111,7 @@ export async function dispatchAction(action: Record<string, unknown>, ctx: Actio
       case 'set_field': return await actionSetField(action, ctx);
       case 'journey_start': return await actionJourneyStart(action, ctx);
       case 'assign_partner': return await actionAssignPartner(action, ctx);
+      case 'add_to_email_list': return await actionAddToEmailList(action, ctx);
       default:
         return { type, status: 'skipped', detail: `unknown action type: ${type}` };
     }
@@ -142,53 +143,13 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
   if (!key) return { type: 'send_template', status: 'skipped', detail: 'missing key' };
   if (!ctx.contactId) return { type: 'send_template', status: 'skipped', detail: 'no contactId' };
 
-  // A named Meta-approved template to send by name (cold audience, outside
-  // the 24h window). When present, `message_templates.body` is preview-only
-  // — the customer receives the Meta template text, and the params come
-  // from meta_template, not from rendering body. See §3.2 of the broadcast
-  // handoff. Shape: { name, lang?, params?: [{name,value}] }.
-  const metaTemplate = (action.meta_template as Record<string, unknown> | undefined) ?? null;
-
-  // once:true — fire at most once per (lead, key). Guards the webinar
-  // confirmation from double-sending if lead.created re-fires (re-intake,
-  // dedup miss). The unique(lead_id, once_key) ledger is the arbiter.
-  const once = action.once === true;
-  const onceKey = (action.once_key as string | undefined) ?? `${channel}:${key}`;
-  if (once) {
-    const { error: claimErr } = await ctx.supabase
-      .from('engine_template_sends')
-      .insert({ lead_id: ctx.contactId, once_key: onceKey, correlation_id: ctx.correlationId ?? null });
-    if (claimErr) {
-      // 23505 = unique_violation → already sent to this lead. Any other
-      // error means we couldn't guarantee once-ness; fail loudly rather
-      // than risk a duplicate customer message.
-      if ((claimErr as { code?: string }).code === '23505') {
-        return { type: 'send_template', status: 'skipped', detail: `once:already-sent ${onceKey}` };
-      }
-      return { type: 'send_template', status: 'failed', detail: `once-claim failed: ${claimErr.message}` };
-    }
-  }
-  // Undo the once-claim when we bail before enqueuing, so a genuine retry
-  // (transient DB error below) isn't permanently blocked.
-  const releaseOnce = async () => {
-    if (once && ctx.contactId) {
-      await ctx.supabase.from('engine_template_sends')
-        .delete().eq('lead_id', ctx.contactId).eq('once_key', onceKey);
-    }
-  };
-
   const { data: tpl, error } = await ctx.supabase
     .from('message_templates')
     .select('id, body, status, key')
     .eq('key', key).eq('channel', channel).maybeSingle();
-  if (error) { await releaseOnce(); return { type: 'send_template', status: 'failed', detail: error.message }; }
-  // A named Meta template carries its own approved content, so a missing
-  // local preview row is not fatal — send anyway. Without meta_template we
-  // still require an active local template (the body IS the message).
-  if (!metaTemplate) {
-    if (!tpl) { await releaseOnce(); return { type: 'send_template', status: 'skipped', detail: `template ${channel}:${key} not found` }; }
-    if (tpl.status !== 'active') { await releaseOnce(); return { type: 'send_template', status: 'skipped', detail: `template ${key} is ${tpl.status}` }; }
-  }
+  if (error) return { type: 'send_template', status: 'failed', detail: error.message };
+  if (!tpl) return { type: 'send_template', status: 'skipped', detail: `template ${channel}:${key} not found` };
+  if (tpl.status !== 'active') return { type: 'send_template', status: 'skipped', detail: `template ${key} is ${tpl.status}` };
 
   // Tier 7.A.2 — lazy partner fetch. If the template body references
   // {{partner_name}} but ctx.context doesn't have it yet (e.g. admin
@@ -196,7 +157,7 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
   // try to resolve it from the deal's partner_id before refusing the
   // send. Cheap one-time query per rendering; ignored on failure
   // (we fall through to the "missing var" branch below as before).
-  if (tpl?.body?.includes('{{partner_name}}') && !ctx.context.partner_name) {
+  if (tpl.body.includes('{{partner_name}}') && !ctx.context.partner_name) {
     const dealCtx = ctx.context.deal as Record<string, unknown> | undefined;
     const partnerId = dealCtx?.partner_id as string | undefined;
     if (partnerId) {
@@ -212,20 +173,42 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
     }
   }
 
-  const { text, missing } = tpl?.body ? renderBody(tpl.body, ctx.context) : { text: '', missing: [] };
-  if (missing.length > 0 && !metaTemplate) {
+  const { text, missing } = renderBody(tpl.body, ctx.context);
+  if (missing.length > 0) {
     // Engine refuses half-filled templates. Better to log + skip than
-    // send "{{first_name}}" to a customer. With a Meta template the
-    // approved copy is fixed, so unresolved preview vars don't block.
-    await releaseOnce();
+    // send "{{first_name}}" to a customer.
     return { type: 'send_template', status: 'skipped', detail: `missing vars: ${missing.join(', ')}` };
+  }
+
+  // Tier 8.E2 — `once: true` caps the send at one per (lead, template,
+  // channel), ever. The unique-insert is the gate: a conflict means a
+  // prior fire already claimed this send (re-published presale project,
+  // re-fired rule), so skip before enqueueing anything.
+  if (action.once === true) {
+    const { data: claim, error: claimErr } = await ctx.supabase
+      .from('engine_template_sends')
+      .upsert(
+        { lead_id: ctx.contactId, template_key: key, channel },
+        { onConflict: 'lead_id,template_key,channel', ignoreDuplicates: true },
+      )
+      .select('id')
+      .maybeSingle();
+    if (claimErr) return { type: 'send_template', status: 'failed', detail: claimErr.message };
+    if (!claim) return { type: 'send_template', status: 'skipped', detail: 'already sent (once gate)' };
   }
 
   // Enqueue via outbound_dispatch the same way manual replies do.
   // outbound_dispatch holds the channel + text inside payload jsonb
-  // and uses lead_id as the FK — matches existing 036 schema. When
-  // meta_template is set, dispatch-outbound sends the approved template
-  // by name (right path for cold audiences); otherwise it sends `text`.
+  // and uses lead_id as the FK — matches existing 036 schema.
+  // Cold-audience sends (e.g. a webinar registrant who never messaged
+  // the bot) must go out as a pre-approved Meta template BY NAME, not
+  // wrapped in the fallback template. A rule opts into that by carrying
+  // `meta_template: { name, lang?, params? }`; dispatch-outbound sends it
+  // directly. `text` is still stored for the message record + preview.
+  const metaTemplate = (action.meta_template as
+    | { name?: string; lang?: string; params?: string[] }
+    | undefined) ?? undefined;
+
   const { data: enq, error: enqErr } = await ctx.supabase.from('outbound_dispatch').insert({
     lead_id: ctx.contactId,
     payload: {
@@ -234,18 +217,17 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
       text,
       template_key: key,
       source: 'automation_engine',
-      ...(metaTemplate ? { meta_template: metaTemplate } : {}),
+      ...(metaTemplate?.name
+        ? { meta_template: { name: metaTemplate.name, lang: metaTemplate.lang ?? 'he', params: metaTemplate.params ?? [] } }
+        : {}),
     },
     correlation_id: ctx.correlationId ?? null,
   }).select('id').maybeSingle();
-  if (enqErr) { await releaseOnce(); return { type: 'send_template', status: 'failed', detail: enqErr.message }; }
+  if (enqErr) return { type: 'send_template', status: 'failed', detail: enqErr.message };
 
   return {
     type: 'send_template', status: 'ok',
-    detail: {
-      dispatch_id: enq?.id, template_key: key, channel, chars: text.length,
-      ...(metaTemplate ? { meta_template: metaTemplate.name } : {}),
-    },
+    detail: { dispatch_id: enq?.id, template_key: key, channel, chars: text.length },
   };
 }
 
@@ -395,6 +377,70 @@ async function actionAssignPartner(action: Record<string, unknown>, ctx: ActionC
   };
 }
 
+// Tier 8.C — hand the lead to a Rav Messer mailing list; Rav Messer's
+// automations run the email sequence from there. The CRM never sends
+// marketing email directly.
+async function actionAddToEmailList(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const listId = action.list_id as string | undefined;
+  const listName = (action.list_name as string | undefined) ?? null;
+  if (!listId || listId.startsWith('REPLACE_WITH')) {
+    return { type: 'add_to_email_list', status: 'skipped', detail: 'missing list_id' };
+  }
+  if (!ctx.contactId) return { type: 'add_to_email_list', status: 'skipped', detail: 'no contactId' };
+
+  const { isRavmesserConfigured, addSubscriberToList } = await import('./ravmesser.ts');
+  if (!isRavmesserConfigured()) {
+    return { type: 'add_to_email_list', status: 'skipped', detail: 'ravmesser not configured' };
+  }
+
+  const { data: lead, error: leadErr } = await ctx.supabase
+    .from('leads')
+    .select('id, email, full_name, phone, do_not_contact, removed_by_request, consent_email')
+    .eq('id', ctx.contactId)
+    .maybeSingle();
+  if (leadErr) return { type: 'add_to_email_list', status: 'failed', detail: leadErr.message };
+  if (!lead?.email) return { type: 'add_to_email_list', status: 'skipped', detail: 'lead has no email' };
+  if (lead.do_not_contact || lead.removed_by_request) {
+    return { type: 'add_to_email_list', status: 'skipped', detail: 'do_not_contact' };
+  }
+  // חוק הספאם — explicit refusal blocks; null (never asked) passes,
+  // matching how consent is captured at intake today.
+  if (lead.consent_email === false) {
+    return { type: 'add_to_email_list', status: 'skipped', detail: 'consent_email refused' };
+  }
+
+  // Per-(lead, list) dedup via the event log; the API's EMAILS_EXISTING
+  // is the backstop for races.
+  const { data: prior } = await ctx.supabase
+    .from('lead_events')
+    .select('id')
+    .eq('lead_id', ctx.contactId)
+    .eq('event_type', 'email_list_added')
+    .eq('event_payload->>list_id', listId)
+    .limit(1)
+    .maybeSingle();
+  if (prior) return { type: 'add_to_email_list', status: 'skipped', detail: 'already added to list' };
+
+  const result = await addSubscriberToList(listId, {
+    email: lead.email as string,
+    name: lead.full_name as string | null,
+    phone: lead.phone as string | null,
+  });
+  if (!result.ok) return { type: 'add_to_email_list', status: 'failed', detail: result.error ?? 'unknown' };
+
+  await ctx.supabase.from('lead_events').insert({
+    lead_id: ctx.contactId,
+    event_type: 'email_list_added',
+    actor_type: 'system',
+    event_payload: { list_id: listId, list_name: listName, existing: result.existing },
+  });
+
+  return {
+    type: 'add_to_email_list', status: 'ok',
+    detail: { list_id: listId, list_name: listName, created: result.created, existing: result.existing },
+  };
+}
+
 // journey_start delegates to the journey-runner — kept here as a thin
 // wrapper so engine remains the single dispatch entry point and the
 // runner stays the single owner of journey state.
@@ -404,7 +450,7 @@ async function actionJourneyStart(action: Record<string, unknown>, ctx: ActionCo
   if (!ctx.contactId) return { type: 'journey_start', status: 'skipped', detail: 'no contactId' };
 
   // Late-import to avoid the runner ↔ engine cycle at module load.
-  const { startJourney } = await import('./journey-runner.ts');
+  const { startJourney } = await import('./journey-start.ts');
   const r = await startJourney(ctx.supabase, {
     code, contactId: ctx.contactId, context: ctx.context, correlationId: ctx.correlationId,
   });

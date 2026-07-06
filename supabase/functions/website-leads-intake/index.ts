@@ -25,6 +25,9 @@ const WEBSITE_SOURCE_TO_CRM: Record<string, string> = {
   'services-page': 'landing_page',
   'course-page': 'lead_magnet',
   'course-waitlist': 'lead_magnet',
+  // Presale project landing pages → presale track.
+  'presale-pt': 'presale_form',
+  'presale-pt-sinai': 'presale_form',
 };
 
 function sanitize(val: unknown, maxLen: number): string {
@@ -101,6 +104,9 @@ Deno.serve(async (req) => {
 
     const updates: Record<string, unknown> = { source_detail: sourceDetail, source_campaign: 'karnaf_website' };
     if (message) updates.pain_point_summary = message;
+    // Presale landing pages carry a known track so the AI bot converses about
+    // the presale project (not the flagship program). resolveTrackContext reads primary_track.
+    if (source === 'presale_form') updates.primary_track = 'presale';
     const { error: updateErr } = await supabase.from('leads').update(updates).eq('id', lead.id);
     if (updateErr) log.warn('website_lead_update_failed', { fn: 'website-leads-intake', correlationId, err: updateErr.message });
 

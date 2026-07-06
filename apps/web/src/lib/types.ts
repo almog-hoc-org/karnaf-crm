@@ -35,6 +35,7 @@ export interface LeadRow {
   phone: string | null;
   email: string | null;
   source: string;
+  source_campaign?: string | null;
   lead_status: LeadStatus;
   lead_heat: LeadHeat;
   ownership_mode: OwnershipMode;
@@ -54,10 +55,11 @@ export interface LeadRow {
   primary_track?: PrdTrack | null;
   active_tracks?: PrdTrack[] | null;
   interest_topic?: string | null;
-  source_campaign?: string | null;
   tags?: string[] | null;
   consent_whatsapp?: boolean | null;
   consent_email?: boolean | null;
+  // Flattened from the program_members join in leads-list.
+  is_program_member?: boolean;
 }
 
 // Tier 0.E — Contact-centric type aliases. The v4 spec calls the
@@ -341,24 +343,23 @@ export interface MessageTemplateRow {
   updated_at: string;
 }
 
-// Campaign broadcasts — send an approved template to a filtered segment.
-export type BroadcastChannel = 'whatsapp' | 'email';
-export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'canceled' | 'failed';
+// === Broadcasts (הודעות תפוצה) ============================================
 
-// Selector over durable lead columns; each field is a value or an array
-// (matched with IN). The resolver always excludes DNC / removed leads.
+export type BroadcastChannel = 'whatsapp' | 'email';
+export type BroadcastStatus =
+  | 'draft' | 'scheduled' | 'sending' | 'sent' | 'cancelled' | 'failed';
+
 export interface BroadcastSegment {
-  source?: string | string[];
-  source_campaign?: string | string[];
-  primary_track?: string | string[];
-  product_interest?: string | string[];
+  source?: string | null;
+  source_campaign?: string | null;
+  primary_track?: string | null;
+  product_interest?: string | null;
 }
 
-// Approved Meta template descriptor. body is preview-only.
 export interface BroadcastMetaTemplate {
   name: string;
   lang?: string;
-  params?: Array<{ name: string; value: string }>;
+  params?: string[];
 }
 
 export interface BroadcastRow {
@@ -371,22 +372,22 @@ export interface BroadcastRow {
   segment: BroadcastSegment;
   scheduled_at: string | null;
   status: BroadcastStatus;
-  recipient_count: number;
+  recipients_count: number;
   sent_count: number;
-  skipped_count: number;
   failed_count: number;
+  skipped_count: number;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
-  sent_at: string | null;
 }
 
 export interface BroadcastStats {
   total: number;
   pending: number;
-  queued: number;
+  enqueued: number;
   sent: number;
-  skipped: number;
   failed: number;
+  skipped: number;
   delivered: number;
   read: number;
 }
@@ -676,6 +677,7 @@ export interface AttentionRow {
   reason: string | null;
   due_at: string | null;
   created_at: string | null;
+  is_program_member?: boolean;
 }
 
 export interface ApiOk {

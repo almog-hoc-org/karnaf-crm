@@ -12,6 +12,8 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
+import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { runReengagement } from '../_shared/reengagement.ts';
 
 type SupabaseClientLike = ReturnType<typeof getServiceSupabase>;
 
@@ -82,11 +84,17 @@ Deno.serve(async (req) => {
   const compact = await runGuardedJob(supabase, 'compact_integration_logs',
     () => supabase.rpc('compact_integration_logs', { p_keep_days: 14 }), correlationId);
 
-  const summary = { decay, purge, compact };
+  // Re-engagement nudges (check-in + reactivation). No-op until an approved Meta
+  // template is configured (reengagement.enabled). Opt-outs always excluded.
+  const config = await getRuntimeConfig(supabase);
+  const reengage = await runGuardedJob(supabase, 'reengagement_nudges',
+    () => runReengagement(supabase, config.reengagement, correlationId), correlationId);
+
+  const summary = { decay, purge, compact, reengage };
   log.info('nightly_jobs_run', { fn: 'nightly-jobs', correlationId, summary });
 
   // Surface a non-2xx if any guarded job errored after claiming. Skipped
   // (already-ran-today) is NOT an error — that's the idempotency working.
-  const anyErrored = [decay, purge, compact].some((r) => r.error);
+  const anyErrored = [decay, purge, compact, reengage].some((r) => r.error);
   return jsonResponse(req, { ok: !anyErrored, correlationId, summary }, anyErrored ? 500 : 200);
 });

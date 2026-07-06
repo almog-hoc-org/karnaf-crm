@@ -1,32 +1,31 @@
-// Broadcast materialisation worker. Poked every minute by pg_cron
-// (migration 085). For each due broadcast it:
-//   1. flips status draft/scheduled → sending,
-//   2. materialises broadcast_recipients from the segment (idempotent via
-//      the unique(broadcast_id, lead_id) constraint),
-//   3. enqueues a bounded batch of not-yet-queued recipients into
-//      outbound_dispatch at priority 10 (so the bot always drains first),
-//   4. when nothing is left to queue, flips status → sent and writes the
-//      final counts.
+// Worker that materialises + paces scheduled broadcasts. Triggered every
+// minute by pg_cron (see migration 085). For each due broadcast it:
+//   1. flips scheduled → sending and materialises broadcast_recipients
+//      (idempotent — unique(broadcast_id, lead_id)),
+//   2. enqueues a capped batch of pending recipients into the shared
+//      outbound_dispatch queue at LOW priority (10) so real-time bot
+//      traffic (priority 0) always drains first — the bot never blocks,
+//   3. finalises to 'sent' once every recipient has been enqueued.
 //
-// The actual WhatsApp send + per-recipient outcome happens in
-// dispatch-outbound (the shared queue worker). This worker never sends.
+// The actual WhatsApp send + DNC guard + Meta-template-by-name delivery
+// happens in dispatch-outbound (the meta_template path). This worker only
+// fills the queue; it never calls a provider directly.
 //
 // Authenticated with a shared secret — same pattern as dispatch-outbound.
 
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
-import { env } from '../_shared/env.ts';
-import { correlationFromRequest, log, newCorrelationId } from '../_shared/logger.ts';
-import { resolveSegmentLeadIds, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
+import { correlationFromRequest, log } from '../_shared/logger.ts';
+import { fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
 
 // How many broadcasts to advance per tick, and how many recipients to
-// enqueue per broadcast per tick. Downstream, dispatch-outbound drains
-// only BATCH_SIZE (10) per minute behind live bot traffic, so this cap
-// just bounds queue growth — the real send throttle is downstream.
+// enqueue per broadcast per tick. The per-tick recipient cap paces the
+// fill so a big launch doesn't dump thousands of rows at once; combined
+// with LOW priority it keeps the bot responsive.
 const MAX_BROADCASTS_PER_TICK = 3;
-const ENQUEUE_CAP_PER_TICK = 500;
-const MATERIALISE_CHUNK = 1_000;
+const ENQUEUE_CAP_PER_TICK = 100;
+const SEGMENT_FETCH_LIMIT = 5000;
 const BROADCAST_PRIORITY = 10;
 
 Deno.serve(async (req) => {
@@ -35,7 +34,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
 
   const correlationId = correlationFromRequest(req);
-  const secret = env.broadcastDispatchSecret();
+  const secret = Deno.env.get('BROADCAST_DISPATCH_SECRET') ?? '';
   if (!secret) {
     log.warn('broadcast_dispatch_secret_missing', { fn: 'broadcast-dispatch', correlationId });
     return jsonResponse(req, { error: 'Worker secret not configured' }, 503);
@@ -44,13 +43,13 @@ Deno.serve(async (req) => {
 
   const supabase = getServiceSupabase();
 
-  // Due = scheduled/sending, with scheduled_at in the past (or unset).
-  const nowIso = new Date().toISOString();
+  // Due broadcasts: scheduled and past their time, plus any already
+  // 'sending' (multi-tick fills). Oldest scheduled first.
   const { data: due, error: dueErr } = await supabase
     .from('broadcasts')
-    .select('id, name, channel, template_key, meta_template, body_snapshot, segment, status, scheduled_at')
+    .select('*')
     .in('status', ['scheduled', 'sending'])
-    .or(`scheduled_at.is.null,scheduled_at.lte.${nowIso}`)
+    .lte('scheduled_at', new Date().toISOString())
     .order('scheduled_at', { ascending: true })
     .limit(MAX_BROADCASTS_PER_TICK);
   if (dueErr) {
@@ -58,141 +57,104 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { error: dueErr.message }, 500);
   }
 
-  const results: Array<Record<string, unknown>> = [];
-  for (const row of due ?? []) {
-    const b = row as unknown as BroadcastRow;
+  const broadcasts = due ?? [];
+  let totalEnqueued = 0;
+
+  for (const b of broadcasts) {
     try {
-      results.push(await advanceBroadcast(supabase, b, correlationId));
+      // 1. Materialise recipients once, on the transition into 'sending'.
+      if (b.status === 'scheduled') {
+        const leads = await fetchSegmentLeads(supabase, (b.segment ?? {}) as BroadcastSegment, SEGMENT_FETCH_LIMIT);
+        if (leads.length === SEGMENT_FETCH_LIMIT) {
+          log.warn('broadcast_segment_capped', {
+            fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, cap: SEGMENT_FETCH_LIMIT,
+          });
+        }
+        if (leads.length > 0) {
+          await supabase.from('broadcast_recipients').upsert(
+            leads.map((l) => ({ broadcast_id: b.id, lead_id: l.id, status: 'pending' })),
+            { onConflict: 'broadcast_id,lead_id', ignoreDuplicates: true },
+          );
+        }
+        await supabase.from('broadcasts')
+          .update({ status: 'sending', recipients_count: leads.length })
+          .eq('id', b.id);
+      }
+
+      // 2. Enqueue a capped batch of pending recipients.
+      const { data: pending } = await supabase
+        .from('broadcast_recipients')
+        .select('id, lead_id')
+        .eq('broadcast_id', b.id)
+        .eq('status', 'pending')
+        .limit(ENQUEUE_CAP_PER_TICK);
+
+      const pendingRows = pending ?? [];
+      const channel = b.channel ?? 'whatsapp';
+      for (const r of pendingRows) {
+        const { data: enq, error: enqErr } = await supabase.from('outbound_dispatch').insert({
+          lead_id: r.lead_id,
+          priority: BROADCAST_PRIORITY,
+          payload: {
+            kind: 'template',
+            channel,
+            text: b.body_snapshot ?? '',
+            template_key: b.template_key ?? null,
+            broadcast_id: b.id,
+            ...(b.meta_template?.name
+              ? { meta_template: { name: b.meta_template.name, lang: b.meta_template.lang ?? 'he', params: b.meta_template.params ?? [] } }
+              : {}),
+          },
+          correlation_id: correlationId,
+        }).select('id').maybeSingle();
+        if (enqErr) {
+          log.warn('broadcast_enqueue_failed', {
+            fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, leadId: r.lead_id, err: enqErr.message,
+          });
+          continue;
+        }
+        await supabase.from('broadcast_recipients')
+          .update({ status: 'enqueued', dispatch_id: enq?.id ?? null })
+          .eq('id', r.id);
+        totalEnqueued += 1;
+      }
+
+      // 3. Finalise when nothing is left to enqueue.
+      const { count: remaining } = await supabase
+        .from('broadcast_recipients')
+        .select('id', { count: 'exact', head: true })
+        .eq('broadcast_id', b.id)
+        .eq('status', 'pending');
+      if ((remaining ?? 0) === 0) {
+        const counts = await finalCounts(supabase, b.id);
+        await supabase.from('broadcasts').update({
+          status: 'sent',
+          sent_count: counts.sent,
+          failed_count: counts.failed,
+          skipped_count: counts.skipped,
+        }).eq('id', b.id);
+        log.info('broadcast_finalised', { fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, ...counts });
+      }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error('broadcast_advance_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, err: msg });
-      results.push({ id: b.id, error: msg });
+      const message = err instanceof Error ? err.message : String(err);
+      log.error('broadcast_advance_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, err: message });
+      await supabase.from('broadcasts').update({ status: 'failed' }).eq('id', b.id);
     }
   }
 
-  return jsonResponse(req, { ok: true, advanced: results.length, results });
+  log.info('broadcast_dispatch_done', {
+    fn: 'broadcast-dispatch', correlationId, broadcasts: broadcasts.length, enqueued: totalEnqueued,
+  });
+  return jsonResponse(req, { ok: true, broadcasts: broadcasts.length, enqueued: totalEnqueued });
 });
 
-interface BroadcastRow {
-  id: string;
-  name: string;
-  channel: 'whatsapp' | 'email';
-  template_key: string | null;
-  meta_template: Record<string, unknown> | null;
-  body_snapshot: string | null;
-  segment: BroadcastSegment | null;
-  status: string;
-  scheduled_at: string | null;
-}
-
-async function advanceBroadcast(
-  supabase: ReturnType<typeof getServiceSupabase>,
-  b: BroadcastRow,
-  correlationId: string,
-): Promise<Record<string, unknown>> {
-  // Phase 1 is WhatsApp-only. An email broadcast that somehow got
-  // scheduled is parked as failed rather than silently swallowed.
-  if (b.channel !== 'whatsapp') {
-    await supabase.from('broadcasts').update({ status: 'failed' }).eq('id', b.id);
-    return { id: b.id, skipped: `unsupported_channel:${b.channel}` };
-  }
-
-  if (b.status === 'scheduled') {
-    await supabase.from('broadcasts').update({ status: 'sending' }).eq('id', b.id);
-  }
-
-  // 1. Materialise recipients (idempotent). Only insert leads not already
-  //    present for this broadcast; the unique constraint makes repeat
-  //    ticks safe even without the pre-filter.
-  const leadIds = await resolveSegmentLeadIds(supabase, b.segment ?? {}, true);
-  let materialised = 0;
-  for (let i = 0; i < leadIds.length; i += MATERIALISE_CHUNK) {
-    const chunk = leadIds.slice(i, i + MATERIALISE_CHUNK).map((leadId) => ({
-      broadcast_id: b.id,
-      lead_id: leadId,
-      status: 'pending',
-    }));
-    const { error } = await supabase
-      .from('broadcast_recipients')
-      .upsert(chunk, { onConflict: 'broadcast_id,lead_id', ignoreDuplicates: true });
-    if (error) throw new Error(`materialise: ${error.message}`);
-    materialised += chunk.length;
-  }
-
-  // 2. Enqueue a bounded batch of pending recipients.
-  const { data: pending, error: pendErr } = await supabase
-    .from('broadcast_recipients')
-    .select('id, lead_id')
-    .eq('broadcast_id', b.id)
-    .eq('status', 'pending')
-    .limit(ENQUEUE_CAP_PER_TICK);
-  if (pendErr) throw new Error(`pending query: ${pendErr.message}`);
-
-  let enqueued = 0;
-  for (const r of pending ?? []) {
-    const rowCorrelationId = newCorrelationId();
-    const { data: disp, error: dispErr } = await supabase.from('outbound_dispatch').insert({
-      lead_id: r.lead_id,
-      priority: BROADCAST_PRIORITY,
-      payload: {
-        kind: 'template',
-        channel: 'whatsapp',
-        source: 'broadcast',
-        broadcast_id: b.id,
-        template_key: b.template_key,
-        text: b.body_snapshot ?? '',
-        meta_template: b.meta_template ?? undefined,
-      },
-      correlation_id: rowCorrelationId,
-    }).select('id').maybeSingle();
-    if (dispErr) {
-      log.warn('broadcast_enqueue_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, leadId: r.lead_id, err: dispErr.message });
-      continue;
-    }
-    // Flip pending → queued so the next tick doesn't re-enqueue this
-    // recipient. dispatch-outbound moves it on to sent/skipped/failed.
-    await supabase.from('broadcast_recipients')
-      .update({ status: 'queued', dispatch_id: disp?.id ?? null })
-      .eq('id', r.id);
-    enqueued += 1;
-  }
-
-  // 3. If nothing pending remains, the broadcast is fully queued → done.
-  const { count: stillPending } = await supabase
-    .from('broadcast_recipients')
-    .select('id', { count: 'exact', head: true })
-    .eq('broadcast_id', b.id)
-    .eq('status', 'pending');
-
-  const counts = await recipientCounts(supabase, b.id);
-  const patch: Record<string, unknown> = {
-    recipient_count: counts.total,
-    sent_count: counts.sent,
-    skipped_count: counts.skipped,
-    failed_count: counts.failed,
+async function finalCounts(supabase: ReturnType<typeof getServiceSupabase>, broadcastId: string) {
+  const { data } = await supabase
+    .from('broadcast_recipients').select('status').eq('broadcast_id', broadcastId);
+  const rows = (data ?? []) as Array<{ status: string }>;
+  return {
+    sent: rows.filter((r) => ['sent', 'delivered', 'read', 'enqueued'].includes(r.status)).length,
+    failed: rows.filter((r) => r.status === 'failed').length,
+    skipped: rows.filter((r) => r.status === 'skipped').length,
   };
-  if ((stillPending ?? 0) === 0) {
-    patch.status = 'sent';
-    patch.sent_at = new Date().toISOString();
-  }
-  await supabase.from('broadcasts').update(patch).eq('id', b.id);
-
-  log.info('broadcast_tick', {
-    fn: 'broadcast-dispatch', correlationId, broadcastId: b.id,
-    materialised, enqueued, stillPending: stillPending ?? 0, done: (stillPending ?? 0) === 0,
-  });
-  return { id: b.id, materialised, enqueued, still_pending: stillPending ?? 0, done: (stillPending ?? 0) === 0 };
-}
-
-async function recipientCounts(supabase: ReturnType<typeof getServiceSupabase>, id: string) {
-  const countBy = async (status: string) => {
-    const { count } = await supabase
-      .from('broadcast_recipients').select('id', { count: 'exact', head: true })
-      .eq('broadcast_id', id).eq('status', status);
-    return count ?? 0;
-  };
-  const { count: total } = await supabase
-    .from('broadcast_recipients').select('id', { count: 'exact', head: true }).eq('broadcast_id', id);
-  const [sent, skipped, failed] = await Promise.all([countBy('sent'), countBy('skipped'), countBy('failed')]);
-  return { total: total ?? 0, sent, skipped, failed };
 }

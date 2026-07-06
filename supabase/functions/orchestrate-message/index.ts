@@ -1,5 +1,6 @@
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '../_shared/whatsapp-provider.ts';
+import { sendInstagramText } from '../_shared/instagram-provider.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared/lead-service.ts';
@@ -13,6 +14,7 @@ import { classifyLeadIntake } from '../_shared/lead-classifier.ts';
 import { extractTopicsFromText, mergeTopics, type TopicEntry } from '../_shared/topics.ts';
 import { loadProductClaims } from '../_shared/claim-service.ts';
 import { releaseConversationLock, tryConversationLock } from '../_shared/conversation-lock.ts';
+import { fallbackTemplateParams, isTemplateConfigError } from '../_shared/provider-errors.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
 import { maybeRefreshSummary } from '../_shared/transcript-summary.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
@@ -65,42 +67,48 @@ Deno.serve(async (req) => {
       lead_status: lead.lead_status,
     });
 
-    // Channel-gating: the AI orchestrator currently only owns the WhatsApp
-    // channel. Other channels (email, IG DM scraped manually, etc.) get
-    // queued for Mia rather than dispatched.
+    // Channel-gating: the AI orchestrator owns WhatsApp + Instagram
+    // (Tier 8.A). Other channels (email, manual) get queued for Mia
+    // rather than dispatched.
     const { data: conversation, error: convErr } = await supabase
       .from('conversations')
       .select('channel')
       .eq('id', conversationId)
       .single();
     if (convErr) return jsonResponse(req, { error: convErr.message }, 500);
-    if (conversation?.channel && conversation.channel !== 'whatsapp') {
+    const channel: string = conversation?.channel ?? 'whatsapp';
+    if (channel !== 'whatsapp' && channel !== 'instagram') {
       await ensurePendingQueueItem(supabase, {
         leadId,
         queueType: 'human_handoff',
         priorityLevel: 2,
-        reason: `שיחה בערוץ ${conversation.channel} דורשת מענה ידני`,
-        payloadJson: { channel: conversation.channel, correlationId },
+        reason: `שיחה בערוץ ${channel} דורשת מענה ידני`,
+        payloadJson: { channel, correlationId },
       });
       log.info('orchestrate_channel_skipped', {
         fn: 'orchestrate',
         correlationId,
         leadId,
-        channel: conversation.channel,
+        channel,
       });
-      return jsonResponse(req, { ok: true, skipped: 'non_whatsapp_channel', channel: conversation.channel });
+      return jsonResponse(req, { ok: true, skipped: 'unsupported_channel', channel });
     }
 
-    if (!lead.phone) {
+    // Identity guard is channel-specific: WhatsApp needs a phone,
+    // Instagram needs an IGSID.
+    const missingIdentity = channel === 'whatsapp' ? !lead.phone : !lead.ig_user_id;
+    if (missingIdentity) {
       await ensurePendingQueueItem(supabase, {
         leadId,
         queueType: 'manual_review_required',
         priorityLevel: 2,
-        reason: 'ליד ללא מספר טלפון, נדרשת בדיקה ידנית',
-        payloadJson: { correlationId },
+        reason: channel === 'whatsapp'
+          ? 'ליד ללא מספר טלפון, נדרשת בדיקה ידנית'
+          : 'ליד אינסטגרם ללא מזהה שיחה, נדרשת בדיקה ידנית',
+        payloadJson: { correlationId, channel },
       });
-      log.info('orchestrate_no_phone', { fn: 'orchestrate', correlationId, leadId });
-      return jsonResponse(req, { ok: true, skipped: 'no_phone' });
+      log.info('orchestrate_no_identity', { fn: 'orchestrate', correlationId, leadId, channel });
+      return jsonResponse(req, { ok: true, skipped: 'no_identity' });
     }
 
     if (lead.ownership_mode !== 'ai_active') {
@@ -134,6 +142,22 @@ Deno.serve(async (req) => {
       return jsonResponse(req, { ok: true, skipped: 'non_ai_owner', ownershipMode: lead.ownership_mode });
     }
 
+    // Program members are served by the deterministic concierge in
+    // whatsapp-webhook — the LLM never speaks to a paying member. This
+    // guard covers the paths that bypass the webhook: return_to_ai's
+    // direct POST and stale outbound_dispatch retries. It also means
+    // "return to AI" on a member = return to concierge (next inbound
+    // greets again), with no extra wiring.
+    const { data: memberRow } = await supabase
+      .from('program_members')
+      .select('lead_id')
+      .eq('lead_id', leadId)
+      .maybeSingle();
+    if (memberRow) {
+      log.info('orchestrate_member_skip', { fn: 'orchestrate', correlationId, leadId });
+      return jsonResponse(req, { ok: true, skipped: 'program_member' });
+    }
+
     const { data: recentMessages, error: msgErr } = await supabase
       .from('messages')
       .select('sender_type, content_text, created_at, direction')
@@ -143,6 +167,27 @@ Deno.serve(async (req) => {
     if (msgErr) return jsonResponse(req, { error: msgErr.message }, 500);
 
     const ordered = (recentMessages ?? []).slice().reverse();
+
+    // Coalescing / anti-double-send guard. orchestrate always answers the
+    // LATEST lead message with full recent context. If the most recent message
+    // is already outbound, this lead has nothing unanswered — this dispatch is
+    // a duplicate or was superseded by a turn that already replied (e.g. two
+    // inbound messages a few seconds apart each enqueued a dispatch). The
+    // conversation lock guarantees the earlier turn's reply is committed before
+    // we get here, so rapid-fire messages collapse into a single reply instead
+    // of producing two (often contradictory) sends.
+    const latestMessage = ordered[ordered.length - 1];
+    if (latestMessage && latestMessage.direction === 'outbound') {
+      log.info('orchestrate_already_answered', {
+        fn: 'orchestrate',
+        correlationId,
+        leadId,
+        conversationId,
+        latestSender: latestMessage.sender_type,
+      });
+      return jsonResponse(req, { ok: true, skipped: 'already_answered' });
+    }
+
     const freeAdviceCount = ordered.filter(
       (m) => m.sender_type === 'lead' && (m.content_text ?? '').length > 80,
     ).length;
@@ -206,15 +251,34 @@ Deno.serve(async (req) => {
       metadata: (lead.raw_import_snapshot as Record<string, unknown> | null) ?? null,
     });
 
+    // Track stickiness: once a specific track is known it must not be lost when a
+    // later message reclassifies (e.g. "פגישות ייעוץ" → consultation → flagship).
+    const SPECIFIC_INTERESTS = new Set(['investor_mentorship', 'mentorship', 'contractor_group_purchase']);
+    const trackFromInterest = (pi: string | null | undefined): string | null =>
+      pi === 'investor_mentorship' || pi === 'mentorship'
+        ? 'investor_mentorship'
+        : pi === 'contractor_group_purchase'
+          ? 'presale'
+          : null;
+    // Don't downgrade an established specific product_interest to a generic one.
+    const effectiveProductInterest =
+      SPECIFIC_INTERESTS.has(String(lead.product_interest)) && !SPECIFIC_INTERESTS.has(leadClassification.productInterest)
+        ? (lead.product_interest as string)
+        : leadClassification.productInterest;
+    // Persist primary_track when a specific track is newly detected and none is set.
+    const persistTrack = !lead.primary_track ? trackFromInterest(effectiveProductInterest) : null;
+    const effectiveTrack = (lead.primary_track as string | null) ?? persistTrack;
+
     await updateLeadFields(supabase, leadId, {
       inquiry_type: leadClassification.inquiryType,
-      product_interest: leadClassification.productInterest,
+      product_interest: effectiveProductInterest,
       intake_segment: leadClassification.intakeSegment,
       classification_confidence: leadClassification.confidence,
       classification_summary: leadClassification.operatorSummary,
       suggested_next_action: leadClassification.suggestedNextAction,
       handoff_reason: leadClassification.handoffReason,
       classification_updated_at: new Date().toISOString(),
+      ...(persistTrack ? { primary_track: persistTrack } : {}),
     });
 
     const authorisedClaims = await loadProductClaims(supabase, config.product.code);
@@ -247,13 +311,15 @@ Deno.serve(async (req) => {
           lastPhoneCallOutcome,
           firstInboundSnippet,
           topicsTouched: Array.isArray(lead.topics_touched) ? (lead.topics_touched as TopicEntry[]) : [],
+          primaryTrack: effectiveTrack,
           inquiryType: leadClassification.inquiryType,
-          productInterest: leadClassification.productInterest,
+          productInterest: effectiveProductInterest,
           intakeSegment: leadClassification.intakeSegment,
           classificationConfidence: leadClassification.confidence,
           classificationSummary: leadClassification.operatorSummary,
           suggestedNextAction: leadClassification.suggestedNextAction,
           handoffReason: leadClassification.handoffReason,
+          channel,
         },
         recentMessages: ordered.map((m) => ({
           senderType: String(m.sender_type ?? ''),
@@ -332,11 +398,30 @@ Deno.serve(async (req) => {
     }
 
     const desiredMode = out.sendMode;
-    const effectiveMode = resolveSendMode(
+    let effectiveMode = resolveSendMode(
       desiredMode,
       lead.last_inbound_at,
       config.whatsappSession.freeformWindowHours,
     );
+    // Tier 8.A — Instagram has no template product: outside the 24h
+    // window nothing can be sent. Queue the AI reply as a pending
+    // manual reply (flushed by the next customer inbound) instead of
+    // attempting an impossible send.
+    if (channel === 'instagram' && effectiveMode === 'template') {
+      effectiveMode = 'manual_only';
+      if (out.replyText) {
+        await supabase.from('pending_manual_replies').insert({
+          lead_id: leadId,
+          conversation_id: conversationId,
+          text: out.replyText.slice(0, 2000),
+          sender_type: 'ai',
+          status: 'queued',
+        });
+        log.info('orchestrate_ig_reply_queued_outside_window', {
+          fn: 'orchestrate', correlationId, leadId, conversationId,
+        });
+      }
+    }
 
     let sendResult: { ok: boolean; providerMessageId?: string; error?: string } = { ok: false };
     let attemptedSend = false;
@@ -345,12 +430,14 @@ Deno.serve(async (req) => {
       attemptedSend = true;
       try {
         if (effectiveMode === 'freeform') {
-          sendResult = await sendWhatsAppText(lead.phone as string, out.replyText);
+          sendResult = channel === 'instagram'
+            ? await sendInstagramText(lead.ig_user_id as string, out.replyText)
+            : await sendWhatsAppText(lead.phone as string, out.replyText);
         } else {
           sendResult = await sendWhatsAppTemplate(
             lead.phone as string,
             config.whatsappSession.fallbackTemplateName,
-            [{ name: 'reply', value: out.replyText }],
+            fallbackTemplateParams(out.replyText),
           );
         }
       } catch (err) {
@@ -375,14 +462,19 @@ Deno.serve(async (req) => {
       const updates: Record<string, unknown> = {
         lead_score: nextScore,
         inquiry_type: leadClassification.inquiryType,
-        product_interest: leadClassification.productInterest,
+        product_interest: effectiveProductInterest,
         intake_segment: leadClassification.intakeSegment,
         classification_confidence: leadClassification.confidence,
         classification_summary: leadClassification.operatorSummary,
         suggested_next_action: leadClassification.suggestedNextAction,
         handoff_reason: leadClassification.handoffReason,
         classification_updated_at: new Date().toISOString(),
+        ...(persistTrack ? { primary_track: persistTrack } : {}),
       };
+      // Persist lead data the bot captured (fill-only — never clobber existing).
+      if (out.extractedName && !lead.full_name) updates.full_name = out.extractedName;
+      if (out.estimatedEquity) updates.estimated_equity = out.estimatedEquity;
+      if (out.interestSummary) updates.goal_summary = out.interestSummary;
       if (out.leadHeatUpdate) updates.lead_heat = out.leadHeatUpdate;
       if (out.nextActionType) updates.next_action_type = out.nextActionType;
       if (out.nextActionDueAt) updates.next_action_due_at = out.nextActionDueAt;
@@ -440,15 +532,35 @@ Deno.serve(async (req) => {
         response_data: { error: sendResult.error ?? null },
         error_message: sendResult.error ?? null,
       });
+      // Template misconfigured in Meta (#132000/#132001) — the reply text
+      // is fine, only the wrapper is broken. Park it in
+      // pending_manual_replies so the customer's next inbound flushes it
+      // (same mechanism as the IG outside-window path) instead of losing
+      // the reply until someone reads the DLQ.
+      if (effectiveMode === 'template' && out.replyText && isTemplateConfigError(sendResult.error)) {
+        await supabase.from('pending_manual_replies').insert({
+          lead_id: leadId,
+          conversation_id: conversationId,
+          text: out.replyText.slice(0, 2000),
+          sender_type: 'ai',
+          status: 'queued',
+          metadata: { source: 'template_config_error', correlationId },
+        });
+        log.warn('orchestrate_template_config_error_reply_queued', {
+          fn: 'orchestrate', correlationId, leadId, conversationId,
+        });
+      }
       await ensurePendingQueueItem(supabase, {
         leadId,
         queueType: 'failed_automation',
         priorityLevel: 1,
-        reason: 'WhatsApp outbound failed after retries',
+        reason: isTemplateConfigError(sendResult.error)
+          ? 'תבנית הוואטסאפ המאושרת לא תואמת (מספר משתנים) — יש לתקן ב-Meta; התשובה נשמרה ותישלח כשהלקוח יכתוב'
+          : 'WhatsApp outbound failed after retries',
         queueSummary: sendResult.error ?? 'unknown_error',
         payloadJson: { effectiveMode, correlationId },
       });
-    } else if (isModelExecutionFailure(decision.executionStatus)) {
+    } else if (isModelExecutionFailure(decision.executionStatus) || decision.executionStatus === 'validation_blocked') {
       // Model/provider unavailable → make the failure visible immediately.
       // The dispatcher itself completed successfully, but no customer reply
       // was produced; without this guard the only signal is a delayed ai_stuck

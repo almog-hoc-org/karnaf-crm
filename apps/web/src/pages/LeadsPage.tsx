@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { fetchLeadsList, fetchUsersList, postBulkLeadAction, postLeadManage, type ProductGroup } from '@/lib/api';
-import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
+import { fetchLeadsList, fetchUsersList, postBulkLeadAction, postImportLeads, postLeadManage, type ImportLeadsResult, type ProductGroup } from '@/lib/api';
+import { parseImportRows } from '@/lib/importParse';
+import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { BulkActionBar } from '@/components/BulkActionBar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LeadsTableSkeleton } from '@/components/Skeleton';
@@ -28,6 +29,19 @@ const STATUSES: LeadStatus[] = [
   'dormant',
 ];
 const HEATS: LeadHeat[] = ['hot', 'warm', 'cool', 'cold'];
+
+// One option per distinct Hebrew source label. SOURCE_LABELS maps several
+// slugs to the same label (e.g. instagram/instagram_dm → אינסטגרם), so the
+// option value is ALL slugs for that label, comma-joined — the backend
+// matches any of them with an IN filter so nothing is missed.
+const SOURCE_FILTER_OPTIONS = (() => {
+  const byLabel = new Map<string, string[]>();
+  for (const [slug, label] of Object.entries(SOURCE_LABELS)) {
+    if (!byLabel.has(label)) byLabel.set(label, []);
+    byLabel.get(label)!.push(slug);
+  }
+  return Array.from(byLabel.entries()).map(([label, slugs]) => ({ value: slugs.join(','), label }));
+})();
 const OWNERS: OwnershipMode[] = [
   'ai_active',
   'mia_active',
@@ -57,19 +71,6 @@ const PRODUCT_INTEREST_LABELS: Record<string, string> = {
   financing_guidance: 'הכוונת מימון',
   unknown: 'לא ידוע',
 };
-
-// One Hebrew source label can front several raw slugs (e.g. "וואטסאפ" →
-// whatsapp / whatsapp_direct / …). The filter offers one option per label
-// and sends the joined slug list; leads-list matches it with IN.
-const SOURCE_FILTER_OPTIONS: Array<{ label: string; value: string }> = (() => {
-  const byLabel = new Map<string, string[]>();
-  for (const [slug, label] of Object.entries(SOURCE_LABELS)) {
-    const arr = byLabel.get(label) ?? [];
-    arr.push(slug);
-    byLabel.set(label, arr);
-  }
-  return Array.from(byLabel.entries()).map(([label, slugs]) => ({ label, value: slugs.join(',') }));
-})();
 
 interface SavedView {
   id: string;
@@ -144,15 +145,16 @@ function LeadWorkCard({
             )}
             {lead.email ? <span className="break-all">{lead.email}</span> : null}
             <span>מקור: {lead.source ? labelOr(SOURCE_LABELS, lead.source) : '—'}</span>
-            {lead.source_campaign ? <span>קמפיין: {lead.source_campaign}</span> : null}
             {lead.product_interest ? (
               <span>מוצר: {PRODUCT_INTEREST_LABELS[lead.product_interest] ?? lead.product_interest}</span>
             ) : null}
             {lead.interest_topic ? <span>נושא: {lead.interest_topic}</span> : null}
+            {lead.source_campaign ? <span>קמפיין: {lead.source_campaign}</span> : null}
             {lead.last_inbound_at ? <span>הודעה אחרונה: {formatRelative(lead.last_inbound_at)}</span> : null}
           </div>
           <p className="text-sm leading-6 text-slate-700">{lead.suggested_next_action || guidance.detail}</p>
           <div className="flex flex-wrap gap-2">
+            <MemberBadge isMember={lead.is_program_member} />
             <StatusBadge status={lead.lead_status} />
             <HeatBadge heat={lead.lead_heat} />
             <OwnershipBadge ownership={lead.ownership_mode} />
@@ -294,6 +296,7 @@ export function LeadsPage() {
   const [productGroup, setProductGroup] = useState<ProductGroup | ''>(
     (searchParams.get('productGroup') as ProductGroup | null) ?? ''
   );
+  const [memberOnly, setMemberOnly] = useState(searchParams.get('member') === 'true');
   const [createdFrom, setCreatedFrom] = useState(searchParams.get('createdFrom') ?? '');
   const [createdTo, setCreatedTo] = useState(searchParams.get('createdTo') ?? '');
   const [inboundFrom, setInboundFrom] = useState(searchParams.get('inboundFrom') ?? '');
@@ -312,11 +315,12 @@ export function LeadsPage() {
     if (ownership) next.set('ownership', ownership);
     if (source) next.set('source', source);
     if (productGroup) next.set('productGroup', productGroup);
+    if (memberOnly) next.set('member', 'true');
     if (createdFrom) next.set('createdFrom', createdFrom);
     if (createdTo) next.set('createdTo', createdTo);
     if (inboundFrom) next.set('inboundFrom', inboundFrom);
     setSearchParams(next, { replace: true });
-  }, [status, heat, ownership, source, productGroup, createdFrom, createdTo, inboundFrom, setSearchParams]);
+  }, [status, heat, ownership, source, productGroup, memberOnly, createdFrom, createdTo, inboundFrom, setSearchParams]);
 
   // dates from UI come as yyyy-mm-dd; expand to UTC range so we match the
   // entire day for createdTo, and start-of-day for createdFrom / inboundFrom.
@@ -331,6 +335,7 @@ export function LeadsPage() {
     ownershipMode: ownership || undefined,
     source: source || undefined,
     productGroup: productGroup || undefined,
+    member: memberOnly || undefined,
     createdFrom: expandStart(createdFrom),
     createdTo: expandEnd(createdTo),
     inboundFrom: expandStart(inboundFrom),
@@ -444,6 +449,30 @@ export function LeadsPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
+  // Bulk roster import (owner/admin) — paste a list, optionally mark all
+  // rows as program members. Wires to leads-manage import.
+  const canImport = auth.role === 'owner' || auth.role === 'admin';
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importMarkMember, setImportMarkMember] = useState(true);
+  const [importSource, setImportSource] = useState('manual_entry');
+  const [importResult, setImportResult] = useState<ImportLeadsResult | null>(null);
+  const importParsed = useMemo(() => parseImportRows(importText), [importText]);
+  const importMut = useMutation({
+    mutationFn: () =>
+      postImportLeads({
+        rows: importParsed.rows,
+        markMember: importMarkMember,
+        source: importSource,
+      }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      setImportResult(res);
+      toast.success(`יובאו ${res.okCount} מתוך ${res.total} שורות`);
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
   const total = q.data?.total ?? null;
   const start = total != null ? offset + 1 : null;
   const end = total != null ? Math.min(offset + (q.data?.leads.length ?? 0), total) : null;
@@ -467,11 +496,87 @@ export function LeadsPage() {
         <h1 className="text-2xl font-semibold tracking-tight">{t('leads_title')}</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-slate-500">{total != null ? `${total} ${t('total_count')}` : ''}</span>
+          {canImport ? (
+            <button type="button" className="kf-btn" onClick={() => { setImportResult(null); setImportOpen(true); }}>
+              ייבוא רשימה
+            </button>
+          ) : null}
           <button type="button" className="kf-btn kf-btn-primary" onClick={() => setAddOpen(true)}>
             + הוסף ליד
           </button>
         </div>
       </header>
+
+      <ConfirmDialog
+        open={importOpen}
+        title="ייבוא רשימת לקוחות"
+        description="הדביקו שורות מהגיליון: טלפון, שם ואימייל מופרדים בפסיק/טאב. שורה לכל לקוח."
+        confirmLabel={importResult ? 'סגירה' : `ייבוא ${importParsed.rows.length} שורות`}
+        busy={importMut.isPending}
+        onCancel={() => setImportOpen(false)}
+        onConfirm={() => {
+          if (importResult) {
+            setImportOpen(false);
+            setImportText('');
+            setImportResult(null);
+            return;
+          }
+          if (importParsed.rows.length === 0) {
+            toast.error('לא זוהו שורות עם טלפון תקין');
+            return;
+          }
+          importMut.mutate();
+        }}
+      >
+        {importResult ? (
+          <div className="space-y-2 text-sm">
+            <p className="font-medium text-emerald-700">
+              יובאו {importResult.okCount} מתוך {importResult.total} שורות
+              {importMarkMember ? ' וסומנו כחברי תוכנית' : ''}.
+            </p>
+            {importResult.failCount > 0 ? (
+              <div className="max-h-40 overflow-y-auto rounded border border-red-100 bg-red-50 p-2 text-red-700">
+                {importResult.results.filter((r) => r.error).map((r, i) => (
+                  <div key={i} className="tabular-nums">{r.phone || '—'} — {r.error}</div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <textarea
+              className="kf-input h-40 font-mono text-xs"
+              dir="ltr"
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder={'050-1234567, ישראל ישראלי, israel@example.com\n052-7654321, דנה כהן'}
+            />
+            <div className="flex items-center justify-between text-sm text-slate-600">
+              <span>{importParsed.rows.length} שורות תקינות</span>
+              {importParsed.invalid.length > 0 ? (
+                <span className="text-red-600">{importParsed.invalid.length} שורות בלי טלפון תקין ידולגו</span>
+              ) : null}
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={importMarkMember}
+                onChange={(e) => setImportMarkMember(e.target.checked)}
+              />
+              <span>סמן את כולם כחברי תוכנית "הדרך לדירה"</span>
+            </label>
+            <label className="block text-sm">
+              <span className="text-slate-600">מקור</span>
+              <select className="kf-input mt-1" value={importSource} onChange={(e) => setImportSource(e.target.value)}>
+                <option value="manual_entry">הזנה ידנית</option>
+                <option value="responder_form">רב מסר</option>
+                <option value="webinar">וובינר</option>
+                <option value="landing_page">אתר</option>
+              </select>
+            </label>
+          </div>
+        )}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={addOpen}
@@ -550,6 +655,23 @@ export function LeadsPage() {
             </button>
           );
         })}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={memberOnly}
+          title="רק לקוחות משלמים של התוכנית הדיגיטלית"
+          onClick={() => {
+            setMemberOnly((v) => !v);
+            setOffset(0);
+          }}
+          className={
+            memberOnly
+              ? 'rounded-full bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm'
+              : 'rounded-full bg-white px-3 py-1.5 text-sm text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50'
+          }
+        >
+          חברי תוכנית
+        </button>
       </nav>
 
       <div className="kf-card grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 md:grid-cols-5">
@@ -657,10 +779,11 @@ export function LeadsPage() {
             setSource(e.target.value);
             setOffset(0);
           }}
+          aria-label="סינון לפי מקור"
         >
           <option value="">כל המקורות</option>
           {SOURCE_FILTER_OPTIONS.map((o) => (
-            <option key={o.label} value={o.value}>
+            <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}

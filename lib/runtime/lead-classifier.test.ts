@@ -39,10 +39,26 @@ describe('classifyLeadIntake', () => {
     expect(r.productInterest).toBe('personal_consultation');
   });
 
+  it('routes land/reservist interest to a human instead of the program (regression: lost lead יוסף)', () => {
+    const r = classifyLeadIntake({ latestMessage: 'מעוניין בתהליך על קרקע, סקירות קרקע למילואים' });
+    expect(r.intakeSegment).toBe('needs_human');
+    expect(r.handoffReason).toContain('קרקעות/מילואים');
+  });
+
   it('detects explicit human handoff need', () => {
     const r = classifyLeadIntake({ latestMessage: 'אפשר שיחה עם נציג בטלפון?' });
     expect(r.intakeSegment).toBe('needs_human');
     expect(r.handoffReason).toBe('הליד ביקש שיחה/נציג אנושי');
+  });
+
+  it('the "נציג/שיחה" keyword no longer relabels the product as personal_consultation', () => {
+    const r = classifyLeadIntake({ latestMessage: 'אפשר שיחה עם נציג?' });
+    expect(r.productInterest).not.toBe('personal_consultation');
+  });
+
+  it('explicit mentorship wins over a consultation/agent phrase in the same message', () => {
+    const r = classifyLeadIntake({ latestMessage: 'מעוניין בליווי משקיעים, אפשר שיחה?' });
+    expect(r.productInterest).toBe('investor_mentorship');
   });
 
   it('detects existing student/support context', () => {

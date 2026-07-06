@@ -29,6 +29,16 @@ enable_confirmations = false
 [functions.whatsapp-webhook]
 verify_jwt = false
 
+# Tier 8.A — Meta calls this with X-Hub-Signature-256, not a Supabase
+# JWT. Must stay verify_jwt=false; the function does its own HMAC check.
+[functions.instagram-webhook]
+verify_jwt = false
+
+# Make.com bridge — called by Make with x-api-key (MAKE_INTAKE_KEY),
+# not a Supabase JWT. Does its own key check + signs/forwards to leads-intake.
+[functions.make-intake]
+verify_jwt = false
+
 [functions.payment-webhook]
 verify_jwt = false
 
@@ -62,11 +72,10 @@ verify_jwt = false
 [functions.dispatch-outbound]
 verify_jwt = false
 
+# Paced worker that fills the outbound queue from scheduled broadcasts.
+# Auth via BROADCAST_DISPATCH_SECRET bearer, not a Supabase JWT.
 [functions.broadcast-dispatch]
 verify_jwt = false
-
-[functions.broadcasts]
-verify_jwt = true
 
 [functions.orchestrate-message]
 verify_jwt = false

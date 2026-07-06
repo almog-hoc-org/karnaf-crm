@@ -4,11 +4,6 @@ import type {
   AttentionRow,
   AutomationRuleRow,
   AutomationRunRow,
-  BroadcastChannel,
-  BroadcastMetaTemplate,
-  BroadcastRow,
-  BroadcastSegment,
-  BroadcastStats,
   JourneyDefinitionRow,
   JourneyRunRow,
   JourneyStepDef,
@@ -27,6 +22,11 @@ import type {
   MeetingRow,
   MessageRow,
   MessageTemplateRow,
+  BroadcastRow,
+  BroadcastStats,
+  BroadcastSegment,
+  BroadcastChannel,
+  BroadcastMetaTemplate,
   PartnerDomain,
   PartnerRow,
   PartnerWorkloadRow,
@@ -118,6 +118,8 @@ export interface LeadsListParams {
   // Tier 6.A — coarse product filter; backend maps to a per-group set
   // of primary_track + product_interest values.
   productGroup?: ProductGroup;
+  // member=true → only program members ("הדרך לדירה").
+  member?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -241,58 +243,6 @@ export async function postMessageTemplateAction(payload: MessageTemplateAction) 
   return postJson<{ ok: true; template: MessageTemplateRow }>('/message-templates', payload as unknown as Record<string, unknown>);
 }
 
-// === Campaign broadcasts ==================================================
-
-export async function fetchBroadcasts() {
-  const r = await getJson<{ ok: true; broadcasts: BroadcastRow[] }>('/broadcasts');
-  return r.broadcasts;
-}
-
-export async function fetchBroadcast(id: string) {
-  return getJson<{ ok: true; broadcast: BroadcastRow; stats: BroadcastStats }>('/broadcasts', { id });
-}
-
-export async function previewBroadcastSegment(segment: BroadcastSegment, channel: BroadcastChannel = 'whatsapp') {
-  const r = await postJson<{ ok: true; count: number }>('/broadcasts', { action: 'preview_count', segment, channel });
-  return r.count;
-}
-
-export async function fetchBroadcastStats(id: string) {
-  const r = await postJson<{ ok: true; stats: BroadcastStats }>('/broadcasts', { action: 'stats', id });
-  return r.stats;
-}
-
-export type BroadcastAction =
-  | {
-      action: 'create';
-      name: string;
-      channel?: BroadcastChannel;
-      template_key?: string | null;
-      meta_template?: BroadcastMetaTemplate | null;
-      body_snapshot?: string | null;
-      segment?: BroadcastSegment;
-      scheduled_at?: string | null;
-    }
-  | {
-      action: 'update';
-      id: string;
-      name?: string;
-      template_key?: string | null;
-      meta_template?: BroadcastMetaTemplate | null;
-      body_snapshot?: string | null;
-      segment?: BroadcastSegment;
-      scheduled_at?: string | null;
-    }
-  | { action: 'schedule'; id: string; scheduled_at?: string | null }
-  | { action: 'cancel'; id: string };
-
-export async function postBroadcastAction(payload: BroadcastAction) {
-  return postJson<{ ok: true; broadcast: BroadcastRow; recipient_count?: number }>(
-    '/broadcasts',
-    payload as unknown as Record<string, unknown>,
-  );
-}
-
 // === Automations catalog + runs (Tier 2.B + 2.C) ==========================
 
 export async function fetchAutomations(includeRuns = true) {
@@ -392,7 +342,9 @@ export type AdminAction =
   | 'schedule_meeting'
   | 'update_meeting_status'
   | 'advance_deal_stage'
-  | 'update_lead_meta';
+  | 'update_lead_meta'
+  | 'merge_lead_duplicate'
+  | 'mark_program_member';
 
 export type ReopenTarget = 'responded' | 'qualified' | 'nurture' | 'human_handoff';
 
@@ -440,6 +392,7 @@ export async function postAdminAction(payload: {
   meetingId?: string;
   meetingStatus?: MeetingRow['status'];
   metaUpdates?: LeadMetaUpdates;
+  duplicateLeadId?: string;
 }) {
   return postJson<{ ok: true; action: string }>('/admin-actions', payload);
 }
@@ -463,6 +416,29 @@ export async function postLeadManage(
     | { action: 'restore'; leadId: string },
 ) {
   return postJson<{ ok: true; lead: { id: string } }>('/leads-manage', payload);
+}
+
+export interface ImportLeadRow {
+  phone: string;
+  fullName?: string | null;
+  email?: string | null;
+}
+
+export interface ImportLeadsResult {
+  ok: true;
+  total: number;
+  okCount: number;
+  failCount: number;
+  results: Array<{ phone: string; leadId?: string; memberCreated?: boolean; error?: string }>;
+}
+
+// Bulk roster import (owner/admin) — e.g. the program-member list.
+export async function postImportLeads(payload: {
+  rows: ImportLeadRow[];
+  markMember?: boolean;
+  source?: string;
+}) {
+  return postJson<ImportLeadsResult>('/leads-manage', { action: 'import', ...payload });
 }
 
 export type BulkLeadAction = 'assign_owner' | 'change_heat';
@@ -743,12 +719,44 @@ export interface WhatsAppSessionConfig {
   templateApprovalRequired: boolean;
 }
 
+export interface FollowUpDelaysConfig {
+  firstResponseMinutes: number;
+  nurtureHours: number;
+  paymentPendingHours: number;
+}
+
+export interface SlaThresholdsConfig {
+  firstResponseWarnHours: number;
+  firstResponseHighWarnHours: number;
+  firstResponseBreachHours: number;
+  paymentPendingHours: number;
+}
+
 export async function fetchRuntimeConfig() {
-  return getJson<{ ok: true; activeHours: ActiveHoursConfig; whatsappSession: WhatsAppSessionConfig }>('/runtime-config');
+  return getJson<{
+    ok: true;
+    activeHours: ActiveHoursConfig;
+    whatsappSession: WhatsAppSessionConfig;
+    followUpDelays: FollowUpDelaysConfig;
+    slaThresholds: SlaThresholdsConfig;
+    forbiddenClaims: string[];
+  }>('/runtime-config');
 }
 
 export async function postUpdateActiveHours(payload: ActiveHoursConfig) {
   return postJson<{ ok: true; activeHours: ActiveHoursConfig }>('/runtime-config', { action: 'update_active_hours', ...payload });
+}
+
+export async function postUpdateFollowUpDelays(payload: FollowUpDelaysConfig) {
+  return postJson<{ ok: true }>('/runtime-config', { action: 'update_follow_up_delays', ...payload });
+}
+
+export async function postUpdateSlaThresholds(payload: SlaThresholdsConfig) {
+  return postJson<{ ok: true }>('/runtime-config', { action: 'update_sla_thresholds', ...payload });
+}
+
+export async function postUpdateForbiddenClaims(claims: string[]) {
+  return postJson<{ ok: true }>('/runtime-config', { action: 'update_forbidden_claims', claims });
 }
 
 // === Prompt variants =====================================================
@@ -823,4 +831,34 @@ export async function postUpdatePromptVariant(payload: {
 
 export async function postDeletePromptVariant(id: string) {
   return deleteJson<{ ok: true }>('/prompt-variants', { action: 'delete', id });
+}
+
+// === Broadcasts (הודעות תפוצה) ============================================
+
+export async function fetchBroadcasts() {
+  return getJson<{ ok: true; broadcasts: BroadcastRow[] }>('/broadcasts');
+}
+
+export async function fetchBroadcast(id: string) {
+  return getJson<{ ok: true; broadcast: BroadcastRow; stats: BroadcastStats }>('/broadcasts', { id });
+}
+
+export async function previewBroadcastSegment(segment: BroadcastSegment) {
+  return postJson<{ ok: true; count: number; sample: Array<{ id: string; full_name: string | null; phone: string | null }> }>(
+    '/broadcasts',
+    { action: 'preview_count', segment },
+  );
+}
+
+export type BroadcastAction =
+  | { action: 'create'; name: string; channel: BroadcastChannel; template_key?: string | null;
+      meta_template?: BroadcastMetaTemplate | null; segment: BroadcastSegment; scheduled_at?: string | null }
+  | { action: 'update'; id: string; name?: string; channel?: BroadcastChannel; template_key?: string | null;
+      meta_template?: BroadcastMetaTemplate | null; segment?: BroadcastSegment; scheduled_at?: string | null }
+  | { action: 'schedule'; id: string }
+  | { action: 'cancel'; id: string }
+  | { action: 'delete'; id: string };
+
+export async function postBroadcastAction(payload: BroadcastAction) {
+  return postJson<{ ok: true; broadcast?: BroadcastRow }>('/broadcasts', payload as unknown as Record<string, unknown>);
 }

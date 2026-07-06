@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
   let query = supabase
     .from('leads')
     .select(
-      'id, full_name, phone, email, source, source_campaign, interest_topic, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, intake_segment, suggested_next_action',
+      'id, full_name, phone, email, source, source_campaign, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, program_members(lead_id)',
       { count: 'exact' },
     )
     .order('updated_at', { ascending: false })
@@ -61,14 +61,17 @@ Deno.serve(async (req) => {
 
   if (status) query = query.eq('lead_status', status);
   if (heat) query = query.eq('lead_heat', heat);
+  // member=true → only program members (inner-join semantics on the
+  // embedded program_members select).
+  if (url.searchParams.get('member') === 'true') {
+    query = query.not('program_members', 'is', null);
+  }
   if (ownershipMode) query = query.eq('ownership_mode', ownershipMode);
-  // A single Hebrew source label can map to several raw slugs (e.g.
-  // "וואטסאפ" → whatsapp / whatsapp_direct / whatsapp_topic_selection), so
-  // the UI passes a comma-separated slug list and we match with IN.
   if (source) {
-    const slugs = source.split(',').map((s) => s.trim().slice(0, 120)).filter(Boolean);
-    if (slugs.length > 1) query = query.in('source', slugs);
-    else if (slugs.length === 1) query = query.eq('source', slugs[0] as string);
+    // A single label can cover several source slugs (e.g. אתר →
+    // website,landing_page,services_page). Comma-separated → IN filter.
+    const slugs = source.slice(0, 200).split(',').map((s) => s.trim()).filter(Boolean);
+    query = slugs.length > 1 ? query.in('source', slugs) : query.eq('source', slugs[0] ?? source);
   }
   // Map coarse product groups → real enum values across both columns.
   // The mapping is in code (not data) so a typo in the UI param
@@ -119,5 +122,11 @@ Deno.serve(async (req) => {
   const { data, error, count } = await query;
   if (error) return jsonResponse(req, { error: error.message }, 500);
 
-  return jsonResponse(req, { ok: true, leads: data ?? [], total: count ?? null, limit, offset });
+  // Flatten the embedded join into a boolean the UI can render directly.
+  const leads = (data ?? []).map((row) => {
+    const { program_members: pm, ...rest } = row as Record<string, unknown> & { program_members?: unknown[] };
+    return { ...rest, is_program_member: Array.isArray(pm) ? pm.length > 0 : Boolean(pm) };
+  });
+
+  return jsonResponse(req, { ok: true, leads, total: count ?? null, limit, offset });
 });

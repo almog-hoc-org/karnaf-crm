@@ -18,11 +18,9 @@ export async function messageAlreadyLogged(
   return !!data;
 }
 
-// Request-level idempotency for public webhooks. The caller supplies an
-// idempotency key (either explicit via header or derived from a body
-// digest), checks for a prior response, and if there isn't one runs the
-// work then stores the response. A 24-hour TTL is enforced by the
-// purge_expired_webhook_idempotency() reaper migrated in 029.
+// Webhook request/response idempotency (webhook_idempotency table, 028;
+// purge_expired_webhook_idempotency() reaper migrated in 029). Restored
+// after the branch merge — the prod-scraped snapshot predated them.
 
 const encoder = new TextEncoder();
 

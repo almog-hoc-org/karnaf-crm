@@ -22,7 +22,14 @@ export async function tryConversationLock(
 ): Promise<boolean> {
   const key = fnv1a32(conversationId);
   const { data, error } = await supabase.rpc('try_conversation_lock', { p_namespace: NAMESPACE, p_key: key });
-  if (error) return true;
+  // Fail closed: if the lock RPC itself errors we can't know whether a
+  // concurrent turn holds the lock — proceeding could double-send. The
+  // caller returns skipped:'locked' and dispatch-outbound's bounded
+  // retries pick the turn up again.
+  if (error) {
+    console.warn('conversation_lock_rpc_error', { conversationId, error: error.message });
+    return false;
+  }
   return Boolean(data);
 }
 

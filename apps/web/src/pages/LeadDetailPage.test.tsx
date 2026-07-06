@@ -159,6 +159,30 @@ const activities: import('@/lib/types').ActivityRow[] = [
     payload: { provider_message_id: 'wa-1', provider_status: 'delivered' },
     created_at: '2026-04-28T09:31:00Z',
   },
+  // A system event — must render in the "פעילות" tab only, never
+  // between the chat bubbles.
+  {
+    id: 'a3',
+    contact_id: 'lead-1',
+    occurred_at: '2026-04-28T09:32:00Z',
+    activity_type: 'event',
+    actor_type: 'system',
+    conversation_id: 'conv-1',
+    deal_id: null,
+    meeting_id: null,
+    actor_user_id: null,
+    title: 'sla_breach',
+    body: null,
+    status: null,
+    priority_level: null,
+    due_at: null,
+    completed_at: null,
+    direction: null,
+    source_table: 'lead_events',
+    source_id: 'e1',
+    payload: {},
+    created_at: '2026-04-28T09:32:00Z',
+  },
 ];
 
 const queueItems: QueueRow[] = [
@@ -292,6 +316,20 @@ describe('LeadDetailPage', () => {
     expect(screen.getByText('היי דנה, נשמח לעזור.')).toBeInTheDocument();
     expect(screen.getByText('שלום, אשמח לפרטים')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '← חזרה לרשימה' })).toHaveAttribute('href', '/leads');
+  });
+
+  it('keeps system events out of the chat pane and shows them in the activity tab', async () => {
+    renderDetail();
+    // Chat tab (default): bubbles yes, event no.
+    expect(await screen.findByText('שלום, אשמח לפרטים')).toBeInTheDocument();
+    expect(screen.queryByText('חריגת זמן מענה')).not.toBeInTheDocument();
+    // Switch to the activity tab: event visible (labeled Hebrew), bubbles gone.
+    fireEvent.click(screen.getByRole('tab', { name: /פעילות/ }));
+    expect(await screen.findByText('חריגת זמן מענה')).toBeInTheDocument();
+    expect(screen.queryByText('שלום, אשמח לפרטים')).not.toBeInTheDocument();
+    // Back to chat.
+    fireEvent.click(screen.getByRole('tab', { name: 'שיחה' }));
+    expect(await screen.findByText('שלום, אשמח לפרטים')).toBeInTheDocument();
   });
 
   it('invokes mark_won after confirming the action dialog', async () => {

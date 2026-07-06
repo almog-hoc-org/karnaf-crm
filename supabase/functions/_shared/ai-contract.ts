@@ -28,12 +28,17 @@ export interface AiLeadContext {
   firstInboundSnippet: string | null;
   topicsTouched: TopicEntry[];
   inquiryType?: string | null;
+  /** Authoritative track set at intake (program | presale | investor_mentorship). */
+  primaryTrack?: string | null;
   productInterest?: string | null;
   intakeSegment?: string | null;
   classificationConfidence?: string | null;
   classificationSummary?: string | null;
   suggestedNextAction?: string | null;
   handoffReason?: string | null;
+  /** Tier 8.A — conversation channel ('whatsapp' | 'instagram'). Keeps
+   *  the bot from saying "וואטסאפ" inside an Instagram DM. */
+  channel?: string;
 }
 
 export interface TopicEntry {
@@ -128,4 +133,8 @@ export interface AiDecisionOutput {
   sendMode: SendMode;
   policyFlags: string[];
   playbookName: string;
+  /** Lead data the bot extracted from the conversation (fill-only persistence). */
+  extractedName?: string | null;
+  estimatedEquity?: string | null;
+  interestSummary?: string | null;
 }

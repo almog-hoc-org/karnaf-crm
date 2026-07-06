@@ -20,7 +20,7 @@ export async function ensurePendingQueueItem(supabase: SupabaseClient, input: Qu
     .eq('status', 'pending')
     .maybeSingle();
   if (existingErr) throw existingErr;
-  if (existing) return existing;
+  if (existing) return { ...existing, created: false };
 
   const { data: created, error: createdErr } = await supabase
     .from('work_queue')
@@ -38,7 +38,7 @@ export async function ensurePendingQueueItem(supabase: SupabaseClient, input: Qu
     .select('id, status')
     .single();
   if (createdErr) throw createdErr;
-  return created;
+  return { ...created, created: true };
 }
 
 export async function resolveQueueItem(

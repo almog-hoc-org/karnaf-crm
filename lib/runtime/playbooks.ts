@@ -1,8 +1,10 @@
-// Playbook selection logic. Mirrored across Node (this file) and Deno
-// (supabase/functions/_shared/playbooks.ts). Keep the two in sync.
-//
+// Playbook definitions — picked by source + lead_status + intent.
 // Each playbook narrows the system prompt with a specific objective and
 // guardrails so the model stays on rails for that conversation moment.
+//
+// Mirrored from lib/runtime/playbooks.ts so Edge Functions can run under
+// Deno without reaching into the workspace bundle. Keep the two in sync;
+// the Node-side mirror has the unit-test coverage.
 
 export interface Playbook {
   name: string;
@@ -17,11 +19,11 @@ export const PLAYBOOKS: Playbook[] = [
   {
     name: 'first_contact_whatsapp_inbound',
     trigger: 'lead_status=new and source in (whatsapp,instagram_dm)',
-    objective: 'לבסס קשר אנושי, לאשר רלוונטיות, ולשאול שאלת איתות אחת.',
+    objective: 'לבסס קשר אנושי, לאסוף שם, ולאתר במשפט מה מעניין את הליד.',
     guidance: [
-      'הצג את הכוונה לעזור בלי הבטחות.',
-      'שאל שאלה פתוחה אחת בלבד שמאתרת אם מדובר בדירה ראשונה או השקעה.',
-      'אל תשלח את הקישור עדיין.',
+      'הצג כוונה לעזור בלי הבטחות, בקצרה.',
+      'בקש את שם הליד ושאל במשפט אחד מה מעניין אותו (דירה ראשונה / השקעה / פריסייל).',
+      'אל תשאל על הון עצמי בהודעה הראשונה, ואל תשלח קישור עדיין.',
     ],
     forbidden: ['התחייבות לרווח', 'מבטיח חיסכון', 'הבטחה לרכישה'],
     allowedNextStatuses: ['first_contact_sent', 'human_handoff', 'do_not_contact', 'removed_by_request'],
@@ -29,10 +31,12 @@ export const PLAYBOOKS: Playbook[] = [
   {
     name: 'first_contact_form_lead',
     trigger: 'lead_status=new and source in (landing_page,webinar,responder_form,lead_magnet)',
-    objective: 'לעגן את ההקשר של ההרשמה ולעבור לאיתור צרכים.',
+    objective: 'לזהות את הצורך האמיתי של הליד ולהגיב אליו — לא להניח שהגיע בשביל התוכנית.',
     guidance: [
-      'אזכר בקצרה את מקור ההרשמה.',
-      'שאל שאלה אחת לאיתור מוכנות או חסם עיקרי.',
+      'אזכר את מקור ההרשמה רק אם הוא ידוע בוודאות, בלי להמציא אירוע (וובינר/הרשמה) שלא קרה.',
+      'שקף את מה שהליד כתב במילים שלו לפני שאתה מכוון לאנשהו.',
+      'אם השם לא ידוע — בקש אותו; שאל שאלה אחת לאיתור הצורך — לא לדחוף את התוכנית.',
+      'אם הצורך מחוץ למה שהתוכנית מכסה (למשל קרקעות/מילואים/השקעה ספציפית) — אל תנסה להחזיר לתוכנית; אשר בכנות והעבר לנציג (escalateToMia=true, createQueueType=human_handoff).',
     ],
     forbidden: ['התחייבות לתשואה', 'מובטח להצליח'],
     allowedNextStatuses: ['first_contact_sent', 'human_handoff', 'do_not_contact', 'removed_by_request'],
@@ -42,9 +46,11 @@ export const PLAYBOOKS: Playbook[] = [
     trigger: 'lead_status in (first_contact_sent,responded,nurture)',
     objective: 'להעמיק הבנה של מצב הליד: יעד, מוכנות, חסם, שותף/ה.',
     guidance: [
-      'שאלה אחת או שתיים לכל היותר בכל הודעה.',
+      'שאלה אחת לכל היותר בכל הודעה, קצר וחד.',
       'הימנע מסקירה מלאה של התוכנית; השאר מקום לעניין.',
+      'אם רלוונטי למסלול (השקעה/פריסייל) ובהקשר — שאל על הון עצמי משוער, ממוסגר כהתאמת המסלול. לא בהודעה הראשונה.',
       'אם זוהתה מוכנות גבוהה, סמן heat=hot והעלה בציון.',
+      'אם הליד מבקש נושא שהתוכנית לא עוסקת בו — אל תחזור על אותו הסבר; אשר בכנות והעבר לנציג אנושי (escalateToMia=true, createQueueType=human_handoff).',
     ],
     forbidden: ['התחייבות לתשואה', 'מבטיח להוזיל מחיר', 'הבטחה לרכישה'],
     allowedNextStatuses: ['responded', 'qualified', 'nurture', 'human_handoff', 'lost', 'do_not_contact', 'removed_by_request'],
@@ -141,12 +147,17 @@ export interface PlaybookSelectionInput {
     | 'dnc_request'
     | 'unclear';
   intentConfidence?: 'high' | 'medium' | 'low';
+  // True once the bot has already sent at least one message in this conversation.
+  hasPriorBotMessage?: boolean;
 }
 
 export function selectPlaybook(input: PlaybookSelectionInput): Playbook {
   const lower = input.inboundText.toLowerCase();
   const has = (words: string[]) => words.some((w) => lower.includes(w.toLowerCase()));
 
+  // Intent-first routing: trust the classifier when it's confident enough.
+  // High confidence wins over keyword-only matching; medium confidence is
+  // only used when the keyword path would not have routed anywhere stronger.
   const intent = input.inferredIntent;
   const conf = input.intentConfidence ?? 'low';
   if (intent === 'dnc_request' && conf !== 'low') return byName('opt_out');
@@ -165,6 +176,10 @@ export function selectPlaybook(input: PlaybookSelectionInput): Playbook {
   if (['first_contact_sent', 'responded', 'nurture'].includes(input.leadStatus)) return byName('qualification');
 
   if (input.leadStatus === 'new') {
+    // If we've already greeted (a prior bot message exists) but the status
+    // hasn't advanced yet, don't restart first-contact — move to qualification
+    // so the bot stops re-greeting and re-pitching the same opener.
+    if (input.hasPriorBotMessage) return byName('qualification');
     if (['whatsapp', 'instagram_dm'].includes(input.source)) {
       return byName('first_contact_whatsapp_inbound');
     }

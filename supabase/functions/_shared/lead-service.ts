@@ -102,6 +102,9 @@ export async function ensureConversation(
   return created as { id: string; ownership_mode: string };
 }
 
+// Returns the inserted row so callers can thread the event id (e.g.
+// whatsapp-webhook uses it as outbound_dispatch.source_event_id — the
+// unique key that dedupes webhook retries).
 export async function logLeadEvent(
   supabase: SupabaseClient,
   leadId: string,
@@ -120,7 +123,7 @@ export async function logLeadEvent(
     event_payload: payload,
   }).select('id').single();
   if (error) throw error;
-  return data ? { id: data.id as string } : null;
+  return (data as { id: string } | null) ?? null;
 }
 
 export async function transitionLeadStatus(
@@ -149,20 +152,4 @@ export async function updateLeadFields(
 ): Promise<void> {
   const { error } = await supabase.from('leads').update(updates).eq('id', leadId);
   if (error) throw error;
-
-  // Keep the conversation router in sync with the lead-level owner. The
-  // WhatsApp webhook always dispatches by conversation, while the operator UI
-  // and lifecycle actions reason mostly from leads.ownership_mode; if those two
-  // drift, a lead can be marked "Mia active" yet still receive AI replies.
-  if (Object.prototype.hasOwnProperty.call(updates, 'ownership_mode')) {
-    const ownershipMode = updates.ownership_mode;
-    if (typeof ownershipMode === 'string') {
-      const { error: convError } = await supabase
-        .from('conversations')
-        .update({ ownership_mode: ownershipMode })
-        .eq('lead_id', leadId)
-        .eq('is_open', true);
-      if (convError) throw convError;
-    }
-  }
 }

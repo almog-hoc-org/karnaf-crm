@@ -39,9 +39,8 @@ export async function verifyMetaSignature(req: Request, body: string, appSecret:
 
 /**
  * Generic HMAC verification used by the payment provider and the intake hook.
- * Accepts a header (or list of headers, tried in order) containing the hex
- * digest; tolerates an optional 'sha256=' prefix to support providers that
- * follow the GitHub convention.
+ * Accepts a header containing the hex digest; tolerates an optional 'sha256='
+ * prefix to support providers that follow the GitHub convention.
  */
 export async function verifyHmacHeader(
   req: Request,

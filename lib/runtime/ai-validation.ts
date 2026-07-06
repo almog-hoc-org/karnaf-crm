@@ -22,6 +22,9 @@ export interface AiDecisionOutput {
   sendMode: SendMode;
   policyFlags: string[];
   playbookName: string;
+  extractedName?: string | null;
+  estimatedEquity?: string | null;
+  interestSummary?: string | null;
 }
 
 export interface PlaybookRef {
@@ -94,8 +97,15 @@ export function validateAiDecision(input: ValidationInput): ValidationResult {
   out.scoreDelta = Number.isFinite(out.scoreDelta) ? Math.max(-25, Math.min(25, Math.trunc(out.scoreDelta))) : 0;
 
   if (out.createQueueType && !ALLOWED_QUEUES.has(out.createQueueType)) {
-    flags.push('queue_invalid');
-    out.createQueueType = null;
+    // Coerce handoff-like unknown queue values to the canonical human_handoff
+    // instead of dropping the escalation; only nulls genuinely unknown types.
+    if (/handoff|human|mia|escalat/i.test(out.createQueueType)) {
+      out.createQueueType = 'human_handoff';
+      flags.push('queue_normalized');
+    } else {
+      flags.push('queue_invalid');
+      out.createQueueType = null;
+    }
   }
 
   if (!ALLOWED_SEND_MODES.has(out.sendMode)) {
@@ -140,9 +150,20 @@ export function validateAiDecision(input: ValidationInput): ValidationResult {
     flags.push('no_send_no_text');
   }
 
+  out.extractedName = cleanShort(out.extractedName, 100);
+  out.estimatedEquity = cleanShort(out.estimatedEquity, 120);
+  out.interestSummary = cleanShort(out.interestSummary, 400);
+
   out.policyFlags = Array.from(new Set([...(out.policyFlags || []), ...flags]));
   out.playbookName = input.playbook.name;
   return { output: out, flags };
+}
+
+function cleanShort(v: string | null | undefined, maxChars: number): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  if (!t) return null;
+  return t.length > maxChars ? t.slice(0, maxChars) : t;
 }
 
 function sanitizeReply(reply: string | null, maxChars: number): string | null {
