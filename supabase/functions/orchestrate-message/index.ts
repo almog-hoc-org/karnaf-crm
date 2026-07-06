@@ -141,6 +141,22 @@ Deno.serve(async (req) => {
       return jsonResponse(req, { ok: true, skipped: 'non_ai_owner', ownershipMode: lead.ownership_mode });
     }
 
+    // Program members are served by the deterministic concierge in
+    // whatsapp-webhook — the LLM never speaks to a paying member. This
+    // guard covers the paths that bypass the webhook: return_to_ai's
+    // direct POST and stale outbound_dispatch retries. It also means
+    // "return to AI" on a member = return to concierge (next inbound
+    // greets again), with no extra wiring.
+    const { data: memberRow } = await supabase
+      .from('program_members')
+      .select('lead_id')
+      .eq('lead_id', leadId)
+      .maybeSingle();
+    if (memberRow) {
+      log.info('orchestrate_member_skip', { fn: 'orchestrate', correlationId, leadId });
+      return jsonResponse(req, { ok: true, skipped: 'program_member' });
+    }
+
     const { data: recentMessages, error: msgErr } = await supabase
       .from('messages')
       .select('sender_type, content_text, created_at, direction')

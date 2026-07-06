@@ -12,6 +12,7 @@ import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { archiveWhatsAppMedia } from '../_shared/media-fetch.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { buildHumanHandoffSchedule } from '../_shared/handoff-schedule.ts';
+import { getMemberConciergeConfig, handleMemberConcierge, type MemberRow } from '../_shared/member-concierge.ts';
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -154,6 +155,75 @@ Deno.serve(async (req) => {
       flushedManualReplies,
       skippedAi: true,
     });
+  }
+
+  // Program members get the deterministic concierge, never the topic
+  // router and never the LLM. Runs before the router so a member is
+  // never shown the "באיזה נושא?" menu. Skipped when a human already
+  // owns the conversation (the rep talks freely via send-reply) and for
+  // suppressed leads.
+  if (!lead.do_not_contact && !lead.removed_by_request) {
+    const { data: memberRow } = await supabase
+      .from('program_members')
+      .select('lead_id, concierge_last_greeted_at, concierge_last_reprompted_at')
+      .eq('lead_id', lead.id)
+      .maybeSingle();
+    if (memberRow) {
+      if (lead.ownership_mode === 'ai_active') {
+        const conciergeConfig = await getMemberConciergeConfig(supabase);
+        const concierge = await handleMemberConcierge(supabase, {
+          lead,
+          member: memberRow as MemberRow,
+          conversationId: conversation.id,
+          phone,
+          text: normalized.text,
+          prevInboundAt: lead.last_inbound_at,
+          correlationId,
+        }, conciergeConfig);
+        if (concierge.handled) {
+          log.info('member_concierge_handled', {
+            fn: 'whatsapp-webhook', correlationId, leadId: lead.id, action: concierge.action,
+          });
+          return jsonResponse(req, {
+            ok: true,
+            leadId: lead.id,
+            conversationId: conversation.id,
+            correlationId,
+            conciergeAction: concierge.action,
+            skippedAi: true,
+          });
+        }
+        // handled=false only when the concierge is disabled in config —
+        // fall through to the normal pipeline (router + AI).
+      } else {
+        // Human-owned member conversation: no router menu, but keep the
+        // dispatch enqueue below so orchestrate's ownership gate refreshes
+        // the human_handoff queue item for the inbox.
+        const { error: memberDispatchErr } = await supabase.from('outbound_dispatch').insert({
+          lead_id: lead.id,
+          conversation_id: conversation.id,
+          source_event_id: eventRow?.id ?? null,
+          correlation_id: correlationId,
+          payload: {
+            provider: normalized.provider,
+            provider_message_id: normalized.providerMessageId,
+          },
+        });
+        if (memberDispatchErr && !String(memberDispatchErr.message || '').includes('duplicate key value')) {
+          log.error('dispatch_enqueue_failed', {
+            fn: 'whatsapp-webhook', correlationId, leadId: lead.id, err: String(memberDispatchErr),
+          });
+        }
+        return jsonResponse(req, {
+          ok: true,
+          leadId: lead.id,
+          conversationId: conversation.id,
+          correlationId,
+          conciergeAction: 'passthrough_human',
+          skippedAi: true,
+        });
+      }
+    }
   }
 
   const routed = await handleWhatsAppRouter(supabase, {
