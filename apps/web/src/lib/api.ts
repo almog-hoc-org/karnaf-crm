@@ -118,6 +118,8 @@ export interface LeadsListParams {
   // Tier 6.A — coarse product filter; backend maps to a per-group set
   // of primary_track + product_interest values.
   productGroup?: ProductGroup;
+  // member=true → only program members ("הדרך לדירה").
+  member?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -341,7 +343,8 @@ export type AdminAction =
   | 'update_meeting_status'
   | 'advance_deal_stage'
   | 'update_lead_meta'
-  | 'merge_lead_duplicate';
+  | 'merge_lead_duplicate'
+  | 'mark_program_member';
 
 export type ReopenTarget = 'responded' | 'qualified' | 'nurture' | 'human_handoff';
 
@@ -413,6 +416,29 @@ export async function postLeadManage(
     | { action: 'restore'; leadId: string },
 ) {
   return postJson<{ ok: true; lead: { id: string } }>('/leads-manage', payload);
+}
+
+export interface ImportLeadRow {
+  phone: string;
+  fullName?: string | null;
+  email?: string | null;
+}
+
+export interface ImportLeadsResult {
+  ok: true;
+  total: number;
+  okCount: number;
+  failCount: number;
+  results: Array<{ phone: string; leadId?: string; memberCreated?: boolean; error?: string }>;
+}
+
+// Bulk roster import (owner/admin) — e.g. the program-member list.
+export async function postImportLeads(payload: {
+  rows: ImportLeadRow[];
+  markMember?: boolean;
+  source?: string;
+}) {
+  return postJson<ImportLeadsResult>('/leads-manage', { action: 'import', ...payload });
 }
 
 export type BulkLeadAction = 'assign_owner' | 'change_heat';

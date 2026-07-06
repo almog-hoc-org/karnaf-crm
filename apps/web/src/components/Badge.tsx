@@ -30,6 +30,12 @@ export function StatusBadge({ status }: { status: LeadStatus | null | undefined 
   return <span className={clsx('kf-badge', tone)}>{STATUS_LABELS[status] ?? status}</span>;
 }
 
+// חבר תוכנית "הדרך לדירה" — paying member, served by the member concierge.
+export function MemberBadge({ isMember }: { isMember: boolean | null | undefined }) {
+  if (!isMember) return null;
+  return <span className="kf-badge kf-badge-success">חבר/ת תוכנית</span>;
+}
+
 export function OwnershipBadge({ ownership }: { ownership: OwnershipMode | null | undefined }) {
   if (!ownership) return <span className="kf-badge kf-badge-mute">—</span>;
   const tone =

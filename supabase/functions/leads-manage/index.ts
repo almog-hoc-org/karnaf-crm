@@ -13,6 +13,7 @@ import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { logLeadEvent, upsertLead } from '../_shared/lead-service.ts';
+import { ensureProgramMember } from '../_shared/member-service.ts';
 import { normalizeIsraeliPhone } from '../_shared/phone.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 
@@ -68,7 +69,22 @@ interface RestorePayload {
   leadId: string;
 }
 
-type Payload = CreatePayload | UpdatePayload | DeletePayload | RestorePayload;
+interface ImportRow {
+  phone: string;
+  fullName?: string | null;
+  email?: string | null;
+}
+
+interface ImportPayload {
+  action: 'import';
+  rows: ImportRow[];
+  markMember?: boolean;
+  source?: string;
+}
+
+type Payload = CreatePayload | UpdatePayload | DeletePayload | RestorePayload | ImportPayload;
+
+const IMPORT_MAX_ROWS = 500;
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -275,6 +291,85 @@ Deno.serve(async (req) => {
       fn: 'leads-manage', correlationId, by: staff.userId, leadId: body.leadId,
     });
     return jsonResponse(req, { ok: true, lead: data });
+  }
+
+  if (body.action === 'import') {
+    // Bulk list import (e.g. the program-member roster). Owner/admin only —
+    // this can create hundreds of leads in one call.
+    if (staff.role !== 'owner' && staff.role !== 'admin') {
+      return jsonResponse(req, { error: 'Import requires owner/admin' }, 403);
+    }
+    const rows = Array.isArray(body.rows) ? body.rows : [];
+    if (rows.length === 0) return jsonResponse(req, { error: 'No rows provided' }, 400);
+    if (rows.length > IMPORT_MAX_ROWS) {
+      return jsonResponse(req, { error: `Too many rows (max ${IMPORT_MAX_ROWS})` }, 400);
+    }
+    const source = body.source ?? 'manual_entry';
+    if (!ALLOWED_SOURCES.has(source)) {
+      return jsonResponse(req, { error: `Invalid source: ${source}` }, 400);
+    }
+
+    const results: Array<{ phone: string; leadId?: string; created?: boolean; memberCreated?: boolean; error?: string }> = [];
+    for (const row of rows) {
+      const rawPhone = typeof row?.phone === 'string' ? row.phone : '';
+      const normalized = normalizeIsraeliPhone(rawPhone);
+      if (!normalized) {
+        results.push({ phone: rawPhone, error: 'invalid_phone' });
+        continue;
+      }
+      try {
+        const lead = await upsertLead(supabase, {
+          phone: normalized,
+          email: row.email ?? null,
+          fullName: row.fullName ?? null,
+          source,
+          intakeChannel: 'manual_console',
+          metadata: {
+            created_by_user_id: staff.userId,
+            created_via: 'operator_import',
+            correlation_id: correlationId,
+          },
+        });
+        let memberCreated = false;
+        if (body.markMember) {
+          const member = await ensureProgramMember(supabase, {
+            leadId: lead.id,
+            joinedVia: 'import',
+            actorType: staff.role,
+            actorId: staff.userId,
+            correlationId,
+          });
+          memberCreated = member.created;
+        }
+        results.push({ phone: normalized, leadId: lead.id, memberCreated });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        results.push({ phone: normalized, error: msg });
+      }
+    }
+
+    const okCount = results.filter((r) => r.leadId).length;
+    const failCount = results.length - okCount;
+    // One summary log instead of a lead_event per row — a 500-row import
+    // must not flood the activity feeds.
+    await supabase.from('integration_logs').insert({
+      source: 'operator_import',
+      status: failCount === 0 ? 'success' : 'partial',
+      request_data: {
+        by: staff.userId,
+        source,
+        mark_member: body.markMember ?? false,
+        total: results.length,
+        ok: okCount,
+        failed: failCount,
+        correlation_id: correlationId,
+      },
+    });
+    log.info('leads_import', {
+      fn: 'leads-manage', correlationId, by: staff.userId,
+      total: results.length, ok: okCount, failed: failCount,
+    });
+    return jsonResponse(req, { ok: true, total: results.length, okCount, failCount, results });
   }
 
   return jsonResponse(req, { error: 'Unsupported action' }, 400);

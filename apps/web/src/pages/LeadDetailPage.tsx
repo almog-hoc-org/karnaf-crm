@@ -17,7 +17,7 @@ import {
   type ReopenTarget,
 } from '@/lib/api';
 import { contextFromLead, renderTemplate } from '@/lib/template-render';
-import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
+import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
 import { UnifiedTimeline } from '@/components/UnifiedTimeline';
@@ -313,11 +313,21 @@ export function LeadDetailPage() {
         {/* Status row — same chips as before, no longer competes with
             a duplicate CurrentOwnerLine banner. */}
         <div className="mt-3 flex flex-wrap items-center gap-2 sm:gap-3">
+          <MemberBadge isMember={!!programMember} />
           <StatusBadge status={lead.lead_status} />
           <OwnershipBadge ownership={lead.ownership_mode} />
           <HeatBadge heat={lead.lead_heat} />
           <span className="kf-badge kf-badge-mute">ציון {lead.lead_score}</span>
           <NextActionBadge actionType={lead.next_action_type} dueAt={lead.next_action_due_at} />
+          {!programMember && (auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia') ? (
+            <button
+              type="button"
+              className="rounded-full border border-emerald-200 bg-white px-2.5 py-0.5 text-xs text-emerald-700 hover:bg-emerald-50"
+              onClick={() => action.mutate({ action: 'mark_program_member', label: 'סומן כחבר תוכנית' })}
+            >
+              סמן כחבר תוכנית
+            </button>
+          ) : null}
         </div>
 
         {/* Long-tail metadata collapses behind a disclosure. AI playbook

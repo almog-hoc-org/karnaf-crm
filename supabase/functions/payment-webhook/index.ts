@@ -3,6 +3,9 @@ import { normalizeIsraeliPhone } from '../_shared/phone.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { transitionLeadStatus, logLeadEvent } from '../_shared/lead-service.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
+import { ensureProgramMember } from '../_shared/member-service.ts';
+import { runMatchingRules } from '../_shared/automation-engine.ts';
+import { buildLeadContext } from '../_shared/event-context.ts';
 import { verifyHmacHeader } from '../_shared/webhook-signature.ts';
 import { env, optional } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
@@ -133,6 +136,7 @@ Deno.serve(async (req) => {
     };
     if (paidTrack) leadPaymentUpdates.primary_track = paidTrack;
     await supabase.from('leads').update(leadPaymentUpdates).eq('id', matchedLeadId);
+    let wonDealId: string | null = null;
     if (paidTrack) {
       const { data: existingDeal } = await supabase
         .from('deals')
@@ -149,14 +153,31 @@ Deno.serve(async (req) => {
           value: payload.amount ?? null,
           metadata: { orderId: orderId ?? null, productCode, linkSource, correlationId },
         }).eq('id', existingDeal.id);
+        wonDealId = existingDeal.id;
+      } else {
+        // Payment without a pre-existing open deal (e.g. a direct
+        // checkout link). Create the won deal so the engine context and
+        // reports see the sale — same rule mark_won enforces manually.
+        const { data: createdDeal } = await supabase.from('deals').insert({
+          lead_id: matchedLeadId,
+          track: paidTrack,
+          stage: paidTrack === 'program' ? 'paid_program_member' : 'closed_won',
+          status: 'won',
+          closed_at: new Date().toISOString(),
+          value: payload.amount ?? null,
+          metadata: { orderId: orderId ?? null, productCode, linkSource, correlationId },
+        }).select('id').maybeSingle();
+        wonDealId = createdDeal?.id ?? null;
       }
     }
     if (paidTrack === 'program') {
-      await supabase.from('program_members').upsert({
-        lead_id: matchedLeadId,
-        progress_stage: 'joined',
+      await ensureProgramMember(supabase, {
+        leadId: matchedLeadId,
+        joinedVia: 'payment',
+        actorType: 'provider',
         metadata: { orderId: orderId ?? null, productCode, linkSource, correlationId },
-      }, { onConflict: 'lead_id' });
+        correlationId,
+      });
     }
     await transitionLeadStatus(supabase, matchedLeadId, 'won', 'provider', 'payment_completed');
     await logLeadEvent(supabase, matchedLeadId, 'payment_completed', 'provider', {
@@ -165,6 +186,35 @@ Deno.serve(async (req) => {
       link_source: linkSource,
       correlation_id: correlationId,
     });
+    // Emit deal.won so the same bridges mark_won fires run here too
+    // (program_14d onboarding journey, commissions). Best-effort — a
+    // rule failure must not fail the payment ack.
+    if (paidTrack) {
+      try {
+        const { data: wonDeal } = wonDealId
+          ? await supabase
+            .from('deals')
+            .select('id, track, value, currency, partner_id, project_id')
+            .eq('id', wonDealId)
+            .maybeSingle()
+          : { data: null };
+        const leadCtxWon = await buildLeadContext(supabase, matchedLeadId);
+        if (leadCtxWon) {
+          await runMatchingRules(supabase, {
+            triggerEvent: 'deal.won',
+            context: { lead: leadCtxWon, deal: wonDeal ?? null },
+            contactId: matchedLeadId,
+            correlationId,
+          });
+        }
+      } catch (err) {
+        log.error('payment_deal_won_rules_failed', {
+          fn: 'payment-webhook',
+          correlationId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   } else if (paymentStatus === 'pending' || paymentStatus === 'started') {
     await transitionLeadStatus(supabase, matchedLeadId, 'payment_pending', 'provider', 'payment_signal');
     await ensurePendingQueueItem(supabase, {

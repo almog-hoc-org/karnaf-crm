@@ -7,6 +7,7 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { env } from '../_shared/env.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
 import { buildLeadContext } from '../_shared/event-context.ts';
+import { ensureProgramMember } from '../_shared/member-service.ts';
 
 type ActionName =
   | 'assign_to_mia'
@@ -21,7 +22,8 @@ type ActionName =
   | 'schedule_meeting'
   | 'update_meeting_status'
   | 'advance_deal_stage'
-  | 'update_lead_meta';
+  | 'update_lead_meta'
+  | 'mark_program_member';
 
 const REOPEN_TARGETS = new Set(['responded', 'qualified', 'nurture', 'human_handoff']);
 
@@ -45,6 +47,7 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   update_meeting_status: ['owner', 'admin', 'mia', 'sales_rep'],
   advance_deal_stage: ['owner', 'admin', 'mia', 'sales_rep'],
   update_lead_meta: ['owner', 'admin', 'mia'],
+  mark_program_member: ['owner', 'admin', 'mia'],
 };
 
 interface ActionPayload {
@@ -461,7 +464,29 @@ Deno.serve(async (req) => {
           correlationId,
         });
       }
+      // A won program deal makes the lead a member — same record the
+      // payment webhook creates, so both paths land in one place.
+      if (wonDeal?.track === 'program') {
+        await ensureProgramMember(supabase, {
+          leadId,
+          joinedVia: 'won',
+          actorType: staff.role,
+          actorId: staff.userId,
+          correlationId,
+        });
+      }
       break;
+    }
+    case 'mark_program_member': {
+      const result = await ensureProgramMember(supabase, {
+        leadId,
+        joinedVia: 'manual',
+        actorType: staff.role,
+        actorId: staff.userId,
+        correlationId,
+      });
+      log.info('admin_action', { fn: 'admin-actions', correlationId, userId: staff.userId, action, leadId });
+      return jsonResponse(req, { ok: true, action, created: result.created });
     }
     case 'reopen_lead': {
       // The RPC is the source of truth: it role-gates (owner/admin only),

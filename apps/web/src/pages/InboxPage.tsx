@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 import { fetchAttentionInbox, postAdminAction, postQueueResolve } from '@/lib/api';
-import { HeatBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
+import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
@@ -250,6 +250,7 @@ export function InboxPage() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
+                      <MemberBadge isMember={row.is_program_member} />
                       <StatusBadge status={row.lead_status} />
                       <HeatBadge heat={row.lead_heat} />
                       <OwnershipBadge ownership={row.ownership_mode} />

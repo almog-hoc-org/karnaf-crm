@@ -58,6 +58,8 @@ export interface LeadRow {
   tags?: string[] | null;
   consent_whatsapp?: boolean | null;
   consent_email?: boolean | null;
+  // Flattened from the program_members join in leads-list.
+  is_program_member?: boolean;
 }
 
 // Tier 0.E — Contact-centric type aliases. The v4 spec calls the
@@ -675,6 +677,7 @@ export interface AttentionRow {
   reason: string | null;
   due_at: string | null;
   created_at: string | null;
+  is_program_member?: boolean;
 }
 
 export interface ApiOk {
