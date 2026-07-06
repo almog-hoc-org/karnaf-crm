@@ -182,7 +182,7 @@ async function recipientStats(
     .from('broadcast_recipients')
     .select('status, sent_at, messages(delivered_at, read_at, provider_status)')
     .eq('broadcast_id', broadcastId);
-  const rows = (data ?? []) as Array<{
+  const rows = (data ?? []) as unknown as Array<{
     status: string;
     messages: { delivered_at: string | null; read_at: string | null; provider_status: string | null } | null;
   }>;

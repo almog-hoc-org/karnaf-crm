@@ -10,6 +10,7 @@ import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared
 import { canTransition } from '../_shared/state-machine.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { fallbackTemplateParams, isTemplateConfigError } from '../_shared/provider-errors.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 
@@ -114,9 +115,14 @@ Deno.serve(async (req) => {
       if (pendingErr) throw pendingErr;
       pendingReplyId = pending?.id as string | null;
 
-      result = await sendWhatsAppTemplate(lead.phone as string, config.whatsappSession.fallbackTemplateName, [
-        { name: 'name', value: lead.phone as string },
-      ]);
+      // Canonical single-param wrap — the approved template's {{1}} body
+      // variable carries the reply text. Sending anything else (this used
+      // to send the lead's phone under name:'name') risks #132000.
+      result = await sendWhatsAppTemplate(
+        lead.phone as string,
+        config.whatsappSession.fallbackTemplateName,
+        fallbackTemplateParams(text.slice(0, 600)),
+      );
     }
   } catch (err) {
     result = { ok: false, error: String(err) };
@@ -220,19 +226,21 @@ Deno.serve(async (req) => {
 });
 
 function formatManualReplyFailure(error: string, mode: string, templateName: string) {
-  const templateMissing =
-    mode === 'template' &&
-    (error.includes('132001') || error.toLowerCase().includes('template name does not exist'));
+  // #132001 (template missing) and #132000 (approved variable count
+  // doesn't match what we send) are both configuration problems in Meta —
+  // retrying won't help. Queue the reply for the next inbound instead of
+  // hard-failing the operator.
+  const templateBroken = mode === 'template' && isTemplateConfigError(error);
 
-  if (templateMissing) {
+  if (templateBroken) {
     return {
       status: 409,
       code: 'WHATSAPP_TEMPLATE_MISSING',
-      queueReason: 'Manual reply failed; WhatsApp fallback template is missing',
+      queueReason: 'Manual reply failed; WhatsApp fallback template is missing or misconfigured',
       userMessage:
         `אי אפשר לשלוח הודעה חופשית כי חלון ה־24 שעות בוואטסאפ נסגר, ` +
-        `והתבנית המאושרת "${templateName}" לא קיימת ב־Meta בעברית. ` +
-        `צריך שהלקוח ישלח הודעה חדשה או להגדיר/לאשר תבנית WhatsApp מתאימה.`,
+        `והתבנית המאושרת "${templateName}" חסרה או לא תואמת ב־Meta (מספר משתנים שגוי). ` +
+        `ההודעה נשמרה ותישלח כשהלקוח יכתוב שוב; לתיקון קבוע יש לעדכן את התבנית ב־Meta.`,
     };
   }
 

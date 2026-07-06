@@ -63,7 +63,7 @@ async function sendNudge(
     { name: 'context', value: contextLine(lead) },
   ]);
   if (!res.ok) {
-    log.warn('reengagement_send_failed', { fn: 'reengagement', correlationId, leadId: lead.id, eventType, err: res.error });
+    log.warn('reengagement_send_failed', { fn: 'reengagement', correlationId, leadId: lead.id as string, eventType, err: res.error });
     return false;
   }
   await logLeadEvent(supabase, lead.id as string, eventType, 'system', {

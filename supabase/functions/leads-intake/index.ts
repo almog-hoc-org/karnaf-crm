@@ -425,7 +425,7 @@ Deno.serve(async (req) => {
   const response = { ok: true as const, leadId: lead.id, correlationId };
   // Fire-and-forget the idempotency write; failure here doesn't change
   // the caller-visible behaviour (worst case: duplicate work on retry).
-  storeWebhookIdempotencyResponse(supabase, idempotencyKey, 'intake', response).catch((err) =>
+  storeWebhookIdempotencyResponse(supabase, idempotencyKey, 'intake', response).catch((err: unknown) =>
     log.error('intake_idempotency_store_failed', {
       fn: 'leads-intake',
       correlationId,

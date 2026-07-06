@@ -132,13 +132,13 @@ Deno.serve(async (req) => {
   }
 
   const templates = Array.isArray(templateJson.data)
-    ? templateJson.data.map((template) => ({
+    ? templateJson.data.map((template: Record<string, unknown>) => ({
       name: template.name,
       language: template.language,
       status: template.status,
       category: template.category,
       bodyText: Array.isArray(template.components)
-        ? template.components.find((component) => component.type === 'BODY')?.text ?? null
+        ? (template.components as Array<Record<string, unknown>>).find((component) => component.type === 'BODY')?.text ?? null
         : null,
     }))
     : [];

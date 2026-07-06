@@ -82,7 +82,7 @@ export async function advanceDueJourneys(
       correlationId,
       data: { journey_run_id: run.id, journey_code: def.code, step_name: step.name ?? null },
     };
-    const results = await runActions(supabase, (step.actions ?? []) as Array<Record<string, unknown>>, ctx);
+    const results = await runActions(supabase, (step.actions ?? []) as unknown as Parameters<typeof runActions>[1], ctx);
     const failed = results.some((r) => r.status === 'failed');
     if (failed) {
       await supabase.from('journey_runs').update({

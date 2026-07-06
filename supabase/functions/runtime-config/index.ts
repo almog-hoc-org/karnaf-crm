@@ -22,7 +22,7 @@ Deno.serve(async (req) => {
   if (pre) return pre;
   const correlationId = correlationFromRequest(req);
 
-  let staff;
+  let staff: Awaited<ReturnType<typeof requireStaff>>;
   try {
     staff = await requireStaff(req, { allow: ['owner', 'admin'] });
   } catch (err) {

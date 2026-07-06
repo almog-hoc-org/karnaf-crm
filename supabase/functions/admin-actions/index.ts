@@ -23,6 +23,7 @@ type ActionName =
   | 'update_meeting_status'
   | 'advance_deal_stage'
   | 'update_lead_meta'
+  | 'merge_lead_duplicate'
   | 'mark_program_member';
 
 const REOPEN_TARGETS = new Set(['responded', 'qualified', 'nurture', 'human_handoff']);
@@ -47,6 +48,9 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   update_meeting_status: ['owner', 'admin', 'mia', 'sales_rep'],
   advance_deal_stage: ['owner', 'admin', 'mia', 'sales_rep'],
   update_lead_meta: ['owner', 'admin', 'mia'],
+  // The case body re-checks owner/admin; listed here so the generic
+  // role gate lets the request through to that check.
+  merge_lead_duplicate: ['owner', 'admin'],
   mark_program_member: ['owner', 'admin', 'mia'],
 };
 
@@ -68,6 +72,7 @@ interface ActionPayload {
   meetingUrl?: string | null;
   meetingId?: string;
   meetingStatus?: 'scheduled' | 'held' | 'cancelled' | 'no_show';
+  duplicateLeadId?: string;
   metaUpdates?: {
     goal_summary?: string | null;
     pain_point_summary?: string | null;

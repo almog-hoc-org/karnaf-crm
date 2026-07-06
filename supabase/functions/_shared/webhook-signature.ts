@@ -46,10 +46,15 @@ export async function verifyHmacHeader(
   req: Request,
   body: string,
   secret: string,
-  headerName: string,
+  headerName: string | string[],
 ): Promise<boolean> {
   if (!secret) return false;
-  const raw = (req.headers.get(headerName) || '').trim().toLowerCase();
+  const names = Array.isArray(headerName) ? headerName : [headerName];
+  let raw = '';
+  for (const name of names) {
+    raw = (req.headers.get(name) || '').trim().toLowerCase();
+    if (raw) break;
+  }
   if (!raw) return false;
   const provided = raw.startsWith('sha256=') ? raw.slice('sha256='.length) : raw;
   const expected = (await hmacHex(secret, body, 'SHA-256')).toLowerCase();

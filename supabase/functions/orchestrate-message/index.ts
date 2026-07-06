@@ -14,6 +14,7 @@ import { classifyLeadIntake } from '../_shared/lead-classifier.ts';
 import { extractTopicsFromText, mergeTopics, type TopicEntry } from '../_shared/topics.ts';
 import { loadProductClaims } from '../_shared/claim-service.ts';
 import { releaseConversationLock, tryConversationLock } from '../_shared/conversation-lock.ts';
+import { fallbackTemplateParams, isTemplateConfigError } from '../_shared/provider-errors.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
 import { maybeRefreshSummary } from '../_shared/transcript-summary.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
@@ -436,7 +437,7 @@ Deno.serve(async (req) => {
           sendResult = await sendWhatsAppTemplate(
             lead.phone as string,
             config.whatsappSession.fallbackTemplateName,
-            [{ name: 'reply', value: out.replyText }],
+            fallbackTemplateParams(out.replyText),
           );
         }
       } catch (err) {
@@ -531,15 +532,35 @@ Deno.serve(async (req) => {
         response_data: { error: sendResult.error ?? null },
         error_message: sendResult.error ?? null,
       });
+      // Template misconfigured in Meta (#132000/#132001) — the reply text
+      // is fine, only the wrapper is broken. Park it in
+      // pending_manual_replies so the customer's next inbound flushes it
+      // (same mechanism as the IG outside-window path) instead of losing
+      // the reply until someone reads the DLQ.
+      if (effectiveMode === 'template' && out.replyText && isTemplateConfigError(sendResult.error)) {
+        await supabase.from('pending_manual_replies').insert({
+          lead_id: leadId,
+          conversation_id: conversationId,
+          text: out.replyText.slice(0, 2000),
+          sender_type: 'ai',
+          status: 'queued',
+          metadata: { source: 'template_config_error', correlationId },
+        });
+        log.warn('orchestrate_template_config_error_reply_queued', {
+          fn: 'orchestrate', correlationId, leadId, conversationId,
+        });
+      }
       await ensurePendingQueueItem(supabase, {
         leadId,
         queueType: 'failed_automation',
         priorityLevel: 1,
-        reason: 'WhatsApp outbound failed after retries',
+        reason: isTemplateConfigError(sendResult.error)
+          ? 'תבנית הוואטסאפ המאושרת לא תואמת (מספר משתנים) — יש לתקן ב-Meta; התשובה נשמרה ותישלח כשהלקוח יכתוב'
+          : 'WhatsApp outbound failed after retries',
         queueSummary: sendResult.error ?? 'unknown_error',
         payloadJson: { effectiveMode, correlationId },
       });
-    } else if (isModelExecutionFailure(decision.executionStatus)) {
+    } else if (isModelExecutionFailure(decision.executionStatus) || decision.executionStatus === 'validation_blocked') {
       // Model/provider unavailable → make the failure visible immediately.
       // The dispatcher itself completed successfully, but no customer reply
       // was produced; without this guard the only signal is a delayed ai_stuck

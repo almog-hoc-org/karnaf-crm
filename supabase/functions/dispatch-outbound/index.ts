@@ -16,6 +16,7 @@ import { activeProvider, sendWhatsAppTemplate } from '../_shared/whatsapp-provid
 import { ensureConversation, logLeadEvent } from '../_shared/lead-service.ts';
 import { isFreeformAllowed } from '../_shared/conversation-window.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { fallbackTemplateParams } from '../_shared/provider-errors.ts';
 
 interface DispatchRow {
   id: string;
@@ -116,7 +117,7 @@ async function deliverTemplateRow(
     sendResult = await sendWhatsAppTemplate(
       lead.phone as string,
       config.whatsappSession.fallbackTemplateName,
-      [{ name: 'reply', value: text }],
+      fallbackTemplateParams(text),
     );
   } else {
     sendResult = await sendChannelText(channel, lead, text);
@@ -234,6 +235,14 @@ Deno.serve(async (req) => {
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(`orchestrate ${res.status}: ${text.slice(0, 200)}`);
+      }
+
+      // A locked conversation means another turn holds the advisory lock
+      // (or the lock RPC errored and we failed closed). Completing the row
+      // would silently drop this turn — retry with backoff instead.
+      const resBody = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (resBody && (resBody as { skipped?: string }).skipped === 'locked') {
+        throw new Error('orchestrate skipped: conversation locked');
       }
 
       await supabase.rpc('complete_outbound_dispatch', { p_id: row.id });

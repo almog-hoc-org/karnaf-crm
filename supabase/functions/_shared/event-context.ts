@@ -123,7 +123,7 @@ export async function buildLeadContext(
     .eq('id', leadId)
     .maybeSingle();
   if (error || !data) return null;
-  return buildLeadContextFromRow(supabase, data as LeadRowForContext, opts);
+  return buildLeadContextFromRow(supabase, data as unknown as LeadRowForContext, opts);
 }
 
 // The path automation-tick uses: it already has the row in memory from

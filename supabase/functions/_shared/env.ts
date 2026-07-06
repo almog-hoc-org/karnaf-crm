@@ -31,7 +31,27 @@ export const env = {
   paymentWebhookSecret: () => optional('PAYMENT_WEBHOOK_SECRET'),
   intakeWebhookSecret: () => optional('INTAKE_WEBHOOK_SECRET'),
   automationTickSecret: () => optional('AUTOMATION_TICK_SECRET'),
+  /** Tier 8.B — static token lane for integrations that can't sign HMAC
+   *  (Rav Messer webhooks). Token rides as ?token= on the intake URL;
+   *  token-authenticated requests are restricted to a source safelist. */
+  intakeStaticToken: () => optional('INTAKE_STATIC_TOKEN'),
+  /** Tier 8.C — Responder (Rav Messer) REST API credentials, from
+   *  support@responder.co.il. All four required for list-add calls. */
+  ravmesserCKey: () => optional('RAVMESSER_C_KEY'),
+  ravmesserCSecret: () => optional('RAVMESSER_C_SECRET'),
+  ravmesserUKey: () => optional('RAVMESSER_U_KEY'),
+  ravmesserUSecret: () => optional('RAVMESSER_U_SECRET'),
   slaWorkerSecret: () => optional('SLA_WORKER_SECRET'),
+  outboundDispatchSecret: () => optional('OUTBOUND_DISPATCH_SECRET'),
+  /** Meta webhooks (FB Lead Ads + Instagram DM) — app credentials. */
+  metaVerifyToken: () => optional('META_VERIFY_TOKEN'),
+  metaAppSecret: () => optional('META_APP_SECRET'),
+  metaGraphVersion: () => optional('META_GRAPH_VERSION', 'v21.0'),
+  facebookPageAccessToken: () => optional('FACEBOOK_PAGE_ACCESS_TOKEN'),
+  /** Student Portal (provision-student) — cross-project invite issuing. */
+  portalBaseUrl: () => optional('PORTAL_BASE_URL'),
+  portalSupabaseUrl: () => optional('PORTAL_SUPABASE_URL'),
+  portalServiceRoleKey: () => optional('PORTAL_SERVICE_ROLE_KEY'),
   openaiApiKey: () => optional('OPENAI_API_KEY'),
   openaiModel: () => optional('OPENAI_MODEL', 'gpt-4o-mini'),
   aiProvider: () => optional('AI_PROVIDER', 'openai').toLowerCase(),

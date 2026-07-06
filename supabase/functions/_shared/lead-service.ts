@@ -102,6 +102,9 @@ export async function ensureConversation(
   return created as { id: string; ownership_mode: string };
 }
 
+// Returns the inserted row so callers can thread the event id (e.g.
+// whatsapp-webhook uses it as outbound_dispatch.source_event_id — the
+// unique key that dedupes webhook retries).
 export async function logLeadEvent(
   supabase: SupabaseClient,
   leadId: string,
@@ -110,16 +113,17 @@ export async function logLeadEvent(
   payload: Record<string, unknown> = {},
   conversationId?: string,
   actorId?: string,
-): Promise<void> {
-  const { error } = await supabase.from('lead_events').insert({
+): Promise<{ id: string } | null> {
+  const { data, error } = await supabase.from('lead_events').insert({
     lead_id: leadId,
     conversation_id: conversationId ?? null,
     event_type: eventType,
     actor_type: actorType,
     actor_id: actorId ?? null,
     event_payload: payload,
-  });
+  }).select('id').single();
   if (error) throw error;
+  return (data as { id: string } | null) ?? null;
 }
 
 export async function transitionLeadStatus(
