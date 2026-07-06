@@ -152,11 +152,12 @@ Deno.serve(async (req) => {
   }
 
   const provisionedAt = new Date().toISOString();
-  const { error: updErr } = await supabase
+  const { data: updatedRows, error: updErr } = await supabase
     .from('leads')
     .update({ portal_invite_code: code, portal_provisioned_at: provisionedAt })
     .eq('id', leadId)
-    .is('portal_invite_code', null); // Race guard: only first writer wins.
+    .is('portal_invite_code', null) // Race guard: only first writer wins.
+    .select('id');
 
   if (updErr) {
     // Portal accepted the code but we couldn't persist on our side. The
@@ -172,6 +173,33 @@ Deno.serve(async (req) => {
       payloadJson: { correlationId, code, provisionedAt },
     });
     return jsonResponse(req, { error: 'Persisted on portal but failed to save on lead' }, 500);
+  }
+
+  // Race loser: a concurrent call already persisted ITS code (0 rows
+  // updated). Return the SAVED code — the one this call registered with
+  // the portal is an orphan the CRM can't show, and handing it to the
+  // operator would send the student a code the CRM doesn't know.
+  if (!updatedRows || updatedRows.length === 0) {
+    const { data: saved } = await supabase
+      .from('leads')
+      .select('portal_invite_code, portal_provisioned_at')
+      .eq('id', leadId)
+      .maybeSingle();
+    log.info('portal_provision_race_lost', {
+      fn: 'provision-student', correlationId, leadId, orphanCode: code,
+      savedCode: saved?.portal_invite_code ?? null,
+    });
+    if (saved?.portal_invite_code) {
+      return jsonResponse(req, {
+        ok: true,
+        code: saved.portal_invite_code,
+        signupUrl: buildSignupLink(saved.portal_invite_code),
+        provisionedAt: saved.portal_provisioned_at ?? provisionedAt,
+        raceLost: true,
+      });
+    }
+    // Shouldn't happen (guard only skips when a code exists) — surface it.
+    return jsonResponse(req, { error: 'Invite persisted by a concurrent call but not found' }, 500);
   }
 
   await logLeadEvent(supabase, leadId, 'portal_invite_issued', 'system', {

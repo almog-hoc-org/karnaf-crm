@@ -19,7 +19,7 @@ import { ensureConversation, logLeadEvent } from '../_shared/lead-service.ts';
 import { messageAlreadyLogged } from '../_shared/idempotency.ts';
 import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
-import { env, safeEqual } from '../_shared/env.ts';
+import { env, optional, safeEqual } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 
@@ -59,9 +59,18 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
 
   // ---- 2. Signature ------------------------------------------------------
+  // Fail-closed, same posture as whatsapp-webhook / instagram-webhook: a
+  // missing META_APP_SECRET used to silently accept UNSIGNED posts —
+  // anyone could forge junk leads and drive service-role orchestrate
+  // calls. Dev/local can opt out via WEBHOOK_ALLOW_UNSIGNED=true.
   const rawBody = await req.text();
   const metaSecret = env.metaAppSecret();
-  if (metaSecret) {
+  if (!metaSecret) {
+    if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
+      log.error('ig_webhook_misconfigured', { fn: 'ig-webhook', correlationId });
+      return jsonResponse(req, { error: 'Webhook not configured' }, 503);
+    }
+  } else {
     const sigHeader = req.headers.get('x-hub-signature-256');
     if (!sigHeader) {
       log.warn('ig_signature_missing', { fn: 'ig-webhook', correlationId });

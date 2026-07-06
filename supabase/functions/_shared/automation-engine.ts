@@ -223,7 +223,20 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
     },
     correlation_id: ctx.correlationId ?? null,
   }).select('id').maybeSingle();
-  if (enqErr) return { type: 'send_template', status: 'failed', detail: enqErr.message };
+  if (enqErr) {
+    // Release the once-claim: without this, one transient insert failure
+    // permanently consumed the claim and the rule could never send to
+    // this lead again ("already sent (once gate)" on every retry).
+    if (action.once === true) {
+      await ctx.supabase
+        .from('engine_template_sends')
+        .delete()
+        .eq('lead_id', ctx.contactId)
+        .eq('template_key', key)
+        .eq('channel', channel);
+    }
+    return { type: 'send_template', status: 'failed', detail: enqErr.message };
+  }
 
   return {
     type: 'send_template', status: 'ok',

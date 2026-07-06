@@ -111,7 +111,7 @@ const messages: MessageRow[] = [
   },
 ];
 
-// Tier 0.F.1 — UnifiedTimeline reads from `activities` rather than the
+// Tier 0.F.1 — the chat/activity tabs read from `activities` rather than the
 // individual messages/events/tasks/queue arrays. Mirror the test's two
 // outbound/inbound messages into activities so the timeline can render.
 const activities: import('@/lib/types').ActivityRow[] = [

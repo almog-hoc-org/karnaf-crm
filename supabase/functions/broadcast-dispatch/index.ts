@@ -119,16 +119,23 @@ Deno.serve(async (req) => {
         totalEnqueued += 1;
       }
 
-      // 3. Finalise when nothing is left to enqueue.
+      // 3. Finalise only when every recipient reached a TERMINAL state
+      //    (sent / skipped / failed). 'pending' means not yet enqueued;
+      //    'enqueued' means a dispatch is still in flight or retrying —
+      //    finalising then would freeze counts mid-run (the old code
+      //    even counted 'enqueued' as sent, so an all-failed broadcast
+      //    reported 100% delivered).
       const { count: remaining } = await supabase
         .from('broadcast_recipients')
         .select('id', { count: 'exact', head: true })
         .eq('broadcast_id', b.id)
-        .eq('status', 'pending');
+        .in('status', ['pending', 'enqueued']);
       if ((remaining ?? 0) === 0) {
         const counts = await finalCounts(supabase, b.id);
         await supabase.from('broadcasts').update({
-          status: 'sent',
+          // An all-failed broadcast is 'failed', not 'sent' — the operator
+          // must see it needs attention, not a green checkmark.
+          status: counts.sent === 0 && counts.failed > 0 ? 'failed' : 'sent',
           sent_count: counts.sent,
           failed_count: counts.failed,
           skipped_count: counts.skipped,
@@ -148,12 +155,16 @@ Deno.serve(async (req) => {
   return jsonResponse(req, { ok: true, broadcasts: broadcasts.length, enqueued: totalEnqueued });
 });
 
+// Recipient statuses are exclusive terminal buckets: sent / failed /
+// skipped. delivered+read are NOT statuses — they're derived from the
+// linked messages rows (see broadcasts/index.ts recipientStats), so a
+// recipient is counted exactly once here.
 async function finalCounts(supabase: ReturnType<typeof getServiceSupabase>, broadcastId: string) {
   const { data } = await supabase
     .from('broadcast_recipients').select('status').eq('broadcast_id', broadcastId);
   const rows = (data ?? []) as Array<{ status: string }>;
   return {
-    sent: rows.filter((r) => ['sent', 'delivered', 'read', 'enqueued'].includes(r.status)).length,
+    sent: rows.filter((r) => r.status === 'sent').length,
     failed: rows.filter((r) => r.status === 'failed').length,
     skipped: rows.filter((r) => r.status === 'skipped').length,
   };

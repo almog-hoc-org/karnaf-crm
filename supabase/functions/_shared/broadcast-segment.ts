@@ -18,6 +18,14 @@ export interface BroadcastSegment {
 // column injection from a client-supplied segment object.
 const ALLOWED_FIELDS = ['source', 'source_campaign', 'primary_track', 'product_interest'] as const;
 
+// A segment value may carry several slugs comma-joined — one Hebrew UI
+// label fronts multiple raw source slugs (e.g. "אתר" → website,
+// landing_page, services_page), same convention as the leads-list source
+// filter. Exported for the unit-test mirror.
+export function splitSegmentValue(value: string): string[] {
+  return value.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 // Apply the segment filter + the non-negotiable suppression guards
 // (do_not_contact, removed_by_request) to a leads query builder.
 export function applySegment<T>(query: T, segment: BroadcastSegment): T {
@@ -30,7 +38,9 @@ export function applySegment<T>(query: T, segment: BroadcastSegment): T {
   for (const field of ALLOWED_FIELDS) {
     const value = segment?.[field];
     if (typeof value === 'string' && value.trim()) {
-      q = q.eq(field, value.trim());
+      const slugs = splitSegmentValue(value);
+      if (slugs.length > 1) q = q.in(field, slugs);
+      else if (slugs.length === 1) q = q.eq(field, slugs[0]);
     }
   }
   return q as T;

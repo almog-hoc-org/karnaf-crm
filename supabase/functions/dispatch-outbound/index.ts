@@ -141,8 +141,10 @@ async function deliverTemplateRow(
     },
   }).select('id').maybeSingle();
 
-  // Broadcast analytics — mark the recipient sent and link the message so
-  // provider-status-webhook's delivered/read updates roll up per broadcast.
+  // Broadcast analytics — mark the recipient sent and link the message.
+  // delivered/read are derived from the messages join in recipientStats;
+  // provider-status-webhook rolls up async provider FAILURES (bad number
+  // etc.) onto the recipient via this message_id link.
   if (payload.broadcast_id) {
     await supabase
       .from('broadcast_recipients')
@@ -258,6 +260,27 @@ Deno.serve(async (req) => {
         err: message,
       });
       await supabase.rpc('fail_outbound_dispatch', { p_id: row.id, p_error: message });
+
+      // Broadcast analytics — reflect the outcome on the recipient row.
+      // A transient failure stays 'enqueued' (a retry is scheduled); only
+      // a DLQ'd dispatch marks the recipient failed for good. Without
+      // this, permanently-failed sends sat as 'enqueued' forever and the
+      // broadcast reported them as delivered.
+      const broadcastId = row.payload?.broadcast_id as string | undefined;
+      if (broadcastId) {
+        const { data: disp } = await supabase
+          .from('outbound_dispatch')
+          .select('status')
+          .eq('id', row.id)
+          .maybeSingle();
+        const patch: Record<string, unknown> = { error: message.slice(0, 500) };
+        if (disp?.status === 'dlq') patch.status = 'failed';
+        await supabase
+          .from('broadcast_recipients')
+          .update(patch)
+          .eq('broadcast_id', broadcastId)
+          .eq('lead_id', row.lead_id);
+      }
     }
   }
 

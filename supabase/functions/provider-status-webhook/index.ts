@@ -85,6 +85,19 @@ Deno.serve(async (req) => {
     if (status === 'failed') updates.provider_error = errorMessage;
 
     await supabase.from('messages').update(updates).eq('id', message.id);
+
+    // Broadcast analytics — a provider-side failure (bad number, template
+    // rejection) arrives asynchronously AFTER dispatch-outbound marked the
+    // recipient 'sent'. Roll it up via the message link so the broadcast
+    // counts the recipient as failed, not delivered. delivered/read need
+    // no rollup — recipientStats derives them from the messages join.
+    if (status === 'failed') {
+      await supabase
+        .from('broadcast_recipients')
+        .update({ status: 'failed', error: errorMessage ?? 'provider failure' })
+        .eq('message_id', message.id);
+    }
+
     await supabase.from('lead_events').insert({
       lead_id: message.lead_id,
       conversation_id: message.conversation_id,

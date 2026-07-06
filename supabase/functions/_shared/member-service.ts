@@ -27,17 +27,23 @@ export async function ensureProgramMember(
 ): Promise<EnsureProgramMemberResult> {
   const { data: existing, error: readErr } = await supabase
     .from('program_members')
-    .select('lead_id')
+    .select('lead_id, metadata')
     .eq('lead_id', input.leadId)
     .maybeSingle();
   if (readErr) throw readErr;
 
   if (existing) {
     // Already a member — merge metadata only, never downgrade
-    // progress_stage or overwrite joined_via.
+    // progress_stage or overwrite joined_via. Merge = spread over the
+    // stored jsonb; a plain update() would clobber the original order /
+    // provenance keys on a second payment.
     if (input.metadata && Object.keys(input.metadata).length > 0) {
+      const merged = {
+        ...((existing.metadata as Record<string, unknown> | null) ?? {}),
+        ...input.metadata,
+      };
       await supabase.from('program_members').update({
-        metadata: input.metadata,
+        metadata: merged,
         updated_at: new Date().toISOString(),
       }).eq('lead_id', input.leadId);
     }

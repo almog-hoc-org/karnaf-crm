@@ -16,6 +16,7 @@ import { loadProductClaims } from '../_shared/claim-service.ts';
 import { releaseConversationLock, tryConversationLock } from '../_shared/conversation-lock.ts';
 import { fallbackTemplateParams, isTemplateConfigError } from '../_shared/provider-errors.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
+import { coveredByLatestReply, latestInboundAt } from '../_shared/answered-guard.ts';
 import { maybeRefreshSummary } from '../_shared/transcript-summary.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
@@ -160,7 +161,7 @@ Deno.serve(async (req) => {
 
     const { data: recentMessages, error: msgErr } = await supabase
       .from('messages')
-      .select('sender_type, content_text, created_at, direction')
+      .select('sender_type, content_text, created_at, direction, raw_payload')
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: false })
       .limit(8);
@@ -169,21 +170,23 @@ Deno.serve(async (req) => {
     const ordered = (recentMessages ?? []).slice().reverse();
 
     // Coalescing / anti-double-send guard. orchestrate always answers the
-    // LATEST lead message with full recent context. If the most recent message
-    // is already outbound, this lead has nothing unanswered — this dispatch is
-    // a duplicate or was superseded by a turn that already replied (e.g. two
-    // inbound messages a few seconds apart each enqueued a dispatch). The
-    // conversation lock guarantees the earlier turn's reply is committed before
-    // we get here, so rapid-fire messages collapse into a single reply instead
-    // of producing two (often contradictory) sends.
-    const latestMessage = ordered[ordered.length - 1];
-    if (latestMessage && latestMessage.direction === 'outbound') {
+    // LATEST lead message with full recent context, so a dispatch whose
+    // inbound was already covered by a newer reply is a duplicate. The
+    // guard used to skip on "latest message is outbound" alone — which
+    // swallowed a customer message that arrived mid-LLM-call (the reply's
+    // created_at postdates it but its context never saw it, and the
+    // watchdog is blind because last_outbound_at > last_inbound_at).
+    // Now each AI reply records raw_payload.context_last_inbound_at and
+    // we only skip when that marker covers the newest inbound. See
+    // _shared/answered-guard.ts for the full matrix.
+    if (coveredByLatestReply(ordered)) {
+      const latestMessage = ordered[ordered.length - 1];
       log.info('orchestrate_already_answered', {
         fn: 'orchestrate',
         correlationId,
         leadId,
         conversationId,
-        latestSender: latestMessage.sender_type,
+        latestSender: latestMessage?.sender_type ?? null,
       });
       return jsonResponse(req, { ok: true, skipped: 'already_answered' });
     }
@@ -446,7 +449,10 @@ Deno.serve(async (req) => {
     }
 
     if (sendResult.ok && out.replyText) {
-      // Persist the AI message; trigger updates lead timestamps.
+      // Persist the AI message; trigger updates lead timestamps. The
+      // context_last_inbound_at marker records which inbound this reply's
+      // context covered — the already_answered guard reads it to decide
+      // whether a later dispatch is a duplicate or an unseen message.
       await supabase.from('messages').insert({
         conversation_id: conversationId,
         lead_id: leadId,
@@ -456,6 +462,7 @@ Deno.serve(async (req) => {
         message_type: effectiveMode === 'template' ? 'template' : 'text',
         content_text: out.replyText,
         provider_status: 'sent',
+        raw_payload: { context_last_inbound_at: latestInboundAt(ordered) },
       });
 
       const nextScore = Math.max(0, Math.min(100, Number(lead.lead_score ?? 0) + out.scoreDelta));

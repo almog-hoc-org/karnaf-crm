@@ -157,11 +157,15 @@ async function fetchTemplateBody(
   return (data?.body as string | undefined) || CONCIERGE_FALLBACK_TEXTS[key];
 }
 
+// Returns whether the provider accepted the send. Callers must not stamp
+// greeted/reprompted (or otherwise mark the member as handled) on false —
+// a failed greet used to be stamped anyway, leaving a paying member
+// silently unanswered with no alert.
 async function sendConciergeMessage(
   supabase: SupabaseClient,
   input: HandleMemberConciergeInput,
   text: string,
-): Promise<void> {
+): Promise<boolean> {
   const result = await sendWhatsAppText(input.phone, text);
   await supabase.from('messages').insert({
     conversation_id: input.conversationId,
@@ -181,6 +185,30 @@ async function sendConciergeMessage(
       fn: 'member-concierge', correlationId: input.correlationId, leadId: input.lead.id, err: result.error ?? null,
     });
   }
+  return result.ok;
+}
+
+// Surface a failed concierge send to a human. The failed outbound row
+// still bumps last_outbound_at (004 trigger), which blinds the
+// ai-watchdog — so without this queue item nobody would ever know the
+// member got nothing. Mirrors the expert-handoff escalation pattern.
+async function escalateFailedConciergeSend(
+  supabase: SupabaseClient,
+  input: HandleMemberConciergeInput,
+  templateKey: string,
+): Promise<void> {
+  await ensurePendingQueueItem(supabase, {
+    leadId: input.lead.id,
+    queueType: 'failed_automation',
+    priorityLevel: 1,
+    reason: `שליחת הודעת קונסיירז' (${templateKey}) לחבר תוכנית נכשלה — נדרש מענה ידני`,
+    payloadJson: { source: 'member_concierge', template_key: templateKey, correlation_id: input.correlationId },
+    createdByActorType: 'system',
+  });
+  await logLeadEvent(supabase, input.lead.id, 'member_concierge_send_failed', 'system', {
+    template_key: templateKey,
+    correlation_id: input.correlationId,
+  }, input.conversationId);
 }
 
 export async function handleMemberConcierge(
@@ -234,13 +262,54 @@ export async function handleMemberConcierge(
 
   if (action === 'greet' || action === 'reprompt') {
     const key = action === 'greet' ? 'member_welcome_v1' : 'member_reprompt_v1';
-    const body = await fetchTemplateBody(supabase, key);
-    await sendConciergeMessage(supabase, input, renderConciergeText(body, { firstName, johnPhone: config.johnPhone }));
     const stampField = action === 'greet' ? 'concierge_last_greeted_at' : 'concierge_last_reprompted_at';
-    await supabase.from('program_members').update({
-      [stampField]: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).eq('lead_id', input.lead.id);
+    const priorStamp = action === 'greet'
+      ? input.member.concierge_last_greeted_at
+      : input.member.concierge_last_reprompted_at;
+
+    // Claim-first compare-and-swap on the stamp: two concurrent messages
+    // both decide 'greet' from the same stale member row — only the one
+    // whose update still sees the prior value wins; the loser skips the
+    // send instead of double-greeting. (greet can legitimately re-fire on
+    // a NEW episode with a non-null stamp, so the CAS matches the exact
+    // prior value rather than IS NULL.)
+    const nowIso = new Date().toISOString();
+    let claimQuery = supabase.from('program_members')
+      .update({ [stampField]: nowIso, updated_at: nowIso })
+      .eq('lead_id', input.lead.id);
+    claimQuery = priorStamp === null || priorStamp === undefined
+      ? claimQuery.is(stampField, null)
+      : claimQuery.eq(stampField, priorStamp);
+    const { data: claimed, error: claimErr } = await claimQuery.select('lead_id');
+    if (claimErr) {
+      log.error('member_concierge_claim_failed', {
+        fn: 'member-concierge', correlationId: input.correlationId, leadId: input.lead.id, err: claimErr.message,
+      });
+      return { handled: true, action: 'silent' };
+    }
+    if (!claimed || claimed.length === 0) {
+      // Lost the race — a concurrent invocation already greeted.
+      log.info('member_concierge_claim_lost', {
+        fn: 'member-concierge', correlationId: input.correlationId, leadId: input.lead.id, action,
+      });
+      return { handled: true, action: 'silent' };
+    }
+
+    const body = await fetchTemplateBody(supabase, key);
+    const sent = await sendConciergeMessage(
+      supabase, input, renderConciergeText(body, { firstName, johnPhone: config.johnPhone }),
+    );
+    if (!sent) {
+      // Roll the claim back so the member's NEXT message retries the
+      // greet, and put a human in the loop now.
+      await supabase.from('program_members').update({
+        [stampField]: priorStamp ?? null,
+        updated_at: new Date().toISOString(),
+      }).eq('lead_id', input.lead.id);
+      await escalateFailedConciergeSend(supabase, input, key);
+      return { handled: true, action };
+    }
+
     await logLeadEvent(
       supabase,
       input.lead.id,
@@ -252,7 +321,9 @@ export async function handleMemberConcierge(
     return { handled: true, action };
   }
 
-  // silent — no send, no event; the message stays visible via the
-  // mia_reply lane / inbox as usual.
+  // silent — no send, no event. The member stays ai_active, so the
+  // message surfaces to a human only via the ai-watchdog's ai_stuck
+  // check (delayed) or the operator's inbox — not via the mia_pending
+  // lane, which requires ownership_mode = 'mia_active'.
   return { handled: true, action };
 }

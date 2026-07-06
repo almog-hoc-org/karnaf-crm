@@ -240,17 +240,30 @@ Deno.serve(async (req) => {
   }
 
   if (body.action === 'restore') {
-    // Owner/admin only — undo a soft-delete (set removed_by_request=false,
-    // also clears the do_not_contact flag we set on delete). The orchestrator
-    // will start considering the lead again on the next inbound.
+    // Owner/admin only — undo a soft-delete. do_not_contact is restored to
+    // its PRE-delete value (recorded on the soft-delete event): the delete
+    // forces it on, but a lead who had independently opted out before the
+    // delete must not be re-enabled for outreach by a restore.
     if (staff.role !== 'owner' && staff.role !== 'admin') {
       return jsonResponse(req, { error: 'Restore requires owner/admin' }, 403);
     }
     if (!body.leadId) return jsonResponse(req, { error: 'Missing leadId' }, 400);
 
+    const { data: deleteEvent } = await supabase
+      .from('lead_events')
+      .select('event_payload')
+      .eq('lead_id', body.leadId)
+      .eq('event_type', 'lead_manual_soft_deleted')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const priorDnc =
+      (deleteEvent?.event_payload as { prior_do_not_contact?: boolean } | null)
+        ?.prior_do_not_contact === true;
+
     const { data, error } = await supabase
       .from('leads')
-      .update({ removed_by_request: false, do_not_contact: false })
+      .update({ removed_by_request: false, do_not_contact: priorDnc })
       .eq('id', body.leadId)
       .select('id, removed_by_request, do_not_contact')
       .single();
@@ -270,6 +283,15 @@ Deno.serve(async (req) => {
   if (body.action === 'delete') {
     if (!body.leadId) return jsonResponse(req, { error: 'Missing leadId' }, 400);
 
+    // Snapshot do_not_contact BEFORE forcing it on: restore must put the
+    // flag back as it was, not blindly clear it — a lead who opted out
+    // before the delete must stay opted-out after a restore.
+    const { data: prior } = await supabase
+      .from('leads')
+      .select('do_not_contact')
+      .eq('id', body.leadId)
+      .maybeSingle();
+
     const { data, error } = await supabase
       .from('leads')
       .update({
@@ -284,6 +306,7 @@ Deno.serve(async (req) => {
     await logLeadEvent(supabase, body.leadId, 'lead_manual_soft_deleted', staff.role, {
       actor_user_id: staff.userId,
       reason: body.reason ?? null,
+      prior_do_not_contact: prior?.do_not_contact ?? false,
       correlation_id: correlationId,
     }, undefined, staff.userId);
 
