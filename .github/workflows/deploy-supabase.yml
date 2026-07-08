@@ -88,8 +88,15 @@ jobs:
           # Preflight — verifies the token and project access before any SQL.
           projects = call('GET', '/v1/projects') or []
           if not any(p.get('id') == ref for p in projects):
-              print(f'::error::Token is valid but has no access to project {ref}. '
-                    f'Visible projects: {[p.get("id") for p in projects]}')
+              orgs = call('GET', '/v1/organizations') or []
+              print(f'::error::Token is valid but has no access to project {ref}.')
+              print('::error::The token belongs to a Supabase account that is NOT '
+                    'a member of the organization owning the production project. '
+                    'It sees these organizations/projects instead:')
+              for o in orgs:
+                  print(f"::error::  org: {o.get('name')} ({o.get('id')})")
+              for p in projects:
+                  print(f"::error::  project: {p.get('name')} ({p.get('id')}, org {p.get('organization_id')})")
               sys.exit(1)
           print(f'preflight ok: token sees project {ref}')
 
