@@ -7,8 +7,9 @@
 # only — no database password needed), matching how prod migrations
 # 085-092 were applied.
 #
-# One-time setup: add the SUPABASE_ACCESS_TOKEN secret at
+# One-time setup: add the SUPABASE_TOKEN secret at
 #   Settings → Secrets and variables → Actions → New repository secret.
+# (The Supabase CLI reads it via the SUPABASE_ACCESS_TOKEN env var below.)
 #
 # Manual re-run: Actions tab → "Deploy Supabase" → Run workflow.
 
@@ -36,8 +37,8 @@ jobs:
 
       - name: Guard — secret must exist
         run: |
-          if [ -z "${{ secrets.SUPABASE_ACCESS_TOKEN }}" ]; then
-            echo "::error::SUPABASE_ACCESS_TOKEN secret is not configured (Settings → Secrets → Actions)."
+          if [ -z "${{ secrets.SUPABASE_TOKEN }}" ]; then
+            echo "::error::SUPABASE_TOKEN secret is not configured (Settings → Secrets → Actions)."
             exit 1
           fi
 
@@ -47,7 +48,7 @@ jobs:
       # recorded so re-runs are no-ops.
       - name: Apply pending migrations (Management API)
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
         run: |
           python3 - <<'PYEOF'
           import json, os, re, sys, urllib.request
@@ -98,5 +99,5 @@ jobs:
       # from past ad-hoc --no-verify-jwt deployments.
       - name: Deploy all edge functions
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
         run: supabase functions deploy --project-ref "$PROJECT_REF"
