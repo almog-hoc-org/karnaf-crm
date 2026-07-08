@@ -51,19 +51,46 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
         run: |
           python3 - <<'PYEOF'
-          import json, os, re, sys, urllib.request
+          import json, os, re, sys, urllib.error, urllib.request
 
           ref = os.environ['PROJECT_REF']
-          tok = os.environ['SUPABASE_ACCESS_TOKEN']
-          url = f'https://api.supabase.com/v1/projects/{ref}/database/query'
+          # Tolerate common paste mistakes in the secret: surrounding
+          # whitespace/newlines, wrapping quotes, or a KEY=value prefix.
+          tok = os.environ['SUPABASE_ACCESS_TOKEN'].strip().strip('"\'')
+          if '=' in tok and not tok.startswith('sbp_'):
+              tok = tok.split('=', 1)[1].strip().strip('"\'')
+          print(f'token check: {len(tok)} chars, sbp_ prefix: {tok.startswith("sbp_")}')
 
-          def q(sql):
+          def call(method, path, body=None):
               req = urllib.request.Request(
-                  url, data=json.dumps({'query': sql}).encode(),
+                  f'https://api.supabase.com{path}',
+                  data=json.dumps(body).encode() if body is not None else None,
+                  method=method,
                   headers={'Authorization': f'Bearer {tok}',
                            'Content-Type': 'application/json'})
-              with urllib.request.urlopen(req) as r:
-                  return json.loads(r.read().decode() or 'null')
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return json.loads(r.read().decode() or 'null')
+              except urllib.error.HTTPError as e:
+                  detail = e.read().decode(errors='replace')[:300]
+                  print(f'::error::Supabase API {e.code} on {method} {path}: {detail}')
+                  if e.code in (401, 403):
+                      print('::error::The token was rejected. Regenerate at '
+                            'https://supabase.com/dashboard/account/tokens and update '
+                            'the SUPABASE_TOKEN repository secret (paste the raw '
+                            'sbp_... value only).')
+                  sys.exit(1)
+
+          # Preflight — verifies the token and project access before any SQL.
+          projects = call('GET', '/v1/projects') or []
+          if not any(p.get('id') == ref for p in projects):
+              print(f'::error::Token is valid but has no access to project {ref}. '
+                    f'Visible projects: {[p.get("id") for p in projects]}')
+              sys.exit(1)
+          print(f'preflight ok: token sees project {ref}')
+
+          def q(sql):
+              return call('POST', f'/v1/projects/{ref}/database/query', {'query': sql})
 
           applied = {row['version'] for row in
                      (q('select version from supabase_migrations.schema_migrations') or [])}
