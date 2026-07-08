@@ -66,8 +66,12 @@ jobs:
                   f'https://api.supabase.com{path}',
                   data=json.dumps(body).encode() if body is not None else None,
                   method=method,
+                  # Cloudflare fronts api.supabase.com and blocks the default
+                  # Python-urllib signature with error 1010 — a real UA is
+                  # required, not optional.
                   headers={'Authorization': f'Bearer {tok}',
-                           'Content-Type': 'application/json'})
+                           'Content-Type': 'application/json',
+                           'User-Agent': 'curl/8.5.0'})
               try:
                   with urllib.request.urlopen(req) as r:
                       return json.loads(r.read().decode() or 'null')
