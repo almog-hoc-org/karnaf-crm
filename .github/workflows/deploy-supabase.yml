@@ -1,0 +1,102 @@
+# Auto-deploy to Supabase on every merge to master.
+#
+# Replaces the manual "run supabase db push + functions deploy from a
+# laptop with the token" ritual: GitHub's runners have open network and
+# the token lives in an Actions secret, so master merges deploy
+# themselves. Migrations are applied through the Management API (token
+# only — no database password needed), matching how prod migrations
+# 085-092 were applied.
+#
+# One-time setup: add the SUPABASE_ACCESS_TOKEN secret at
+#   Settings → Secrets and variables → Actions → New repository secret.
+#
+# Manual re-run: Actions tab → "Deploy Supabase" → Run workflow.
+
+name: Deploy Supabase
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'supabase/**'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-supabase
+  cancel-in-progress: false
+
+env:
+  PROJECT_REF: svkzkpgccahwmyflobvn
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — secret must exist
+        run: |
+          if [ -z "${{ secrets.SUPABASE_ACCESS_TOKEN }}" ]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN secret is not configured (Settings → Secrets → Actions)."
+            exit 1
+          fi
+
+      # Apply any migration files whose numeric version is not yet in
+      # supabase_migrations.schema_migrations, in order, via the
+      # Management API query endpoint. Each applied migration is
+      # recorded so re-runs are no-ops.
+      - name: Apply pending migrations (Management API)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, re, sys, urllib.request
+
+          ref = os.environ['PROJECT_REF']
+          tok = os.environ['SUPABASE_ACCESS_TOKEN']
+          url = f'https://api.supabase.com/v1/projects/{ref}/database/query'
+
+          def q(sql):
+              req = urllib.request.Request(
+                  url, data=json.dumps({'query': sql}).encode(),
+                  headers={'Authorization': f'Bearer {tok}',
+                           'Content-Type': 'application/json'})
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read().decode() or 'null')
+
+          applied = {row['version'] for row in
+                     (q('select version from supabase_migrations.schema_migrations') or [])}
+          print(f'{len(applied)} migrations already applied')
+
+          files = sorted(f for f in os.listdir('supabase/migrations') if f.endswith('.sql'))
+          pending = []
+          for f in files:
+              m = re.match(r'^(\d+)_', f)
+              if m and m.group(1) not in applied:
+                  pending.append((m.group(1), f))
+
+          if not pending:
+              print('No pending migrations.')
+              sys.exit(0)
+
+          for version, fname in pending:
+              print(f'Applying {fname} ...')
+              sql = open(f'supabase/migrations/{fname}').read()
+              name = fname[:-4].split('_', 1)[1]
+              q(sql)
+              q("insert into supabase_migrations.schema_migrations(version, name) "
+                f"values ('{version}', '{name}') on conflict do nothing")
+              print(f'Applied {fname}')
+          PYEOF
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Deploy every function; supabase/config.toml is the single source
+      # of truth for verify_jwt, so a full deploy also heals any drift
+      # from past ad-hoc --no-verify-jwt deployments.
+      - name: Deploy all edge functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy --project-ref "$PROJECT_REF"
