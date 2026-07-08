@@ -259,8 +259,8 @@ export function LeadDetailPage() {
     );
   if (!detailQ.data) return null;
 
-  // Tier 5.C — tasks + events are now rendered exclusively in UnifiedTimeline
-  // (Tier 0.F merged them into the unified activities feed). The detail
+  // Tier 5.C — tasks + events are now rendered exclusively in the
+  // ActivityFeed tab (Tier 0.F merged them into the activities feed). The detail
   // response still ships them for back-compat, but consumers should read
   // from `activities`. Drop the unused destructured fields.
   // Tier 6.B — humanOwnerProfile no longer rendered (CurrentOwnerLine removed;
@@ -268,7 +268,7 @@ export function LeadDetailPage() {
   // timeline). The detail response still ships it for future per-owner
   // surfaces.
   const { lead, messages, queueItems } = detailQ.data;
-  // Tier 0.F.1 — UnifiedTimeline reads from the new activities feed
+  // Tier 0.F.1 — ChatTimeline/ActivityFeed read from the new activities feed
   // when the migration-054 server is live; falls back to nothing so
   // the empty state renders gracefully if the field is missing during
   // a partial rollout. Once the rollout settles, the `?? []` becomes
@@ -819,7 +819,7 @@ export function LeadDetailPage() {
 
           {/* Tier 5.C — sidebar slimming. The earlier "תורי עבודה" /
               "משימות" / "היסטוריית אירועים" cards listed the same rows
-              the UnifiedTimeline already renders chronologically. The
+              the activity tab already renders chronologically. The
               only unique value was the queue-close button — kept here
               as a compact action list of *pending* items only, so Mia
               can resolve a queue item without scrolling the timeline.

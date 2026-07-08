@@ -203,6 +203,15 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Campaign tag rides on the URL for BOTH auth lanes — form providers
+  // pin `?campaign=launch_webinar_2026` on the webhook URL because their
+  // field mapping can't add constant body fields. Body wins if present.
+  // Segmentation metadata only (feeds leads.source_campaign); it is not
+  // part of the HMAC-signed body and never gates auth or identity.
+  if (!hasValue(payload.campaign_name) && url.searchParams.get('campaign')) {
+    payload.campaign_name = url.searchParams.get('campaign');
+  }
+
   if (tokenAuthenticated) {
     // Rav Messer's field mapping can't always add constant fields —
     // source/contract_key ride on the URL instead, body wins if present.

@@ -46,8 +46,6 @@ const OPEN_STATUSES = [
   'manual_review_required',
 ];
 
-const DAY_MS = 24 * 3600 * 1000;
-
 function hoursSince(value: string | null | undefined, now = Date.now()): number | null {
   if (!value) return null;
   const t = Date.parse(value);

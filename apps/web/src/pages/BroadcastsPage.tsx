@@ -39,10 +39,20 @@ const STATUS_TONE: Record<BroadcastStatus, string> = {
   failed: 'text-rose-700',
 };
 
-// Fields an operator can segment on, with Hebrew labels.
-const SOURCE_OPTIONS = Array.from(
-  new Map(Object.entries(SOURCE_LABELS).map(([k, v]) => [v, { value: k, label: v }])).values(),
-);
+// Fields an operator can segment on, with Hebrew labels. One Hebrew label
+// fronts several raw slugs (e.g. "אתר" → website / landing_page /
+// services_page), so each option carries ALL its slugs comma-joined and
+// the backend matches with IN — same pattern as the LeadsPage source
+// filter. Picking one slug per label silently under-targeted broadcasts.
+export const SOURCE_OPTIONS: Array<{ value: string; label: string }> = (() => {
+  const byLabel = new Map<string, string[]>();
+  for (const [slug, label] of Object.entries(SOURCE_LABELS)) {
+    const arr = byLabel.get(label) ?? [];
+    arr.push(slug);
+    byLabel.set(label, arr);
+  }
+  return Array.from(byLabel.entries()).map(([label, slugs]) => ({ value: slugs.join(','), label }));
+})();
 const TRACK_OPTIONS = [
   { value: 'program', label: 'הדרך לדירה' },
   { value: 'presale', label: 'פריסייל' },
@@ -319,10 +329,15 @@ function DetailDialog({ id, onClose }: { id: string; onClose: () => void }) {
             <span>עודכן {formatRelative(b.updated_at)}</span>
           </div>
 
+          {/* Recipient statuses (pending/enqueued/sent/skipped/failed) are
+              exclusive buckets; delivered/read are OVERLAYS derived from the
+              linked messages (a read recipient is still status='sent'). So
+              tiles must not sum them — that triple-counted deliveries. */}
           <section className="grid grid-cols-2 gap-2 md:grid-cols-3">
             <StatTile label="נמענים" value={s.total} />
-            <StatTile label="נשלחו" value={s.sent + s.delivered + s.read + s.enqueued} tone="text-emerald-700" />
-            <StatTile label="נמסרו" value={s.delivered + s.read} tone="text-sky-700" />
+            <StatTile label="בתור" value={s.pending + s.enqueued} tone="text-amber-700" />
+            <StatTile label="נשלחו" value={s.sent} tone="text-emerald-700" />
+            <StatTile label="נמסרו" value={s.delivered} tone="text-sky-700" />
             <StatTile label="נקראו" value={s.read} tone="text-indigo-700" />
             <StatTile label="נכשלו" value={s.failed} tone="text-rose-700" />
             <StatTile label="דולגו (DNC)" value={s.skipped} tone="text-slate-500" />

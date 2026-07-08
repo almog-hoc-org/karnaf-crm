@@ -127,3 +127,83 @@ verify_jwt = true
 
 [functions.pii-delete]
 verify_jwt = true
+
+# ─────────────────────────────────────────────────────────────────────
+# Every function directory MUST be registered here. An unregistered
+# function defaults to verify_jwt=true at the gateway, which silently
+# breaks any caller that authenticates with a non-JWT mechanism (Meta
+# HMAC webhooks, shared-secret workers) on the next clean deploy.
+# ─────────────────────────────────────────────────────────────────────
+
+# Meta webhooks — X-Hub-Signature-256, no JWT. Own HMAC check inside.
+[functions.fb-leadgen-webhook]
+verify_jwt = false
+
+# Legacy Instagram webhook still receiving Meta's subscription; being
+# replaced by instagram-webhook (see docs/DEPLOY-fixes-post-pr44.md).
+[functions.ig-webhook]
+verify_jwt = false
+
+# Internal workers — bearer = SLA_WORKER_SECRET (random secret, not a JWT).
+[functions.ai-replay]
+verify_jwt = false
+
+[functions.ai-watchdog]
+verify_jwt = false
+
+[functions.internal-send-reply]
+verify_jwt = false
+
+# Cross-project provisioning — bearer = service-role key.
+[functions.provision-student]
+verify_jwt = false
+
+# Operator endpoints — requireStaff (JWT). Declared explicitly so the
+# registry stays complete even though true is the default.
+[functions.ai-review]
+verify_jwt = true
+
+[functions.broadcasts]
+verify_jwt = true
+
+[functions.attention-inbox]
+verify_jwt = true
+
+[functions.automations]
+verify_jwt = true
+
+[functions.bulk-lead-actions]
+verify_jwt = true
+
+[functions.commissions]
+verify_jwt = true
+
+[functions.conversation-claims]
+verify_jwt = true
+
+[functions.journeys]
+verify_jwt = true
+
+[functions.lead-sources]
+verify_jwt = true
+
+[functions.leads-manage]
+verify_jwt = true
+
+[functions.message-templates]
+verify_jwt = true
+
+[functions.meta-template-status]
+verify_jwt = true
+
+[functions.partners]
+verify_jwt = true
+
+[functions.projects]
+verify_jwt = true
+
+[functions.reports]
+verify_jwt = true
+
+[functions.team-workload]
+verify_jwt = true
