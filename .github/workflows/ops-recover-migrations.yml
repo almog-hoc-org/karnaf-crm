@@ -1,0 +1,94 @@
+# TEMPORARY ops workflow — delete after use.
+#
+# Migrations 085-089 were applied straight to production and their .sql
+# files never made it into the repo (084 → 090 gap). The Supabase CLI
+# records each applied migration's statements in
+# supabase_migrations.schema_migrations. This one-shot job reads them
+# back, writes the missing files, and pushes them to the
+# ops/recovered-migrations branch for a normal reviewed PR.
+#
+# Nothing from the database is printed to the (public) log — only file
+# names, statement counts, and byte sizes. Schema DDL only; no table
+# data is read.
+
+name: Ops — recover missing migrations
+
+on:
+  workflow_dispatch:
+
+env:
+  PROJECT_REF: svkzkpgccahwmyflobvn
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write migrations 085-089 from schema_migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, re, sys, urllib.error, urllib.request
+
+          ref = os.environ['PROJECT_REF']
+          tok = os.environ['SUPABASE_ACCESS_TOKEN'].strip().strip('"\'')
+
+          def q(sql):
+              req = urllib.request.Request(
+                  f'https://api.supabase.com/v1/projects/{ref}/database/query',
+                  data=json.dumps({'query': sql}).encode(), method='POST',
+                  headers={'Authorization': f'Bearer {tok}',
+                           'Content-Type': 'application/json',
+                           'User-Agent': 'curl/8.5.0'})
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return json.loads(r.read().decode() or 'null')
+              except urllib.error.HTTPError as e:
+                  print(f'::error::Supabase API {e.code} (body suppressed)')
+                  sys.exit(1)
+
+          rows = q("select version, name, statements "
+                   "from supabase_migrations.schema_migrations "
+                   "where version between '085' and '089' order by version")
+          if not rows:
+              print('::error::No rows found for versions 085-089.')
+              sys.exit(1)
+
+          missing = []
+          for row in rows:
+              version = row['version']
+              raw_name = row.get('name') or 'recovered'
+              name = re.sub(r'[^a-z0-9_]+', '_', raw_name.lower()).strip('_') or 'recovered'
+              stmts = row.get('statements') or []
+              if not stmts:
+                  missing.append(version)
+                  continue
+              body = ';\n\n'.join(s.rstrip('; \n') for s in stmts) + ';\n'
+              header = (f"-- {version}_{name}.sql\n--\n"
+                        f"-- Recovered 2026-07-09 from production's\n"
+                        f"-- supabase_migrations.schema_migrations (the file was applied to\n"
+                        f"-- prod but never committed). Statements are verbatim as recorded\n"
+                        f"-- by the Supabase CLI at apply time.\n\n")
+              path = f'supabase/migrations/{version}_{name}.sql'
+              with open(path, 'w') as fh:
+                  fh.write(header + body)
+              print(f'wrote {path}: {len(stmts)} statements, {len(body)} bytes')
+
+          if missing:
+              print(f'::error::Versions with empty statements (cannot recover '
+                    f'this way): {missing}')
+              sys.exit(1)
+          PYEOF
+
+      - name: Push recovered files to ops branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b ops/recovered-migrations
+          git add supabase/migrations
+          git commit -m "chore: restore migrations 085-089 recorded in production"
+          git push -f origin ops/recovered-migrations
