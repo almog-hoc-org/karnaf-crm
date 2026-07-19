@@ -83,4 +83,16 @@ jobs:
               from outbound_dispatch
               where status in ('failed', 'dlq')
               group by 1 order by 2 desc limit 5""")
+          q('pending item details', """
+              select left(id::text, 8) as id, created_at, attempts,
+                     next_attempt_at, priority,
+                     payload->>'kind' as kind, payload->>'channel' as channel,
+                     left(coalesce(last_error, ''), 300) as last_error
+              from outbound_dispatch where status = 'pending'
+              order by created_at limit 8""")
+          q('recent 500 bodies from workers', """
+              select left(content, 500) as content, created
+              from net._http_response
+              where status_code >= 400
+              order by created desc limit 3""")
           EOF
