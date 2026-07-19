@@ -75,4 +75,12 @@ jobs:
               select status, count(*) from outbound_dispatch
               where payload->>'broadcast_id' is not null
               group by 1""")
+          q('full outbound queue by status', """
+              select status, count(*), min(created_at) as oldest
+              from outbound_dispatch group by 1 order by 1""")
+          q('recent dispatch errors', """
+              select left(coalesce(last_error, ''), 100) as err, count(*)
+              from outbound_dispatch
+              where status in ('failed', 'dlq')
+              group by 1 order by 2 desc limit 5""")
           EOF
