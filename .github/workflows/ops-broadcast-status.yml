@@ -1,0 +1,78 @@
+# TEMPORARY read-only diagnostic — broadcast pipeline health.
+# Prints cron-job state, broadcast/recipient status counts, and vault
+# secret NAMES only. No message bodies, no secret values. Remove once
+# the broadcast pipeline is confirmed healthy.
+name: Ops - Broadcast Status
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query broadcast pipeline state
+        env:
+          SUPABASE_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
+          PROJECT_REF: svkzkpgccahwmyflobvn
+        run: |
+          python3 - <<'EOF'
+          import json, os, urllib.request
+
+          token = os.environ['SUPABASE_TOKEN']
+          ref = os.environ['PROJECT_REF']
+
+          def q(label, sql):
+              req = urllib.request.Request(
+                  f'https://api.supabase.com/v1/projects/{ref}/database/query',
+                  data=json.dumps({'query': sql}).encode(),
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Content-Type': 'application/json',
+                      'User-Agent': 'karnaf-ops/1.0',
+                  }, method='POST')
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      rows = json.loads(r.read().decode())
+              except Exception as e:
+                  print(f'== {label} ==\nERROR: {e}\n')
+                  return
+              print(f'== {label} ==')
+              print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
+              print()
+
+          q('cron jobs', """
+              select jobname, schedule, active from cron.job
+              where jobname like 'karnaf%' order by jobname""")
+          q('broadcast cron last runs', """
+              select d.status, d.return_message, d.start_time
+              from cron.job_run_details d
+              join cron.job j on j.jobid = d.jobid
+              where j.jobname = 'karnaf_broadcast_dispatch'
+              order by d.start_time desc limit 5""")
+          q('recent net responses to broadcast-dispatch', """
+              select status_code, left(content, 120) as content_head, created
+              from net._http_response
+              order by created desc limit 5""")
+          q('broadcasts', """
+              select left(id::text, 8) as id, status, channel,
+                     scheduled_at, recipients_count, sent_count,
+                     failed_count, skipped_count, created_at
+              from broadcasts order by created_at desc limit 5""")
+          q('recipients by status', """
+              select left(broadcast_id::text, 8) as broadcast,
+                     status, count(*)
+              from broadcast_recipients
+              group by 1, 2 order by 1, 2""")
+          q('vault secret names', 'select name from vault.secrets order by name')
+          q('app settings', """
+              select current_setting('app.broadcast_dispatch_url', true) as broadcast_url,
+                     current_setting('app.outbound_dispatch_url', true) as outbound_url""")
+          q('outbound queue for broadcasts', """
+              select status, count(*) from outbound_dispatch
+              where payload->>'broadcast_id' is not null
+              group by 1""")
+          EOF

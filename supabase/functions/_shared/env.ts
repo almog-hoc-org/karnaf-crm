@@ -43,6 +43,11 @@ export const env = {
   ravmesserUSecret: () => optional('RAVMESSER_U_SECRET'),
   slaWorkerSecret: () => optional('SLA_WORKER_SECRET'),
   outboundDispatchSecret: () => optional('OUTBOUND_DISPATCH_SECRET'),
+  // Falls back to the outbound dispatch secret so the broadcast worker
+  // needs no extra provisioning — the cron caller applies the same
+  // fallback when reading from vault (migration 094).
+  broadcastDispatchSecret: () =>
+    optional('BROADCAST_DISPATCH_SECRET') || optional('OUTBOUND_DISPATCH_SECRET'),
   /** Meta webhooks (FB Lead Ads + Instagram DM) — app credentials. */
   metaVerifyToken: () => optional('META_VERIFY_TOKEN'),
   metaAppSecret: () => optional('META_APP_SECRET'),
