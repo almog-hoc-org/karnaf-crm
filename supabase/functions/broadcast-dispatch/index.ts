@@ -14,6 +14,7 @@
 // Authenticated with a shared secret — same pattern as dispatch-outbound.
 
 import { jsonResponse, preflight } from '../_shared/cors.ts';
+import { env } from '../_shared/env.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
@@ -34,7 +35,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
 
   const correlationId = correlationFromRequest(req);
-  const secret = Deno.env.get('BROADCAST_DISPATCH_SECRET') ?? '';
+  const secret = env.broadcastDispatchSecret();
   if (!secret) {
     log.warn('broadcast_dispatch_secret_missing', { fn: 'broadcast-dispatch', correlationId });
     return jsonResponse(req, { error: 'Worker secret not configured' }, 503);
