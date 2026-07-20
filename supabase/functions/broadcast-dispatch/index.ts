@@ -100,7 +100,48 @@ Deno.serve(async (req) => {
           .eq('id', b.id);
       }
 
-      // 2. Quality guard — if Meta is rejecting this broadcast's sends,
+      // 2. Reconcile 'enqueued' recipients against their actual queue
+      //    items. Normally dispatch-outbound updates the recipient, but a
+      //    missed update (worker death, dlq before the linkage existed)
+      //    left recipients 'enqueued' forever and the broadcast stuck in
+      //    'sending'. Terminal queue states are copied over; a recipient
+      //    whose queue item vanished goes back to 'pending' for re-enqueue.
+      const { data: enqueued } = await supabase
+        .from('broadcast_recipients')
+        .select('id, dispatch_id')
+        .eq('broadcast_id', b.id)
+        .eq('status', 'enqueued')
+        .limit(200);
+      const enqueuedRows = enqueued ?? [];
+      if (enqueuedRows.length > 0) {
+        const dispatchIds = enqueuedRows.map((r) => r.dispatch_id).filter(Boolean);
+        const { data: dispatches } = dispatchIds.length > 0
+          ? await supabase.from('outbound_dispatch').select('id, status, last_error').in('id', dispatchIds)
+          : { data: [] };
+        const byId = new Map((dispatches ?? []).map((d) => [d.id as string, d]));
+        for (const r of enqueuedRows) {
+          const d = r.dispatch_id ? byId.get(r.dispatch_id as string) : undefined;
+          if (!d) {
+            await supabase.from('broadcast_recipients')
+              .update({ status: 'pending', dispatch_id: null })
+              .eq('id', r.id);
+            log.warn('broadcast_recipient_requeued', {
+              fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, recipientId: r.id,
+            });
+          } else if (d.status === 'succeeded') {
+            await supabase.from('broadcast_recipients')
+              .update({ status: 'sent', sent_at: new Date().toISOString() })
+              .eq('id', r.id);
+          } else if (d.status === 'dlq' || d.status === 'failed') {
+            await supabase.from('broadcast_recipients')
+              .update({ status: 'failed', error: (d.last_error as string | null)?.slice(0, 500) ?? 'dispatch failed' })
+              .eq('id', r.id);
+          }
+          // pending / in_flight — a retry is still scheduled; leave as-is.
+        }
+      }
+
+      // 3. Quality guard — if Meta is rejecting this broadcast's sends,
       //    pause it before the number's quality rating pays the price.
       const progress = await finalCounts(supabase, b.id);
       if (shouldPauseBroadcast(pacing, progress.sent, progress.failed)) {
@@ -126,7 +167,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // 3. Enqueue up to this tick's remaining pacing allowance.
+      // 4. Enqueue up to this tick's remaining pacing allowance.
       const { data: pending } = allowance > 0
         ? await supabase
             .from('broadcast_recipients')
@@ -167,7 +208,7 @@ Deno.serve(async (req) => {
         allowance -= 1;
       }
 
-      // 4. Finalise only when every recipient reached a TERMINAL state
+      // 5. Finalise only when every recipient reached a TERMINAL state
       //    (sent / skipped / failed). 'pending' means not yet enqueued;
       //    'enqueued' means a dispatch is still in flight or retrying —
       //    finalising then would freeze counts mid-run (the old code
