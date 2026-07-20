@@ -43,6 +43,16 @@ jobs:
               print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
               print()
 
+          import time
+          q('fire template sync', 'select public.run_template_sync()')
+          time.sleep(10)
+          q('sync response from meta-template-status', """
+              select status_code, left(content, 600) as content, created
+              from net._http_response
+              order by created desc limit 2""")
+          q('after_webinar local row post-sync', """
+              select key, status, metadata->'meta' as meta
+              from message_templates where key = 'after_webinar'""")
           q('last 3 broadcasts', """
               select left(id::text, 8) as id, name, status, recipients_count,
                      sent_count, failed_count, skipped_count, scheduled_at
