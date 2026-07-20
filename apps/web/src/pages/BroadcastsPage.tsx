@@ -270,8 +270,16 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <p className="mt-2 text-sm text-slate-600">
             נמענים תואמים:{' '}
             <b className="tabular-nums">{previewQ.isLoading ? '…' : previewQ.data?.count ?? 0}</b>
+            {(previewQ.data?.count ?? 0) > 0 ? (
+              <span className="ms-2 text-slate-500">
+                השליחה מדורגת אוטומטית (עד ~20 בדקה, עד 250 נמענים ביממה) כדי להגן על דירוג המספר בוואטסאפ.
+              </span>
+            ) : null}
             {(previewQ.data?.count ?? 0) > 250 ? (
-              <span className="ms-2 text-amber-700">שים לב: כמות גדולה עלולה להיחסם ע"י מגבלת המספר בוואטסאפ</span>
+              <span className="ms-2 text-amber-700">
+                מעל התקרה היומית — התפוצה תתפרס אוטומטית על פני כ-
+                {Math.ceil((previewQ.data?.count ?? 0) / 250)} ימים, וניתן להגדיל את התקרה בהגדרת broadcast_pacing.
+              </span>
             ) : null}
           </p>
         </fieldset>

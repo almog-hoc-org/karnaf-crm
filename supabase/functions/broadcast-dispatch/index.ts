@@ -19,13 +19,15 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
+import { enqueueAllowance, resolvePacing, shouldPauseBroadcast } from '../_shared/broadcast-pacing.ts';
+import { notifyTelegram } from '../_shared/notify-telegram.ts';
 
-// How many broadcasts to advance per tick, and how many recipients to
-// enqueue per broadcast per tick. The per-tick recipient cap paces the
-// fill so a big launch doesn't dump thousands of rows at once; combined
-// with LOW priority it keeps the bot responsive.
+// How many broadcasts to advance per tick. The per-tick enqueue rate and
+// the rolling-24h cap come from crm_config 'broadcast_pacing' (see
+// _shared/broadcast-pacing.ts) so a big launch drips out slowly instead
+// of tripping Meta's messaging-limit tier; combined with LOW priority it
+// keeps the bot responsive.
 const MAX_BROADCASTS_PER_TICK = 3;
-const ENQUEUE_CAP_PER_TICK = 100;
 const SEGMENT_FETCH_LIMIT = 5000;
 const BROADCAST_PRIORITY = 10;
 
@@ -61,6 +63,22 @@ Deno.serve(async (req) => {
   const broadcasts = due ?? [];
   let totalEnqueued = 0;
 
+  // Pacing state for this tick: config + rolling-24h broadcast spend.
+  const { data: pacingRow } = await supabase
+    .from('crm_config').select('config_value').eq('config_key', 'broadcast_pacing').maybeSingle();
+  const pacing = resolvePacing(pacingRow?.config_value);
+  const { count: enqueuedLast24h } = await supabase
+    .from('outbound_dispatch')
+    .select('id', { count: 'exact', head: true })
+    .not('payload->>broadcast_id', 'is', null)
+    .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+  let allowance = enqueueAllowance(pacing, enqueuedLast24h ?? 0);
+  if (allowance === 0 && broadcasts.length > 0) {
+    log.warn('broadcast_daily_cap_reached', {
+      fn: 'broadcast-dispatch', correlationId, enqueuedLast24h, dailyCap: pacing.dailyCap,
+    });
+  }
+
   for (const b of broadcasts) {
     try {
       // 1. Materialise recipients once, on the transition into 'sending'.
@@ -82,13 +100,35 @@ Deno.serve(async (req) => {
           .eq('id', b.id);
       }
 
-      // 2. Enqueue a capped batch of pending recipients.
-      const { data: pending } = await supabase
-        .from('broadcast_recipients')
-        .select('id, lead_id')
-        .eq('broadcast_id', b.id)
-        .eq('status', 'pending')
-        .limit(ENQUEUE_CAP_PER_TICK);
+      // 2. Quality guard — if Meta is rejecting this broadcast's sends,
+      //    pause it before the number's quality rating pays the price.
+      const progress = await finalCounts(supabase, b.id);
+      if (shouldPauseBroadcast(pacing, progress.sent, progress.failed)) {
+        await supabase.from('broadcasts').update({
+          status: 'failed',
+          sent_count: progress.sent,
+          failed_count: progress.failed,
+          skipped_count: progress.skipped,
+        }).eq('id', b.id);
+        await notifyTelegram(
+          `תפוצה הושהתה אוטומטית: ${progress.failed}/${progress.sent + progress.failed} שליחות נכשלו — בדקו את התבנית ואת דירוג המספר לפני המשך.`,
+          'warn',
+        );
+        log.warn('broadcast_paused_failure_rate', {
+          fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, ...progress,
+        });
+        continue;
+      }
+
+      // 3. Enqueue up to this tick's remaining pacing allowance.
+      const { data: pending } = allowance > 0
+        ? await supabase
+            .from('broadcast_recipients')
+            .select('id, lead_id')
+            .eq('broadcast_id', b.id)
+            .eq('status', 'pending')
+            .limit(allowance)
+        : { data: [] as Array<{ id: string; lead_id: string }> };
 
       const pendingRows = pending ?? [];
       const channel = b.channel ?? 'whatsapp';
@@ -118,9 +158,10 @@ Deno.serve(async (req) => {
           .update({ status: 'enqueued', dispatch_id: enq?.id ?? null })
           .eq('id', r.id);
         totalEnqueued += 1;
+        allowance -= 1;
       }
 
-      // 3. Finalise only when every recipient reached a TERMINAL state
+      // 4. Finalise only when every recipient reached a TERMINAL state
       //    (sent / skipped / failed). 'pending' means not yet enqueued;
       //    'enqueued' means a dispatch is still in flight or retrying —
       //    finalising then would freeze counts mid-run (the old code
