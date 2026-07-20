@@ -259,7 +259,17 @@ Deno.serve(async (req) => {
         attempt: row.attempts,
         err: message,
       });
-      await supabase.rpc('fail_outbound_dispatch', { p_id: row.id, p_error: message });
+      // Permanent provider rejections (invalid phone, bad template param)
+      // will fail identically on every retry — dead-letter immediately
+      // instead of holding the queue (and any broadcast) open for hours
+      // of pointless backoff. Everything else keeps the retry schedule.
+      if (isPermanentProviderError(message)) {
+        await supabase.from('outbound_dispatch')
+          .update({ status: 'dlq', failed_at: new Date().toISOString(), last_error: message })
+          .eq('id', row.id);
+      } else {
+        await supabase.rpc('fail_outbound_dispatch', { p_id: row.id, p_error: message });
+      }
 
       // Broadcast analytics — reflect the outcome on the recipient row.
       // A transient failure stays 'enqueued' (a retry is scheduled); only
@@ -289,3 +299,14 @@ Deno.serve(async (req) => {
   });
   return jsonResponse(req, { ok: true, processed: rows.length, succeeded, failed });
 });
+
+// Meta error codes that never succeed on retry: 131009 invalid parameter
+// (bad/misformatted phone), 131026 message undeliverable (recipient not
+// on WhatsApp), 132018 bad template parameter format, 132001 template
+// does not exist for the language.
+const PERMANENT_PROVIDER_ERROR_CODES = [131009, 131026, 132018, 132001];
+
+function isPermanentProviderError(message: string): boolean {
+  return PERMANENT_PROVIDER_ERROR_CODES.some((code) =>
+    message.includes(`"code":${code}`) || message.includes(`#${code}`));
+}
