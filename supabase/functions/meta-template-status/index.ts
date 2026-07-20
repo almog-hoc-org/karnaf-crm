@@ -240,13 +240,39 @@ async function syncTemplates(
   const localKeys = new Set((locals ?? []).map((l) => l.key as string));
   const unmatchedMeta = [...metaByName.keys()].filter((name) => !localKeys.has(name));
 
+  // Auto-import Meta templates that have no local row yet, so a template
+  // created in Meta Business Manager shows up in the CRM options on the
+  // next sync. APPROVED templates land as 'active' (usable in broadcasts
+  // immediately); anything else starts as 'draft'. Meta's built-in sample
+  // templates are skipped.
+  const SKIP_IMPORT = new Set(['hello_world']);
+  const created: string[] = [];
+  for (const name of unmatchedMeta) {
+    if (SKIP_IMPORT.has(name)) continue;
+    const meta = metaByName.get(name);
+    if (!meta) continue;
+    const { error: insErr } = await supabase.from('message_templates').insert({
+      key: name,
+      channel: 'whatsapp',
+      name_he: name,
+      description: 'יובא אוטומטית ממטא בסנכרון תבניות.',
+      body: meta.body ?? '(אין גוף טקסט בתבנית המטא)',
+      variables_used: [],
+      tags: ['meta-import'],
+      status: meta.status === 'APPROVED' ? 'active' : 'draft',
+      metadata: { meta: { ...meta, synced_at: syncedAt } },
+    });
+    if (!insErr) created.push(name);
+  }
+
   return jsonResponse(req, {
     ok: true,
     stage: 'sync',
     matched,
+    created,
     drifted,
     nonApproved,
-    unmatchedMeta,
+    unmatchedMeta: unmatchedMeta.filter((n) => !created.includes(n)),
     syncedAt,
   });
 }

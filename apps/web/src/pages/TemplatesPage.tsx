@@ -40,6 +40,7 @@ export function TemplatesPage() {
         return;
       }
       const parts = [`סונכרנו ${res.matched} תבניות ממטא`];
+      if ((res.created?.length ?? 0) > 0) parts.push(`${res.created.length} חדשות יובאו`);
       if (res.nonApproved.length > 0) parts.push(`${res.nonApproved.length} לא מאושרות!`);
       if (res.drifted.length > 0) parts.push(`${res.drifted.length} עם נוסח שונה במטא`);
       (res.nonApproved.length > 0 ? toast.error : toast.success)(parts.join(' · '));
