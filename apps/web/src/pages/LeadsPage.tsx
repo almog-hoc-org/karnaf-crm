@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { fetchLeadsList, fetchUsersList, postBulkLeadAction, postImportLeads, postLeadManage, type ImportLeadsResult, type ProductGroup } from '@/lib/api';
+import { fetchLeadsList, fetchUsersList, postBulkLeadAction, postImportLeads, postLeadManage, postPurgeLead, type ImportLeadsResult, type ProductGroup } from '@/lib/api';
 import { parseImportRows } from '@/lib/importParse';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { BulkActionBar } from '@/components/BulkActionBar';
@@ -102,12 +102,16 @@ function LeadWorkCard({
   lead,
   selected,
   canBulkEdit,
+  canPurge,
   onToggle,
+  onPurge,
 }: {
   lead: LeadRow;
   selected: boolean;
   canBulkEdit: boolean;
+  canPurge: boolean;
   onToggle: (checked: boolean) => void;
+  onPurge: () => void;
 }) {
   const guidance = leadListGuidance(lead);
   return (
@@ -134,6 +138,19 @@ function LeadWorkCard({
             <span className="text-xs text-slate-500" title={lead.updated_at}>
               עודכן {formatRelative(lead.updated_at)}
             </span>
+            {canPurge ? (
+              <button
+                type="button"
+                className="ms-auto rounded p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600"
+                aria-label={`מחיקה לצמיתות של ${lead.full_name || 'הליד'}`}
+                title="מחיקה לצמיתות מהמערכת"
+                onClick={onPurge}
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path strokeLinecap="round" d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-8 0 1 13a1 1 0 0 0 1 .9h6a1 1 0 0 0 1-.9l1-13M10 11v6m4-6v6" />
+                </svg>
+              </button>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
             {lead.phone ? (
@@ -449,6 +466,27 @@ export function LeadsPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
+  // Hard delete (owner/admin) — frees space by removing the lead and all
+  // its history via FK cascades. Irreversible, hence the explicit confirm.
+  const purgeMut = useMutation({
+    mutationFn: (leadId: string) => postPurgeLead(leadId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      toast.success('הליד נמחק לצמיתות');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+  function confirmPurge(lead: { id: string; full_name: string | null }) {
+    const name = lead.full_name || 'ליד ללא שם';
+    if (
+      window.confirm(
+        `למחוק לצמיתות את "${name}"?\n\nכל ההיסטוריה — הודעות, שיחות ואירועים — תימחק מהמערכת ללא אפשרות שחזור.`,
+      )
+    ) {
+      purgeMut.mutate(lead.id);
+    }
+  }
+
   // Bulk roster import (owner/admin) — paste a list, optionally mark all
   // rows as program members. Wires to leads-manage import.
   const canImport = auth.role === 'owner' || auth.role === 'admin';
@@ -495,7 +533,11 @@ export function LeadsPage() {
       <header className="flex items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">{t('leads_title')}</h1>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-slate-500">{total != null ? `${total} ${t('total_count')}` : ''}</span>
+          {total != null ? (
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold tabular-nums text-slate-700">
+              סה"כ {total} לידים
+            </span>
+          ) : null}
           {canImport ? (
             <button type="button" className="kf-btn" onClick={() => { setImportResult(null); setImportOpen(true); }}>
               ייבוא רשימה
@@ -926,6 +968,8 @@ export function LeadsPage() {
                 lead={lead}
                 selected={selected.has(lead.id)}
                 canBulkEdit={canBulkEdit}
+                canPurge={canImport}
+                onPurge={() => confirmPurge(lead)}
                 onToggle={(checked) => {
                   const next = new Set(selected);
                   if (checked) next.add(lead.id);
