@@ -430,6 +430,7 @@ export async function postPurgeLead(leadId: string) {
 export interface MetaTemplateSyncResult {
   ok: boolean;
   matched: number;
+  created: string[];
   drifted: string[];
   nonApproved: Array<{ key: string; status: string }>;
   unmatchedMeta: string[];
