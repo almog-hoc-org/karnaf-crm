@@ -865,8 +865,23 @@ export async function fetchBroadcasts() {
   }>('/broadcasts');
 }
 
+export interface BroadcastSkippedRecipient {
+  leadId: string;
+  reason: string;
+  name: string | null;
+  phone: string | null;
+  source: string | null;
+  doNotContact: boolean;
+  removedByRequest: boolean;
+}
+
 export async function fetchBroadcast(id: string) {
-  return getJson<{ ok: true; broadcast: BroadcastRow; stats: BroadcastStats }>('/broadcasts', { id });
+  return getJson<{
+    ok: true;
+    broadcast: BroadcastRow;
+    stats: BroadcastStats;
+    skipped?: BroadcastSkippedRecipient[];
+  }>('/broadcasts', { id });
 }
 
 export async function previewBroadcastSegment(segment: BroadcastSegment) {

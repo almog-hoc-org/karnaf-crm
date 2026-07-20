@@ -58,7 +58,29 @@ Deno.serve(async (req) => {
       if (error) return jsonResponse(req, { error: error.message }, 500);
       if (!broadcast) return jsonResponse(req, { error: 'not found' }, 404);
       const stats = await recipientStats(supabase, id);
-      return jsonResponse(req, { ok: true, broadcast, stats });
+      // Skipped-recipient detail: exact per-lead skip reason so operators
+      // can tell DNC opt-outs from missing phones without a DB query.
+      const { data: skippedRows } = await supabase
+        .from('broadcast_recipients')
+        .select('error, lead_id, leads(full_name, phone, source, do_not_contact, removed_by_request)')
+        .eq('broadcast_id', id)
+        .eq('status', 'skipped')
+        .limit(200);
+      const skipped = ((skippedRows ?? []) as unknown as Array<{
+        error: string | null;
+        lead_id: string;
+        leads: { full_name: string | null; phone: string | null; source: string | null;
+                 do_not_contact: boolean | null; removed_by_request: boolean | null } | null;
+      }>).map((r) => ({
+        leadId: r.lead_id,
+        reason: r.error ?? 'unknown',
+        name: r.leads?.full_name ?? null,
+        phone: r.leads?.phone ?? null,
+        source: r.leads?.source ?? null,
+        doNotContact: r.leads?.do_not_contact ?? false,
+        removedByRequest: r.leads?.removed_by_request ?? false,
+      }));
+      return jsonResponse(req, { ok: true, broadcast, stats, skipped });
     }
     const { data, error } = await supabase
       .from('broadcasts').select('*').order('created_at', { ascending: false }).limit(100);
