@@ -194,7 +194,9 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.meta-template-status]
-verify_jwt = true
+# Staff JWT normally; the nightly template-sync cron authenticates with
+# the shared worker secret instead, so JWT verification happens in-function.
+verify_jwt = false
 
 [functions.partners]
 verify_jwt = true
