@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
@@ -327,10 +328,25 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   );
 }
 
+const SKIP_REASON_LABELS: Record<string, string> = {
+  do_not_contact: 'ביקשו הסרה / לא ליצור קשר',
+  no_phone: 'אין מספר טלפון',
+  lead_missing: 'הליד נמחק',
+  empty_text: 'הודעה ריקה',
+  unknown: 'סיבה לא ידועה',
+};
+
 function DetailDialog({ id, onClose }: { id: string; onClose: () => void }) {
   const q = useQuery({ queryKey: ['broadcast', id], queryFn: () => fetchBroadcast(id) });
   const b = q.data?.broadcast;
   const s = q.data?.stats;
+  const skipped = q.data?.skipped ?? [];
+  const skippedByReason = new Map<string, typeof skipped>();
+  for (const r of skipped) {
+    const list = skippedByReason.get(r.reason) ?? [];
+    list.push(r);
+    skippedByReason.set(r.reason, list);
+  }
 
   return (
     <Modal title={b?.name ?? 'תפוצה'} onClose={onClose}>
@@ -355,8 +371,35 @@ function DetailDialog({ id, onClose }: { id: string; onClose: () => void }) {
             <StatTile label="נמסרו" value={s.delivered} tone="text-sky-700" />
             <StatTile label="נקראו" value={s.read} tone="text-indigo-700" />
             <StatTile label="נכשלו" value={s.failed} tone="text-rose-700" />
-            <StatTile label="דולגו (DNC)" value={s.skipped} tone="text-slate-500" />
+            <StatTile label="דולגו" value={s.skipped} tone="text-slate-500" />
           </section>
+
+          {skipped.length > 0 ? (
+            <section>
+              <div className="mb-1 text-sm font-medium text-slate-600">פירוט המדולגים</div>
+              <div className="space-y-2">
+                {Array.from(skippedByReason.entries()).map(([reason, rows]) => (
+                  <details key={reason} className="rounded-lg border border-slate-200 bg-white">
+                    <summary className="cursor-pointer select-none px-3 py-2 text-sm">
+                      <b>{SKIP_REASON_LABELS[reason] ?? reason}</b>
+                      <span className="ms-2 tabular-nums text-slate-500">({rows.length})</span>
+                    </summary>
+                    <ul className="divide-y divide-slate-100 border-t border-slate-100 text-sm">
+                      {rows.map((r) => (
+                        <li key={r.leadId} className="flex flex-wrap items-center gap-x-3 px-3 py-1.5">
+                          <Link to={`/leads/${r.leadId}`} className="font-medium text-brand-700 hover:underline">
+                            {r.name || 'ליד ללא שם'}
+                          </Link>
+                          {r.phone ? <span dir="ltr" className="tabular-nums text-slate-500">{r.phone}</span> : null}
+                          {r.source ? <span className="text-xs text-slate-400">{r.source}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           {b.body_snapshot ? (
             <div>

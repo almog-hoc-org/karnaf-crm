@@ -1,0 +1,67 @@
+# TEMPORARY read-only diagnostic — who were the skipped recipients of the
+# latest broadcast, and which of them look like old test leads. Used to
+# decide on a permanent-purge cleanup; remove afterwards.
+name: Ops - Skipped Leads
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  skipped:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List skipped recipients of the latest broadcast
+        env:
+          SUPABASE_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
+          PROJECT_REF: svkzkpgccahwmyflobvn
+        run: |
+          python3 - <<'EOF'
+          import json, os, urllib.request
+
+          token = os.environ['SUPABASE_TOKEN']
+          ref = os.environ['PROJECT_REF']
+
+          def q(label, sql):
+              req = urllib.request.Request(
+                  f'https://api.supabase.com/v1/projects/{ref}/database/query',
+                  data=json.dumps({'query': sql}).encode(),
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Content-Type': 'application/json',
+                      'User-Agent': 'karnaf-ops/1.0',
+                  }, method='POST')
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      rows = json.loads(r.read().decode())
+              except Exception as e:
+                  print(f'== {label} ==\nERROR: {e}\n')
+                  return
+              print(f'== {label} ==')
+              print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
+              print()
+
+          q('latest broadcast', """
+              select left(id::text, 8) as id, name, status, recipients_count,
+                     sent_count, skipped_count, scheduled_at
+              from broadcasts order by created_at desc limit 1""")
+          q('skip reasons breakdown', """
+              select r.error as reason, count(*)
+              from broadcast_recipients r
+              where r.broadcast_id = (select id from broadcasts order by created_at desc limit 1)
+                and r.status = 'skipped'
+              group by 1 order by 2 desc""")
+          q('skipped leads detail', """
+              select l.id, l.full_name, l.phone, l.email, l.source,
+                     l.lead_status, l.payment_status, l.do_not_contact,
+                     l.removed_by_request, l.created_at::date as created,
+                     r.error as skip_reason,
+                     (select count(*) from messages m where m.lead_id = l.id) as msg_count
+              from broadcast_recipients r
+              join leads l on l.id = r.lead_id
+              where r.broadcast_id = (select id from broadcasts order by created_at desc limit 1)
+                and r.status = 'skipped'
+              order by l.created_at""")
+          EOF
