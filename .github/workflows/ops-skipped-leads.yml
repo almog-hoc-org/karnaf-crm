@@ -43,10 +43,15 @@ jobs:
               print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
               print()
 
-          q('latest broadcast', """
+          q('last 3 broadcasts', """
               select left(id::text, 8) as id, name, status, recipients_count,
-                     sent_count, skipped_count, scheduled_at
-              from broadcasts order by created_at desc limit 1""")
+                     sent_count, failed_count, skipped_count, scheduled_at
+              from broadcasts order by created_at desc limit 3""")
+          q('recent dispatch failures today', """
+              select left(coalesce(last_error, ''), 250) as err, count(*)
+              from outbound_dispatch
+              where status = 'dlq' and created_at > now() - interval '6 hours'
+              group by 1 order by 2 desc limit 5""")
           q('skip reasons breakdown', """
               select r.error as reason, count(*)
               from broadcast_recipients r
