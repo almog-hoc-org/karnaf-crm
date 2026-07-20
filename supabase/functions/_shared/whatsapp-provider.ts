@@ -94,6 +94,13 @@ export async function sendWhatsAppText(phone: string, text: string): Promise<Out
   return { ok: false, error: 'No WhatsApp provider configured' };
 }
 
+// Meta rejects template body params containing newlines, tabs, or more
+// than 4 consecutive spaces (error #132018) — a multi-line AI reply
+// wrapped in the fallback template gets stuck retrying forever otherwise.
+export function sanitizeTemplateParam(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 export async function sendWhatsAppTemplate(
   phone: string,
   templateName: string,
@@ -101,8 +108,9 @@ export async function sendWhatsAppTemplate(
   language = 'he',
 ): Promise<OutboundSendResult> {
   const provider = activeProvider();
-  if (provider === 'meta_cloud_api') return withRetry('meta_template', () => sendMetaTemplate(phone, templateName, params, language));
-  if (provider === 'wati') return withRetry('wati_template', () => sendWatiTemplate(phone, templateName, params));
+  const clean = params.map((p) => ({ ...p, value: sanitizeTemplateParam(p.value) }));
+  if (provider === 'meta_cloud_api') return withRetry('meta_template', () => sendMetaTemplate(phone, templateName, clean, language));
+  if (provider === 'wati') return withRetry('wati_template', () => sendWatiTemplate(phone, templateName, clean));
   return { ok: false, error: 'No WhatsApp provider configured' };
 }
 
