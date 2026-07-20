@@ -53,6 +53,14 @@ jobs:
               where r.broadcast_id = (select id from broadcasts order by created_at desc limit 1)
                 and r.status = 'skipped'
               group by 1 order by 2 desc""")
+          q('non-terminal recipients + their queue items', """
+              select r.status as recipient_status, left(r.dispatch_id::text, 8) as dispatch,
+                     d.status as dispatch_status, d.attempts, d.next_attempt_at,
+                     d.claimed_at, left(coalesce(d.last_error, ''), 200) as last_error
+              from broadcast_recipients r
+              left join outbound_dispatch d on d.id = r.dispatch_id
+              where r.broadcast_id = (select id from broadcasts order by created_at desc limit 1)
+                and r.status in ('pending', 'enqueued')""")
           q('skipped leads detail', """
               select l.id, l.full_name, l.phone, l.email, l.source,
                      l.lead_status, l.payment_status, l.do_not_contact,
