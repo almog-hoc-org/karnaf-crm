@@ -104,7 +104,7 @@ describe('LeadsPage', () => {
     renderLeads();
     expect(await screen.findByRole('link', { name: 'דנה כהן' })).toHaveAttribute('href', '/leads/lead-1');
     expect(screen.getByRole('link', { name: 'יוסי לוי' })).toHaveAttribute('href', '/leads/lead-2');
-    expect(screen.getByText('2 סה"כ')).toBeInTheDocument();
+    expect(screen.getByText('סה"כ 2 לידים')).toBeInTheDocument();
   });
 
   it('renders the empty state when no leads match', async () => {

@@ -69,6 +69,11 @@ interface RestorePayload {
   leadId: string;
 }
 
+interface PurgePayload {
+  action: 'purge';
+  leadId: string;
+}
+
 interface ImportRow {
   phone: string;
   fullName?: string | null;
@@ -82,7 +87,7 @@ interface ImportPayload {
   source?: string;
 }
 
-type Payload = CreatePayload | UpdatePayload | DeletePayload | RestorePayload | ImportPayload;
+type Payload = CreatePayload | UpdatePayload | DeletePayload | RestorePayload | PurgePayload | ImportPayload;
 
 const IMPORT_MAX_ROWS = 500;
 
@@ -314,6 +319,38 @@ Deno.serve(async (req) => {
       fn: 'leads-manage', correlationId, by: staff.userId, leadId: body.leadId,
     });
     return jsonResponse(req, { ok: true, lead: data });
+  }
+
+  if (body.action === 'purge') {
+    // Hard delete — permanently removes the lead and every dependent row
+    // (messages, conversations, events, queue items) via FK cascades.
+    // Unlike 'delete' (soft, restorable) and pii-delete (anonymises in
+    // place), this frees the space entirely and cannot be undone.
+    if (staff.role !== 'owner' && staff.role !== 'admin') {
+      return jsonResponse(req, { error: 'Purge requires owner/admin' }, 403);
+    }
+    if (!body.leadId) return jsonResponse(req, { error: 'Missing leadId' }, 400);
+
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('id, full_name, phone, payment_status')
+      .eq('id', body.leadId)
+      .maybeSingle();
+    if (!lead) return jsonResponse(req, { error: 'Lead not found' }, 404);
+
+    // Refuse to purge paying customers from the UI path — losing their
+    // history is almost never intended. Anonymise via pii-delete instead.
+    if (lead.payment_status === 'paid') {
+      return jsonResponse(req, { error: 'לא ניתן למחוק לצמיתות ליד ששילם — השתמשו במחיקת PII' }, 409);
+    }
+
+    const { error } = await supabase.from('leads').delete().eq('id', body.leadId);
+    if (error) return jsonResponse(req, { error: error.message }, 500);
+
+    log.info('lead_purged', {
+      fn: 'leads-manage', correlationId, by: staff.userId, leadId: body.leadId,
+    });
+    return jsonResponse(req, { ok: true, purged: body.leadId });
   }
 
   if (body.action === 'import') {

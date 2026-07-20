@@ -418,6 +418,13 @@ export async function postLeadManage(
   return postJson<{ ok: true; lead: { id: string } }>('/leads-manage', payload);
 }
 
+// Hard delete — permanently removes the lead and all dependent rows via
+// FK cascades to free space. Owner/admin only; paid leads are refused
+// server-side (use pii-delete anonymisation for those).
+export async function postPurgeLead(leadId: string) {
+  return postJson<{ ok: true; purged: string }>('/leads-manage', { action: 'purge', leadId });
+}
+
 export interface ImportLeadRow {
   phone: string;
   fullName?: string | null;
