@@ -110,10 +110,16 @@ Deno.serve(async (req) => {
           failed_count: progress.failed,
           skipped_count: progress.skipped,
         }).eq('id', b.id);
-        await notifyTelegram(
-          `תפוצה הושהתה אוטומטית: ${progress.failed}/${progress.sent + progress.failed} שליחות נכשלו — בדקו את התבנית ואת דירוג המספר לפני המשך.`,
-          'warn',
-        );
+        await notifyTelegram({
+          source: 'broadcast-dispatch',
+          severity: 'warn',
+          title: 'תפוצה הושהתה אוטומטית',
+          lines: [
+            `${progress.failed} מתוך ${progress.sent + progress.failed} שליחות נכשלו.`,
+            'בדקו את התבנית ואת דירוג המספר לפני המשך.',
+          ],
+          correlationId,
+        });
         log.warn('broadcast_paused_failure_rate', {
           fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, ...progress,
         });
