@@ -435,6 +435,8 @@ export interface MetaTemplateSyncResult {
   nonApproved: Array<{ key: string; status: string }>;
   unmatchedMeta: string[];
   error?: string;
+  stage?: string;
+  hint?: string;
 }
 export async function postSyncMetaTemplates() {
   return postJson<MetaTemplateSyncResult>('/meta-template-status', { action: 'sync' });

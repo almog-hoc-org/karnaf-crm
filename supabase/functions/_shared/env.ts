@@ -26,6 +26,10 @@ export const env = {
   whatsappToken: () => optional('WHATSAPP_TOKEN'),
   whatsappPhoneId: () => optional('WHATSAPP_PHONE_ID'),
   whatsappFallbackTemplate: () => optional('WHATSAPP_FALLBACK_TEMPLATE', 'karnaf_followup_v1'),
+  // WABA id for template listing/creation. The phone-number lookup path
+  // fails with Graph #100 when the token cannot read the
+  // whatsapp_business_account field, so allow pinning it explicitly.
+  whatsappWabaId: () => optional('WHATSAPP_WABA_ID'),
   watiToken: () => optional('WATI_TOKEN'),
   watiApiUrl: () => optional('WATI_API_URL', 'https://live-mt-server.wati.io'),
   paymentWebhookSecret: () => optional('PAYMENT_WEBHOOK_SECRET'),
