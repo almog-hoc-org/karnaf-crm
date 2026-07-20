@@ -36,7 +36,8 @@ export function TemplatesPage() {
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['message-templates'] });
       if (!res.ok) {
-        toast.error(res.error ?? 'הסנכרון נכשל');
+        const detail = res.hint ?? res.error ?? res.stage ?? '';
+        toast.error(`הסנכרון נכשל${detail ? `: ${detail}` : ''}`);
         return;
       }
       const parts = [`סונכרנו ${res.matched} תבניות ממטא`];

@@ -36,22 +36,40 @@ Deno.serve(async (req) => {
 
   const graphVersion = 'v21.0';
   const url = new URL(req.url);
-  const explicitWabaId = url.searchParams.get('wabaId');
-  const phoneUrl = new URL(`https://graph.facebook.com/${graphVersion}/${phoneId}`);
-  phoneUrl.searchParams.set('fields', 'id,display_phone_number,verified_name,whatsapp_business_account');
 
-  const phoneRes = await fetch(phoneUrl, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const phoneText = await phoneRes.text();
-  const phoneJson = JSON.parse(phoneText || '{}');
-  if (!phoneRes.ok && !explicitWabaId) {
-    return jsonResponse(req, { ok: false, stage: 'phone_lookup', errorText: phoneText }, 200);
+  // WABA id resolution: explicit query param → WHATSAPP_WABA_ID env →
+  // crm_config 'whatsapp_waba_id' → phone-number lookup. The lookup
+  // fails with Graph #100 when the token cannot read the
+  // whatsapp_business_account field, so the pinned sources come first.
+  let wabaId = url.searchParams.get('wabaId') || env.whatsappWabaId() || '';
+  if (!wabaId) {
+    const { data: cfgRow } = await getServiceSupabase()
+      .from('crm_config').select('config_value').eq('config_key', 'whatsapp_waba_id').maybeSingle();
+    const cfg = cfgRow?.config_value;
+    wabaId = (typeof cfg === 'string' ? cfg : (cfg as { id?: string } | null)?.id) ?? '';
   }
 
-  const wabaId = explicitWabaId ?? phoneJson?.whatsapp_business_account?.id;
+  let phoneJson: Record<string, unknown> & { whatsapp_business_account?: { id?: string } } = {};
   if (!wabaId) {
-    return jsonResponse(req, { ok: false, stage: 'phone_lookup', error: 'No WABA id on phone number' }, 500);
+    const phoneUrl = new URL(`https://graph.facebook.com/${graphVersion}/${phoneId}`);
+    phoneUrl.searchParams.set('fields', 'id,display_phone_number,verified_name,whatsapp_business_account');
+    const phoneRes = await fetch(phoneUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const phoneText = await phoneRes.text();
+    phoneJson = JSON.parse(phoneText || '{}');
+    if (!phoneRes.ok) {
+      return jsonResponse(req, {
+        ok: false,
+        stage: 'phone_lookup',
+        hint: 'הטוקן לא מורשה לקרוא את חשבון הוואטסאפ העסקי — הגדירו את מזהה ה-WABA בהגדרת whatsapp_waba_id',
+        errorText: phoneText,
+      }, 200);
+    }
+    wabaId = phoneJson?.whatsapp_business_account?.id ?? '';
+  }
+  if (!wabaId) {
+    return jsonResponse(req, { ok: false, stage: 'phone_lookup', error: 'No WABA id available' }, 500);
   }
 
   if (req.method === 'POST' && postBody?.action === 'sync') {
