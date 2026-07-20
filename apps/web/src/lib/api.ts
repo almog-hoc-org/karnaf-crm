@@ -425,6 +425,20 @@ export async function postPurgeLead(leadId: string) {
   return postJson<{ ok: true; purged: string }>('/leads-manage', { action: 'purge', leadId });
 }
 
+// Pull live template statuses + bodies from Meta into message_templates
+// metadata (does not overwrite local bodies — drift is surfaced in the UI).
+export interface MetaTemplateSyncResult {
+  ok: boolean;
+  matched: number;
+  drifted: string[];
+  nonApproved: Array<{ key: string; status: string }>;
+  unmatchedMeta: string[];
+  error?: string;
+}
+export async function postSyncMetaTemplates() {
+  return postJson<MetaTemplateSyncResult>('/meta-template-status', { action: 'sync' });
+}
+
 export interface ImportLeadRow {
   phone: string;
   fullName?: string | null;

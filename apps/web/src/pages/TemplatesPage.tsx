@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { fetchLeadsList, fetchMessageTemplates, postMessageTemplateAction } from '@/lib/api';
+import { fetchLeadsList, fetchMessageTemplates, postMessageTemplateAction, postSyncMetaTemplates } from '@/lib/api';
 import type { LeadRow, MessageTemplateRow, TemplateChannel, TemplateStatus } from '@/lib/types';
 import { contextFromLead, renderTemplate } from '@/lib/template-render';
 import { useToast } from '@/components/Toast';
@@ -25,6 +25,24 @@ export function TemplatesPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['message-templates'] });
       toast.success('עודכן');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
+  // Pulls live statuses + bodies from Meta into metadata.meta on each
+  // matching template; the same sync also runs nightly via cron.
+  const syncMut = useMutation({
+    mutationFn: postSyncMetaTemplates,
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['message-templates'] });
+      if (!res.ok) {
+        toast.error(res.error ?? 'הסנכרון נכשל');
+        return;
+      }
+      const parts = [`סונכרנו ${res.matched} תבניות ממטא`];
+      if (res.nonApproved.length > 0) parts.push(`${res.nonApproved.length} לא מאושרות!`);
+      if (res.drifted.length > 0) parts.push(`${res.drifted.length} עם נוסח שונה במטא`);
+      (res.nonApproved.length > 0 ? toast.error : toast.success)(parts.join(' · '));
     },
     onError: (err) => toast.error((err as Error).message),
   });
@@ -89,7 +107,18 @@ export function TemplatesPage() {
     <div className="space-y-4">
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">תבניות הודעה</h1>
-        <span className="text-sm text-slate-500">{templates.length} תבניות</span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-slate-500">{templates.length} תבניות</span>
+          <button
+            type="button"
+            className="kf-btn text-sm"
+            disabled={syncMut.isPending}
+            onClick={() => syncMut.mutate()}
+            title="מושך ממטא את סטטוס האישור והנוסח החי של כל תבנית (רץ גם אוטומטית כל לילה)"
+          >
+            {syncMut.isPending ? 'מסנכרן…' : '↻ סנכרן ממטא'}
+          </button>
+        </div>
       </header>
 
       <PageIntro>
@@ -150,18 +179,39 @@ export function TemplatesPage() {
           <ul className="mt-3 space-y-2">
             {items.map((tpl) => {
               const preview = renderTemplate(tpl.body, previewContext);
+              const meta = (tpl.metadata as { meta?: { status?: string; body?: string | null; synced_at?: string } }).meta;
+              const metaDrift = !!(meta?.body && meta.body !== tpl.body);
               return (
                 <li key={tpl.id} className="rounded-lg border border-slate-200 bg-white p-3">
                   <div className="flex items-baseline justify-between gap-2">
                     <strong className="text-sm">{tpl.name_he}</strong>
                     <div className="flex items-center gap-2 text-xs">
                       <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-slate-600">{tpl.key}</code>
+                      {meta?.status ? (
+                        <span
+                          className={`rounded-full px-2 py-0.5 font-medium ${
+                            meta.status === 'APPROVED'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : meta.status === 'PENDING' || meta.status === 'IN_APPEAL'
+                                ? 'bg-amber-50 text-amber-700'
+                                : 'bg-rose-50 text-rose-700'
+                          }`}
+                          title={meta.synced_at ? `סונכרן ממטא: ${meta.synced_at}` : undefined}
+                        >
+                          מטא: {meta.status === 'APPROVED' ? 'מאושרת' : meta.status === 'PENDING' ? 'בבדיקה' : meta.status}
+                        </span>
+                      ) : null}
                       <span className={
                         tpl.status === 'active' ? 'text-emerald-600' :
                         tpl.status === 'draft' ? 'text-amber-600' : 'text-slate-400'
                       }>{STATUS_LABELS[tpl.status]}</span>
                     </div>
                   </div>
+                  {metaDrift ? (
+                    <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800" title={meta?.body ?? undefined}>
+                      הנוסח המאושר במטא שונה מהנוסח המקומי — בשליחה בפועל יוצא הנוסח של מטא. רחפו לצפייה בו.
+                    </p>
+                  ) : null}
                   {tpl.description ? <p className="mt-1 text-xs text-slate-500">{tpl.description}</p> : null}
                   <div className="mt-2 whitespace-pre-wrap rounded-md bg-slate-50 p-2 text-sm leading-6">
                     {preview.text}
