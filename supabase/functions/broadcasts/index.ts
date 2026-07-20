@@ -15,6 +15,7 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { countSegment, fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
+import { resolvePacing } from '../_shared/broadcast-pacing.ts';
 
 interface MetaTemplate { name: string; lang?: string; params?: string[] }
 
@@ -62,7 +63,12 @@ Deno.serve(async (req) => {
     const { data, error } = await supabase
       .from('broadcasts').select('*').order('created_at', { ascending: false }).limit(100);
     if (error) return jsonResponse(req, { error: error.message }, 500);
-    return jsonResponse(req, { ok: true, broadcasts: data ?? [] });
+    // Expose the live pacing knobs so the UI can show real numbers
+    // instead of hardcoded ones.
+    const { data: pacingRow } = await supabase
+      .from('crm_config').select('config_value').eq('config_key', 'broadcast_pacing').maybeSingle();
+    const pacing = resolvePacing(pacingRow?.config_value);
+    return jsonResponse(req, { ok: true, broadcasts: data ?? [], pacing });
   }
 
   if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);

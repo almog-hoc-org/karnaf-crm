@@ -857,7 +857,11 @@ export async function postDeletePromptVariant(id: string) {
 // === Broadcasts (הודעות תפוצה) ============================================
 
 export async function fetchBroadcasts() {
-  return getJson<{ ok: true; broadcasts: BroadcastRow[] }>('/broadcasts');
+  return getJson<{
+    ok: true;
+    broadcasts: BroadcastRow[];
+    pacing?: { perTick: number; dailyCap: number; pauseMinSample: number; pauseFailurePct: number };
+  }>('/broadcasts');
 }
 
 export async function fetchBroadcast(id: string) {

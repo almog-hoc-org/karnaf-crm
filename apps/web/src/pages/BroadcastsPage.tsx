@@ -183,7 +183,13 @@ function BroadcastCard({
   );
 }
 
+const DEFAULT_UI_PACING = { perTick: 20, dailyCap: 250 };
+
 function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  // Live pacing knobs from the broadcasts list response (crm_config
+  // broadcast_pacing) — falls back to the seeded defaults until loaded.
+  const pacingQ = useQuery({ queryKey: ['broadcasts'], queryFn: fetchBroadcasts });
+  const pacing = pacingQ.data?.pacing ?? DEFAULT_UI_PACING;
   const toast = useToast();
   const [name, setName] = useState('');
   const [source, setSource] = useState('');
@@ -272,13 +278,14 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
             <b className="tabular-nums">{previewQ.isLoading ? '…' : previewQ.data?.count ?? 0}</b>
             {(previewQ.data?.count ?? 0) > 0 ? (
               <span className="ms-2 text-slate-500">
-                השליחה מדורגת אוטומטית (עד ~20 בדקה, עד 250 נמענים ביממה) כדי להגן על דירוג המספר בוואטסאפ.
+                השליחה מדורגת אוטומטית (עד ~{pacing.perTick} בדקה, עד {pacing.dailyCap.toLocaleString()} נמענים
+                ביממה) כדי להגן על דירוג המספר בוואטסאפ.
               </span>
             ) : null}
-            {(previewQ.data?.count ?? 0) > 250 ? (
+            {(previewQ.data?.count ?? 0) > pacing.dailyCap ? (
               <span className="ms-2 text-amber-700">
                 מעל התקרה היומית — התפוצה תתפרס אוטומטית על פני כ-
-                {Math.ceil((previewQ.data?.count ?? 0) / 250)} ימים, וניתן להגדיל את התקרה בהגדרת broadcast_pacing.
+                {Math.ceil((previewQ.data?.count ?? 0) / pacing.dailyCap)} ימים, וניתן להגדיל את התקרה בהגדרת broadcast_pacing.
               </span>
             ) : null}
           </p>
