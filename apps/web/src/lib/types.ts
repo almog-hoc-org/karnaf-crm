@@ -60,6 +60,8 @@ export interface LeadRow {
   consent_email?: boolean | null;
   // Flattened from the program_members join in leads-list.
   is_program_member?: boolean;
+  // Computed in leads-list: the customer wrote and got no reply yet.
+  awaiting_reply?: boolean;
 }
 
 // Tier 0.E — Contact-centric type aliases. The v4 spec calls the
@@ -623,6 +625,9 @@ export interface ActivityRow {
 export interface DashboardSummary {
   leadsToday: number;
   unansweredNow: number;
+  // True inbound>outbound counter computed in dashboard-summary (any
+  // ownership, no aging floor) — matches the inbox reply lane.
+  awaitingReplyNow?: number;
   hotLeadsNow: number;
   paymentPendingNow: number;
   slaRiskCount: number;
@@ -650,6 +655,7 @@ export interface DashboardSummary {
 export type AttentionKind =
   | 'queue'
   | 'mia_reply'
+  | 'awaiting_reply'
   | 'overdue_action'
   | 'deal_stalled'
   | 'meeting_outcome_pending'

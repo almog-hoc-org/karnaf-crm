@@ -11,32 +11,10 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { notifyTelegram } from '../_shared/notify-telegram.ts';
 import { logAutomationRun } from '../_shared/automation-log.ts';
 
-// Hebrew label for each attention kind. Keep in sync with the RPC's
-// case dispatch in migration 055 — adding a new kind there means adding
-// it here too so the morning digest doesn't bucket it under "אחר".
-const KIND_LABELS: Record<string, string> = {
-  mia_reply: 'הלקוח השיב',
-  overdue_action: 'פעולה הבאה באיחור',
-  phone_overdue: 'שיחת טלפון באיחור',
-  phone_escalation: 'הוסלם לטלפון',
-  ai_stuck: 'AI תקוע',
-  deal_stalled: 'עסקה תקועה',
-  meeting_outcome_pending: 'פגישה לסיכום',
-  queue: 'משימת תור',
-};
-
-// The lanes match InboxPage.tsx so the digest groups the same way Mia
-// sees the inbox UI.
-const KIND_LANES: Record<string, 'reply' | 'call' | 'risk' | 'ops'> = {
-  mia_reply: 'reply',
-  overdue_action: 'risk',
-  phone_overdue: 'call',
-  phone_escalation: 'call',
-  ai_stuck: 'risk',
-  deal_stalled: 'risk',
-  meeting_outcome_pending: 'ops',
-  queue: 'ops',
-};
+// Labels + lanes come from the shared kind registry so the digest, the
+// inbox UI, and the RPC can no longer drift apart (the lib mirror's
+// test enforces full coverage of the RPC kinds).
+import { kindLabel, kindLane } from '../_shared/inbox-kinds.ts';
 
 interface AttentionRow {
   kind: string;
@@ -76,7 +54,7 @@ Deno.serve(async (req) => {
     let critical = 0;
     for (const row of rows) {
       byKind.set(row.kind, (byKind.get(row.kind) ?? 0) + 1);
-      const lane = KIND_LANES[row.kind] ?? 'ops';
+      const lane = kindLane(row.kind);
       byLane[lane]++;
       // Priority 1 = critical regardless of kind. Captures phone_overdue
       // + investor-track deal_stalled + ai_stuck in one signal.
@@ -96,7 +74,7 @@ Deno.serve(async (req) => {
       lines.push('');
       lines.push('פירוט לפי סוג:');
       for (const [kind, count] of sortedKinds) {
-        const label = KIND_LABELS[kind] ?? kind;
+        const label = kindLabel(kind);
         lines.push(`• ${label}: ${count}`);
       }
     } else {

@@ -37,6 +37,11 @@ Deno.serve(async (req) => {
   const createdFrom = url.searchParams.get('createdFrom');
   const createdTo = url.searchParams.get('createdTo');
   const inboundFrom = url.searchParams.get('inboundFrom');
+  // awaiting=true → only leads whose customer wrote and got no reply yet.
+  // PostgREST cannot compare two columns, so this mode fetches a capped
+  // candidate set (inbound not null, oldest wait first) and paginates the
+  // in-function filtered result.
+  const awaitingOnly = url.searchParams.get('awaiting') === 'true';
   // Tier 6.A — product group filter. Single param that matches either
   // primary_track OR product_interest because the two columns evolved
   // historically and a lead may have one but not the other (e.g.
@@ -58,6 +63,22 @@ Deno.serve(async (req) => {
     )
     .order('updated_at', { ascending: false })
     .range(offset, offset + limit - 1);
+
+  if (awaitingOnly) {
+    // Rebuild ordering/paging for the awaiting mode: oldest waiting
+    // customer first, paginate after the column-vs-column filter below.
+    query = supabase
+      .from('leads')
+      .select(
+        'id, full_name, phone, email, source, source_campaign, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, program_members(lead_id)',
+      )
+      .not('last_inbound_at', 'is', null)
+      .not('lead_status', 'in', '("won","lost","do_not_contact","removed_by_request")')
+      .eq('do_not_contact', false)
+      .eq('removed_by_request', false)
+      .order('last_inbound_at', { ascending: true })
+      .limit(1000);
+  }
 
   if (status) query = query.eq('lead_status', status);
   if (heat) query = query.eq('lead_heat', heat);
@@ -122,11 +143,33 @@ Deno.serve(async (req) => {
   const { data, error, count } = await query;
   if (error) return jsonResponse(req, { error: error.message }, 500);
 
-  // Flatten the embedded join into a boolean the UI can render directly.
+  const isAwaiting = (row: Record<string, unknown>): boolean => {
+    const inbound = row.last_inbound_at ? Date.parse(row.last_inbound_at as string) : NaN;
+    const outbound = row.last_outbound_at ? Date.parse(row.last_outbound_at as string) : NaN;
+    return Number.isFinite(inbound) && (!Number.isFinite(outbound) || outbound < inbound);
+  };
+
+  // Flatten the embedded join into a boolean the UI can render directly,
+  // and expose the computed awaiting-reply state on every row.
   const leads = (data ?? []).map((row) => {
     const { program_members: pm, ...rest } = row as Record<string, unknown> & { program_members?: unknown[] };
-    return { ...rest, is_program_member: Array.isArray(pm) ? pm.length > 0 : Boolean(pm) };
+    return {
+      ...rest,
+      is_program_member: Array.isArray(pm) ? pm.length > 0 : Boolean(pm),
+      awaiting_reply: isAwaiting(row as Record<string, unknown>),
+    };
   });
+
+  if (awaitingOnly) {
+    const filtered = leads.filter((l) => l.awaiting_reply);
+    return jsonResponse(req, {
+      ok: true,
+      leads: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+      limit,
+      offset,
+    });
+  }
 
   return jsonResponse(req, { ok: true, leads, total: count ?? null, limit, offset });
 });

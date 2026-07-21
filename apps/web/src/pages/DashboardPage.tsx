@@ -75,8 +75,9 @@ export function DashboardPage() {
 
       {/* Tier 6.D.2 — 4 actionable KPIs (was 5). Each has a click target. */}
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard label={t('kpi_unanswered')} value={s.unansweredNow} tone={s.unansweredNow > 0 ? 'warn' : 'normal'}
-                 to="/leads?status=new" icon={<IconClock />} />
+        <KpiCard label="ממתינים לתשובה" value={s.awaitingReplyNow ?? s.unansweredNow}
+                 tone={(s.awaitingReplyNow ?? s.unansweredNow) > 0 ? 'warn' : 'normal'}
+                 to="/leads?awaiting=true" icon={<IconClock />} />
         <KpiCard label={t('kpi_hot_leads')} value={s.hotLeadsNow} tone={s.hotLeadsNow > 0 ? 'hot' : 'normal'}
                  to="/leads?heat=hot" icon={<IconFlame />} />
         <KpiCard label={t('kpi_payment_pending')} value={s.paymentPendingNow}
