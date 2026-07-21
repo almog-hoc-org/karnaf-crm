@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchLeadsList, fetchMessageTemplates, postMessageTemplateAction, postSyncMetaTemplates } from '@/lib/api';
 import type { LeadRow, MessageTemplateRow, TemplateChannel, TemplateStatus } from '@/lib/types';
@@ -7,6 +7,7 @@ import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
 import { PageIntro } from '@/components/PageIntro';
+import { supabase } from '@/lib/supabase';
 
 // Tier 7.C.1 — central labels.
 import { TEMPLATE_CHANNEL_LABELS, TEMPLATE_STATUS_LABELS } from '@/lib/format';
@@ -51,6 +52,7 @@ export function TemplatesPage() {
 
   const templates = templatesQ.data?.templates ?? [];
   const [editing, setEditing] = useState<MessageTemplateRow | null>(null);
+  const [createEmailOpen, setCreateEmailOpen] = useState(false);
 
   // Tier 7.C.4 — preview-against-real-lead. Admin picks a recent lead;
   // every template renders against that contact's data. Fallback to the
@@ -111,6 +113,13 @@ export function TemplatesPage() {
         <h1 className="text-2xl font-semibold tracking-tight">תבניות הודעה</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-slate-500">{templates.length} תבניות</span>
+          <button
+            type="button"
+            className="kf-btn kf-btn-primary text-sm"
+            onClick={() => setCreateEmailOpen(true)}
+          >
+            + תבנית מייל חדשה
+          </button>
           <button
             type="button"
             className="kf-btn text-sm"
@@ -259,6 +268,17 @@ export function TemplatesPage() {
           onCancel={() => setEditing(null)}
         />
       ) : null}
+
+      {createEmailOpen ? (
+        <CreateEmailTemplateDialog
+          busy={action.isPending}
+          onSubmit={(payload) => {
+            action.mutate({ action: 'create', channel: 'email', ...payload });
+            setCreateEmailOpen(false);
+          }}
+          onCancel={() => setCreateEmailOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -329,6 +349,170 @@ function EditDialog({
           <button type="submit" className="kf-btn kf-btn-primary" disabled={busy}>{busy ? 'שומר...' : 'שמירה'}</button>
         </div>
       </form>
+    </div>
+  );
+}
+
+// Simple-HTML email body editor: snippet toolbar, image upload to the
+// public email-assets bucket, and a sandboxed live preview. This is
+// deliberately NOT a page builder — single column, inline styles.
+function EmailBodyEditor({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  function insertAtCursor(snippet: string) {
+    const area = areaRef.current;
+    if (!area) {
+      onChange(value + snippet);
+      return;
+    }
+    const start = area.selectionStart ?? value.length;
+    const end = area.selectionEnd ?? value.length;
+    onChange(value.slice(0, start) + snippet + value.slice(end));
+  }
+
+  async function uploadImage(file: File) {
+    setUploading(true);
+    try {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `${crypto.randomUUID().slice(0, 8)}-${safeName}`;
+      const { error } = await supabase.storage.from('email-assets').upload(path, file, {
+        cacheControl: '31536000',
+        upsert: false,
+      });
+      if (error) throw error;
+      const { data } = supabase.storage.from('email-assets').getPublicUrl(path);
+      insertAtCursor(`\n<img src="${data.publicUrl}" alt="" style="max-width:100%; border-radius:8px;" />\n`);
+      toast.success('התמונה הועלתה ושולבה');
+    } catch (err) {
+      toast.error(`העלאת תמונה נכשלה: ${(err as Error).message}`);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1">
+        <button type="button" className="kf-btn text-xs" onClick={() => insertAtCursor('<p></p>')}>פסקה</button>
+        <button type="button" className="kf-btn text-xs" onClick={() => insertAtCursor('<strong></strong>')}>מודגש</button>
+        <button type="button" className="kf-btn text-xs" onClick={() => insertAtCursor('<a href="https://"></a>')}>קישור</button>
+        <button type="button" className="kf-btn text-xs" onClick={() => insertAtCursor('{{first_name}}')}>שם הלקוח</button>
+        <button
+          type="button"
+          className="kf-btn text-xs"
+          disabled={uploading}
+          onClick={() => fileRef.current?.click()}
+        >
+          {uploading ? 'מעלה…' : '🖼 העלאת תמונה'}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void uploadImage(f);
+          }}
+        />
+      </div>
+      <textarea
+        ref={areaRef}
+        className="kf-input w-full font-mono text-xs"
+        dir="ltr"
+        rows={10}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={'<p>שלום {{first_name}},</p>\n<p>תוכן ההודעה כאן…</p>'}
+      />
+      <div>
+        <div className="mb-1 text-xs font-medium text-slate-500">תצוגה מקדימה</div>
+        <iframe
+          title="תצוגה מקדימה של המייל"
+          sandbox=""
+          className="h-64 w-full rounded-lg border border-slate-200 bg-white"
+          srcDoc={`<div dir="rtl" style="font-family:Arial,sans-serif; padding:12px; text-align:right;">${value}</div>`}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CreateEmailTemplateDialog({
+  busy,
+  onSubmit,
+  onCancel,
+}: {
+  busy: boolean;
+  onSubmit: (payload: { key: string; name_he: string; subject: string; body: string; body_html: string }) => void;
+  onCancel: () => void;
+}) {
+  const [key, setKey] = useState('');
+  const [name, setName] = useState('');
+  const [subject, setSubject] = useState('');
+  const [html, setHtml] = useState('');
+
+  const keyValid = /^[a-z][a-z0-9_]{1,39}$/.test(key);
+  const canSave = keyValid && name.trim() && subject.trim() && html.trim();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
+      <div
+        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-semibold">תבנית מייל חדשה</h2>
+        <div className="mt-3 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className="text-slate-600">מזהה (אנגלית, לשימוש פנימי)</span>
+              <input className="kf-input mt-1 w-full" dir="ltr" value={key}
+                onChange={(e) => setKey(e.target.value.toLowerCase())} placeholder="newsletter_july" />
+              {key && !keyValid ? (
+                <span className="text-xs text-rose-600">אותיות קטנות באנגלית, ספרות וקו תחתון בלבד</span>
+              ) : null}
+            </label>
+            <label className="text-sm">
+              <span className="text-slate-600">שם בעברית</span>
+              <input className="kf-input mt-1 w-full" value={name}
+                onChange={(e) => setName(e.target.value)} placeholder="ניוזלטר יולי" />
+            </label>
+          </div>
+          <label className="block text-sm">
+            <span className="text-slate-600">נושא המייל</span>
+            <input className="kf-input mt-1 w-full" value={subject}
+              onChange={(e) => setSubject(e.target.value)} placeholder="מה חדש בדרך לדירה — יולי" />
+          </label>
+          <EmailBodyEditor value={html} onChange={setHtml} />
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className="kf-btn kf-btn-ghost" onClick={onCancel}>ביטול</button>
+          <button
+            type="button"
+            className="kf-btn kf-btn-primary"
+            disabled={!canSave || busy}
+            onClick={() => onSubmit({
+              key,
+              name_he: name.trim(),
+              subject: subject.trim(),
+              body: html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500) || subject.trim(),
+              body_html: html,
+            })}
+          >
+            {busy ? 'שומר…' : 'שמירה'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

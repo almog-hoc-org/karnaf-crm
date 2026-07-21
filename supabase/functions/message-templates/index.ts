@@ -7,6 +7,7 @@ import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
+import { sanitizeEmailHtml } from '../_shared/email-html.ts';
 
 interface CreatePayload {
   action: 'create';
@@ -18,6 +19,8 @@ interface CreatePayload {
   variables_used?: string[];
   tags?: string[];
   notes?: string;
+  subject?: string;
+  body_html?: string;
 }
 interface UpdatePayload {
   action: 'update';
@@ -29,6 +32,8 @@ interface UpdatePayload {
   tags?: string[];
   status?: 'draft' | 'active' | 'deprecated';
   notes?: string;
+  subject?: string;
+  body_html?: string;
 }
 type Payload = CreatePayload | UpdatePayload;
 
@@ -90,6 +95,9 @@ Deno.serve(async (req) => {
         variables_used: body.variables_used ?? [],
         tags: body.tags ?? [],
         notes: body.notes?.trim() || null,
+        subject: body.subject?.trim() || null,
+        // Never trust client HTML, even from staff — sanitize on write.
+        body_html: body.body_html ? sanitizeEmailHtml(body.body_html) : null,
       })
       .select('*')
       .single();
@@ -108,6 +116,10 @@ Deno.serve(async (req) => {
     if (body.tags !== undefined) patch.tags = body.tags;
     if (body.status !== undefined) patch.status = body.status;
     if (body.notes !== undefined) patch.notes = body.notes?.trim() || null;
+    if (body.subject !== undefined) patch.subject = body.subject?.trim() || null;
+    if (body.body_html !== undefined) {
+      patch.body_html = body.body_html ? sanitizeEmailHtml(body.body_html) : null;
+    }
     if (Object.keys(patch).length === 0) {
       return jsonResponse(req, { error: 'no fields to update' }, 400);
     }

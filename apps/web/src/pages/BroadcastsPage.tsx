@@ -337,7 +337,16 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           </select>
         </Field>
         {selectedTemplate ? (
-          <div className="rounded-lg bg-slate-50 p-3 text-sm whitespace-pre-wrap">{selectedTemplate.body}</div>
+          channel === 'email' && selectedTemplateHtml ? (
+            <iframe
+              title="תצוגה מקדימה של תבנית המייל"
+              sandbox=""
+              className="h-48 w-full rounded-lg border border-slate-200 bg-white"
+              srcDoc={`<div dir="rtl" style="font-family:Arial,sans-serif; padding:12px; text-align:right;">${selectedTemplateHtml}</div>`}
+            />
+          ) : (
+            <div className="rounded-lg bg-slate-50 p-3 text-sm whitespace-pre-wrap">{selectedTemplate.body}</div>
+          )
         ) : null}
 
         {channel === 'whatsapp' ? (
