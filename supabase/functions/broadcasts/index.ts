@@ -99,6 +99,34 @@ Deno.serve(async (req) => {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const action = body.action as string | undefined;
 
+  // Saved audience lists — name a segment once, reuse it in any broadcast.
+  if (action === 'save_list') {
+    const listName = (body.name as string | undefined)?.trim();
+    if (!listName) return jsonResponse(req, { error: 'name required' }, 400);
+    const { data, error } = await supabase.from('saved_lists').insert({
+      name: listName,
+      definition: (body.definition as BroadcastSegment | undefined) ?? {},
+      created_by: staff.userId,
+    }).select('*').single();
+    if (error) return jsonResponse(req, { error: error.message }, 400);
+    return jsonResponse(req, { ok: true, list: data });
+  }
+
+  if (action === 'list_lists') {
+    const { data, error } = await supabase
+      .from('saved_lists').select('*').order('created_at', { ascending: false }).limit(100);
+    if (error) return jsonResponse(req, { error: error.message }, 500);
+    return jsonResponse(req, { ok: true, lists: data ?? [] });
+  }
+
+  if (action === 'delete_list') {
+    const id = body.id as string | undefined;
+    if (!id) return jsonResponse(req, { error: 'id required' }, 400);
+    const { error } = await supabase.from('saved_lists').delete().eq('id', id);
+    if (error) return jsonResponse(req, { error: error.message }, 400);
+    return jsonResponse(req, { ok: true });
+  }
+
   if (action === 'preview_count') {
     const segment = (body.segment ?? {}) as BroadcastSegment;
     const channel = (body.channel as string | undefined) === 'email' ? 'email' as const : undefined;

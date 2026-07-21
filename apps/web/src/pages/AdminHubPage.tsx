@@ -58,6 +58,7 @@ const SECTIONS: HubSection[] = [
     hint: 'נוגעים פעם ברבעון. רוב הזמן אפשר להתעלם',
     links: [
       { to: '/admin/sources',         title: 'מקורות לידים',     blurb: 'איזה ערוצים מותרים להזין לידים' },
+      { to: '/admin/landing-pages',   title: 'דפי נחיתה',        blurb: 'דפים ציבוריים שמזינים לידים עם קמפיין' },
       { to: '/admin/whatsapp-router', title: 'WhatsApp Router',  blurb: 'תפריט הסינון של הבוט בכניסה' },
       { to: '/admin/settings',        title: 'הגדרות',           blurb: 'שעות פעילות, SLA, רכיב AI פעיל' },
       { to: '/users',                 title: 'משתמשים',          blurb: 'יוזרים והרשאות כלל-מערכת' },

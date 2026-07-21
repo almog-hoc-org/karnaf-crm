@@ -187,6 +187,9 @@ verify_jwt = true
 [functions.lead-sources]
 verify_jwt = true
 
+[functions.landing-pages]
+verify_jwt = true
+
 [functions.leads-manage]
 verify_jwt = true
 
