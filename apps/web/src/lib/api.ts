@@ -120,6 +120,8 @@ export interface LeadsListParams {
   productGroup?: ProductGroup;
   // member=true → only program members ("הדרך לדירה").
   member?: boolean;
+  // awaiting=true → only leads whose customer wrote and got no reply yet.
+  awaiting?: boolean;
   limit?: number;
   offset?: number;
 }

@@ -656,9 +656,18 @@ function classifyRow(row: AttentionRow): {
     };
   }
 
-  if (row.kind === 'mia_reply' || row.ownership_mode === 'mia_active' || row.lead_status === 'human_handoff') {
+  if (
+    row.kind === 'awaiting_reply' ||
+    row.kind === 'mia_reply' ||
+    row.ownership_mode === 'mia_active' ||
+    row.lead_status === 'human_handoff'
+  ) {
+    // A customer message is always due the moment it arrived, so plain
+    // "overdue" made every reply-row critical. Escalate visually only
+    // once the customer has waited more than 2 hours.
+    const waitedOverTwoHours = Number.isFinite(dueMs) && Date.now() - dueMs > 2 * 60 * 60 * 1000;
     return {
-      lane: 'reply', actionLabel: 'לענות עכשיו', urgency: overdue ? 'critical' : 'normal',
+      lane: 'reply', actionLabel: 'לענות עכשיו', urgency: waitedOverTwoHours ? 'critical' : 'normal',
       pillClass: 'bg-amber-100 text-amber-800', borderClass: 'border-s-amber-400',
     };
   }
@@ -684,6 +693,7 @@ function humanReason(row: AttentionRow): string {
   if (row.queue_summary) return row.queue_summary;
   if (row.reason) return row.reason;
   if (row.kind === 'mia_reply') return 'הלקוח השיב ומחכה למענה אנושי';
+  if (row.kind === 'awaiting_reply') return 'הלקוח כתב וטרם קיבל תשובה';
   if (row.kind === 'overdue_action') return 'הפעולה הבאה באיחור';
   if (row.kind === 'deal_stalled') return 'עסקה פתוחה ללא פעילות זמן רב';
   if (row.kind === 'meeting_outcome_pending') return 'פגישה עברה ללא תיעוד תוצאה';
@@ -767,6 +777,11 @@ async function copyTalkTrack(text: string) {
 
 function sortRows(rows: AttentionRow[]): AttentionRow[] {
   return [...rows].sort((a, b) => {
+    // Customers waiting for a reply come before everything else — a
+    // human on the other end beats any internal ops item.
+    const ar = classifyRow(a).lane === 'reply' ? 0 : 1;
+    const br = classifyRow(b).lane === 'reply' ? 0 : 1;
+    if (ar !== br) return ar - br;
     const ac = classifyRow(a).urgency === 'critical' ? 0 : 1;
     const bc = classifyRow(b).urgency === 'critical' ? 0 : 1;
     if (ac !== bc) return ac - bc;

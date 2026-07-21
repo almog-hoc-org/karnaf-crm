@@ -138,6 +138,14 @@ function LeadWorkCard({
             <span className="text-xs text-slate-500" title={lead.updated_at}>
               עודכן {formatRelative(lead.updated_at)}
             </span>
+            {lead.awaiting_reply ? (
+              <span
+                className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800 ring-1 ring-amber-300"
+                title={lead.last_inbound_at ? `ההודעה האחרונה מהלקוח: ${formatRelative(lead.last_inbound_at)}` : undefined}
+              >
+                ⏳ ממתין לתשובה
+              </span>
+            ) : null}
             {canPurge ? (
               <button
                 type="button"
@@ -314,6 +322,7 @@ export function LeadsPage() {
     (searchParams.get('productGroup') as ProductGroup | null) ?? ''
   );
   const [memberOnly, setMemberOnly] = useState(searchParams.get('member') === 'true');
+  const [awaitingOnly, setAwaitingOnly] = useState(searchParams.get('awaiting') === 'true');
   const [createdFrom, setCreatedFrom] = useState(searchParams.get('createdFrom') ?? '');
   const [createdTo, setCreatedTo] = useState(searchParams.get('createdTo') ?? '');
   const [inboundFrom, setInboundFrom] = useState(searchParams.get('inboundFrom') ?? '');
@@ -333,11 +342,12 @@ export function LeadsPage() {
     if (source) next.set('source', source);
     if (productGroup) next.set('productGroup', productGroup);
     if (memberOnly) next.set('member', 'true');
+    if (awaitingOnly) next.set('awaiting', 'true');
     if (createdFrom) next.set('createdFrom', createdFrom);
     if (createdTo) next.set('createdTo', createdTo);
     if (inboundFrom) next.set('inboundFrom', inboundFrom);
     setSearchParams(next, { replace: true });
-  }, [status, heat, ownership, source, productGroup, memberOnly, createdFrom, createdTo, inboundFrom, setSearchParams]);
+  }, [status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, createdFrom, createdTo, inboundFrom, setSearchParams]);
 
   // dates from UI come as yyyy-mm-dd; expand to UTC range so we match the
   // entire day for createdTo, and start-of-day for createdFrom / inboundFrom.
@@ -353,6 +363,7 @@ export function LeadsPage() {
     source: source || undefined,
     productGroup: productGroup || undefined,
     member: memberOnly || undefined,
+    awaiting: awaitingOnly || undefined,
     createdFrom: expandStart(createdFrom),
     createdTo: expandEnd(createdTo),
     inboundFrom: expandStart(inboundFrom),
@@ -713,6 +724,23 @@ export function LeadsPage() {
           }
         >
           חברי תוכנית
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={awaitingOnly}
+          title="לקוחות שכתבו וטרם קיבלו תשובה — הכי דחוף לטפל"
+          onClick={() => {
+            setAwaitingOnly((v) => !v);
+            setOffset(0);
+          }}
+          className={
+            awaitingOnly
+              ? 'rounded-full bg-amber-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm'
+              : 'rounded-full bg-white px-3 py-1.5 text-sm text-amber-700 ring-1 ring-amber-300 hover:bg-amber-50'
+          }
+        >
+          ⏳ ממתינים לתשובה
         </button>
       </nav>
 

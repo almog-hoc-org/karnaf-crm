@@ -120,9 +120,9 @@ describe('DashboardPage', () => {
     // header subtitle (no click target made it the 5th-wheel KPI).
     expect(screen.getByText(/היום נכנסו/)).toBeInTheDocument();
     expect(screen.getByText(/12/)).toBeInTheDocument();
-    const kpiSection = screen.getByText('ממתינים למענה').closest('section') as HTMLElement;
+    const kpiSection = screen.getByText('ממתינים לתשובה').closest('section') as HTMLElement;
     const kpiPairs: Array<[string, string]> = [
-      ['ממתינים למענה', '3'],
+      ['ממתינים לתשובה', '3'],
       ['לידים חמים', '5'],
       ['ממתינים לתשלום', '2'],
       ['סיכון SLA', '1'],
