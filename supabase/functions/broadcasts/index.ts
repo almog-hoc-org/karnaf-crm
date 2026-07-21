@@ -16,6 +16,7 @@ import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { countSegment, fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
 import { resolvePacing } from '../_shared/broadcast-pacing.ts';
+import { sanitizeEmailHtml } from '../_shared/email-html.ts';
 
 interface MetaTemplate { name: string; lang?: string; params?: string[] }
 
@@ -100,9 +101,11 @@ Deno.serve(async (req) => {
 
   if (action === 'preview_count') {
     const segment = (body.segment ?? {}) as BroadcastSegment;
+    const channel = (body.channel as string | undefined) === 'email' ? 'email' as const : undefined;
     try {
-      const count = await countSegment(supabase, segment);
-      const sample = await fetchSegmentLeads(supabase, segment, 5);
+      const opts = channel ? { channel } : {};
+      const count = await countSegment(supabase, segment, opts);
+      const sample = await fetchSegmentLeads(supabase, segment, 5, opts);
       return jsonResponse(req, { ok: true, count, sample });
     } catch (err) {
       return jsonResponse(req, { error: err instanceof Error ? err.message : String(err) }, 400);
@@ -113,15 +116,27 @@ Deno.serve(async (req) => {
     const name = (body.name as string | undefined)?.trim();
     if (!name) return jsonResponse(req, { error: 'name required' }, 400);
     const channel = (body.channel as string | undefined) ?? 'whatsapp';
-    if (channel === 'email') return jsonResponse(req, { error: 'email channel not yet available' }, 400);
+    if (channel !== 'whatsapp' && channel !== 'email') {
+      return jsonResponse(req, { error: 'unsupported channel' }, 400);
+    }
     const templateKey = (body.template_key as string | undefined) ?? null;
     const bodySnapshot = await bodyForTemplate(supabase, templateKey, channel);
+    // Email: subject required; the HTML body is sanitized server-side —
+    // never trust client HTML even from staff.
+    const subject = (body.subject as string | undefined)?.trim() || null;
+    const rawHtml = (body.body_html as string | undefined) ?? null;
+    const bodyHtml = rawHtml ? sanitizeEmailHtml(rawHtml) : null;
+    if (channel === 'email' && !subject) {
+      return jsonResponse(req, { error: 'תפוצת מייל דורשת שורת נושא' }, 400);
+    }
     const { data, error } = await supabase.from('broadcasts').insert({
       name,
       channel,
       template_key: templateKey,
       meta_template: (body.meta_template as MetaTemplate | undefined) ?? null,
       body_snapshot: bodySnapshot,
+      subject,
+      body_html: bodyHtml,
       segment: (body.segment as BroadcastSegment | undefined) ?? {},
       scheduled_at: (body.scheduled_at as string | undefined) ?? null,
       created_by: staff.userId,
@@ -165,9 +180,16 @@ Deno.serve(async (req) => {
     if (b.channel === 'whatsapp' && !(b.meta_template as MetaTemplate | null)?.name) {
       return jsonResponse(req, { error: 'WhatsApp broadcasts require an approved Meta template (meta_template.name)' }, 400);
     }
+    if (b.channel === 'email' && !b.subject) {
+      return jsonResponse(req, { error: 'תפוצת מייל דורשת שורת נושא' }, 400);
+    }
     // Snapshot the current segment size for display; recipients are
     // materialised at send time by the worker.
-    const count = await countSegment(supabase, (b.segment ?? {}) as BroadcastSegment);
+    const count = await countSegment(
+      supabase,
+      (b.segment ?? {}) as BroadcastSegment,
+      b.channel === 'email' ? { channel: 'email' } : {},
+    );
     const { data, error } = await supabase
       .from('broadcasts')
       .update({ status: 'scheduled', recipients_count: count })

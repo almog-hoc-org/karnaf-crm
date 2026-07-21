@@ -899,16 +899,17 @@ export async function fetchBroadcast(id: string) {
   }>('/broadcasts', { id });
 }
 
-export async function previewBroadcastSegment(segment: BroadcastSegment) {
+export async function previewBroadcastSegment(segment: BroadcastSegment, channel?: BroadcastChannel) {
   return postJson<{ ok: true; count: number; sample: Array<{ id: string; full_name: string | null; phone: string | null }> }>(
     '/broadcasts',
-    { action: 'preview_count', segment },
+    { action: 'preview_count', segment, channel },
   );
 }
 
 export type BroadcastAction =
   | { action: 'create'; name: string; channel: BroadcastChannel; template_key?: string | null;
-      meta_template?: BroadcastMetaTemplate | null; segment: BroadcastSegment; scheduled_at?: string | null }
+      meta_template?: BroadcastMetaTemplate | null; subject?: string; body_html?: string;
+      segment: BroadcastSegment; scheduled_at?: string | null }
   | { action: 'update'; id: string; name?: string; channel?: BroadcastChannel; template_key?: string | null;
       meta_template?: BroadcastMetaTemplate | null; segment?: BroadcastSegment; scheduled_at?: string | null }
   | { action: 'schedule'; id: string }

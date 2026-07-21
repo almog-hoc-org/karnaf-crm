@@ -21,6 +21,13 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
 import { enqueueAllowance, resolvePacing, shouldPauseBroadcast } from '../_shared/broadcast-pacing.ts';
 import { notifyTelegram } from '../_shared/notify-telegram.ts';
+import {
+  addSubscriberToList,
+  createRavmesserList,
+  createRavmesserMessage,
+  sendRavmesserMessage,
+} from '../_shared/ravmesser.ts';
+import { sanitizeEmailHtml, wrapEmailShell } from '../_shared/email-html.ts';
 
 // How many broadcasts to advance per tick. The per-tick enqueue rate and
 // the rolling-24h cap come from crm_config 'broadcast_pacing' (see
@@ -79,8 +86,27 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Email-channel config (Rav Messer campaign mode).
+  const { data: emailCfgRow } = await supabase
+    .from('crm_config').select('config_value').eq('config_key', 'email_channel').maybeSingle();
+  const emailCfgRaw = (emailCfgRow?.config_value ?? {}) as Record<string, unknown>;
+  const emailCfg = {
+    fromName: typeof emailCfgRaw.fromName === 'string' ? emailCfgRaw.fromName : 'קרנף נדל"ן',
+    fromEmail: typeof emailCfgRaw.fromEmail === 'string' ? emailCfgRaw.fromEmail : '',
+    requireConsent: emailCfgRaw.requireConsent !== false,
+  };
+
   for (const b of broadcasts) {
     try {
+      // Email broadcasts ride Rav Messer list campaigns — a separate
+      // lifecycle from the WhatsApp per-recipient queue.
+      if ((b.channel ?? 'whatsapp') === 'email') {
+        const used = await advanceEmailBroadcast(supabase, b, emailCfg, allowance, correlationId);
+        allowance -= used;
+        totalEnqueued += used;
+        continue;
+      }
+
       // 1. Materialise recipients once, on the transition into 'sending'.
       if (b.status === 'scheduled') {
         const leads = await fetchSegmentLeads(supabase, (b.segment ?? {}) as BroadcastSegment, SEGMENT_FETCH_LIMIT);
@@ -257,4 +283,171 @@ async function finalCounts(supabase: ReturnType<typeof getServiceSupabase>, broa
     failed: rows.filter((r) => r.status === 'failed').length,
     skipped: rows.filter((r) => r.status === 'skipped').length,
   };
+}
+
+// Email broadcast lifecycle (Rav Messer campaign mode):
+//   scheduled → materialise consenting recipients with an email,
+//   ensure a dedicated Responder list (provider_ref.listId),
+//   push recipients into the list at the pacing allowance,
+//   once everyone is pushed — create the message and send it to the
+//   list, then finalise. Opens/clicks/unsubscribes live in Rav Messer.
+// Returns how many recipients were pushed this tick (counts against
+// the shared pacing allowance).
+async function advanceEmailBroadcast(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  b: Record<string, unknown>,
+  emailCfg: { fromName: string; fromEmail: string; requireConsent: boolean },
+  allowance: number,
+  correlationId: string,
+): Promise<number> {
+  const broadcastId = b.id as string;
+
+  if (b.status === 'scheduled') {
+    const leads = await fetchSegmentLeads(
+      supabase, (b.segment ?? {}) as BroadcastSegment, SEGMENT_FETCH_LIMIT,
+      { channel: 'email', requireEmailConsent: emailCfg.requireConsent },
+    );
+    if (leads.length > 0) {
+      await supabase.from('broadcast_recipients').upsert(
+        leads.map((l) => ({ broadcast_id: broadcastId, lead_id: l.id, status: 'pending' })),
+        { onConflict: 'broadcast_id,lead_id', ignoreDuplicates: true },
+      );
+    }
+    await supabase.from('broadcasts')
+      .update({ status: 'sending', recipients_count: leads.length })
+      .eq('id', broadcastId);
+  }
+
+  const providerRef = { ...((b.provider_ref ?? {}) as Record<string, unknown>) };
+
+  if (!providerRef.listId) {
+    if (!emailCfg.fromEmail) {
+      await failEmailBroadcast(supabase, broadcastId, correlationId, 'חסר fromEmail בהגדרת email_channel');
+      return 0;
+    }
+    const list = await createRavmesserList({
+      name: `karnaf-crm-${String(b.name ?? '').slice(0, 40)}-${broadcastId.slice(0, 8)}`,
+      senderName: emailCfg.fromName,
+      senderEmail: emailCfg.fromEmail,
+    });
+    if (!list.ok || !list.listId) {
+      await failEmailBroadcast(supabase, broadcastId, correlationId, `יצירת רשימה ברב מסר נכשלה: ${list.error}`);
+      return 0;
+    }
+    providerRef.listId = list.listId;
+    await supabase.from('broadcasts').update({ provider_ref: providerRef }).eq('id', broadcastId);
+  }
+
+  // Push pending recipients into the Responder list, paced.
+  let pushed = 0;
+  if (allowance > 0) {
+    const { data: pending } = await supabase
+      .from('broadcast_recipients')
+      .select('id, lead_id, leads(email, full_name, consent_email, do_not_contact)')
+      .eq('broadcast_id', broadcastId)
+      .eq('status', 'pending')
+      .limit(allowance);
+    for (const r of (pending ?? []) as unknown as Array<{
+      id: string; lead_id: string;
+      leads: { email: string | null; full_name: string | null; consent_email: boolean | null; do_not_contact: boolean | null } | null;
+    }>) {
+      const lead = r.leads;
+      if (!lead?.email || lead.do_not_contact || (emailCfg.requireConsent && lead.consent_email !== true)) {
+        await supabase.from('broadcast_recipients')
+          .update({ status: 'skipped', error: !lead?.email ? 'no_email' : 'no_consent' })
+          .eq('id', r.id);
+        continue;
+      }
+      const added = await addSubscriberToList(providerRef.listId as string, {
+        email: lead.email, name: lead.full_name,
+      });
+      if (added.ok) {
+        await supabase.from('broadcast_recipients')
+          .update({ status: 'sent', sent_at: new Date().toISOString() })
+          .eq('id', r.id);
+        pushed += 1;
+      } else if (added.error === 'ravmesser: email invalid') {
+        await supabase.from('broadcast_recipients')
+          .update({ status: 'failed', error: 'invalid_email' })
+          .eq('id', r.id);
+      } else {
+        // Transient (network / not configured) — leave pending for the
+        // next tick, stop pushing this round.
+        log.warn('broadcast_email_push_failed', {
+          fn: 'broadcast-dispatch', correlationId, broadcastId, err: added.error,
+        });
+        break;
+      }
+    }
+  }
+
+  // Everyone pushed? Create + send the campaign message once.
+  const { count: remaining } = await supabase
+    .from('broadcast_recipients')
+    .select('id', { count: 'exact', head: true })
+    .eq('broadcast_id', broadcastId)
+    .eq('status', 'pending');
+  if ((remaining ?? 0) === 0 && !providerRef.messageSent) {
+    const bodyHtml = (b.body_html as string | null) ??
+      `<p>${String(b.body_snapshot ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br />')}</p>`;
+    const html = wrapEmailShell(sanitizeEmailHtml(bodyHtml), emailCfg.fromName);
+    const counts = await finalCounts(supabase, broadcastId);
+
+    if (counts.sent === 0) {
+      // Nobody made it into the list — nothing to send.
+      await supabase.from('broadcasts').update({
+        status: counts.failed > 0 ? 'failed' : 'sent',
+        sent_count: 0, failed_count: counts.failed, skipped_count: counts.skipped,
+      }).eq('id', broadcastId);
+      return pushed;
+    }
+
+    const msg = await createRavmesserMessage({
+      listId: providerRef.listId as string,
+      subject: String(b.subject ?? b.name ?? 'עדכון מקרנף נדל"ן'),
+      html,
+    });
+    if (!msg.ok || !msg.messageId) {
+      await failEmailBroadcast(supabase, broadcastId, correlationId, `יצירת הודעה ברב מסר נכשלה: ${msg.error}`);
+      return pushed;
+    }
+    const sent = await sendRavmesserMessage(providerRef.listId as string, msg.messageId);
+    if (!sent.ok) {
+      await failEmailBroadcast(supabase, broadcastId, correlationId, `שליחת הקמפיין ברב מסר נכשלה: ${sent.error}`);
+      return pushed;
+    }
+    providerRef.messageId = msg.messageId;
+    providerRef.messageSent = true;
+    providerRef.sentAt = new Date().toISOString();
+    await supabase.from('broadcasts').update({
+      status: 'sent',
+      provider_ref: providerRef,
+      sent_count: counts.sent,
+      failed_count: counts.failed,
+      skipped_count: counts.skipped,
+    }).eq('id', broadcastId);
+    log.info('broadcast_email_campaign_sent', {
+      fn: 'broadcast-dispatch', correlationId, broadcastId,
+      listId: providerRef.listId, messageId: msg.messageId, ...counts,
+    });
+  }
+
+  return pushed;
+}
+
+async function failEmailBroadcast(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  broadcastId: string,
+  correlationId: string,
+  reason: string,
+): Promise<void> {
+  await supabase.from('broadcasts').update({ status: 'failed' }).eq('id', broadcastId);
+  await notifyTelegram({
+    source: 'broadcast-dispatch',
+    severity: 'warn',
+    title: 'תפוצת מייל נכשלה',
+    lines: [reason],
+    correlationId,
+  });
+  log.warn('broadcast_email_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId, reason });
 }
