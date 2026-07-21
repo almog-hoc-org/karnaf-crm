@@ -193,16 +193,19 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const pacing = pacingQ.data?.pacing ?? DEFAULT_UI_PACING;
   const toast = useToast();
   const [name, setName] = useState('');
+  const [channel, setChannel] = useState<'whatsapp' | 'email'>('whatsapp');
   const [source, setSource] = useState('');
   const [sourceCampaign, setSourceCampaign] = useState('');
   const [primaryTrack, setPrimaryTrack] = useState('');
   const [templateKey, setTemplateKey] = useState('');
   const [metaName, setMetaName] = useState('');
+  const [subject, setSubject] = useState('');
+  const [bodyHtml, setBodyHtml] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
 
   const templatesQ = useQuery({
-    queryKey: ['message-templates', 'whatsapp', 'active'],
-    queryFn: () => fetchMessageTemplates({ channel: 'whatsapp', status: 'active' }),
+    queryKey: ['message-templates', channel, 'active'],
+    queryFn: () => fetchMessageTemplates({ channel, status: 'active' }),
   });
   const templates = templatesQ.data?.templates ?? [];
 
@@ -217,8 +220,8 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const debouncedSegment = useDebouncedValue(segment, 400);
 
   const previewQ = useQuery({
-    queryKey: ['broadcast-preview', debouncedSegment],
-    queryFn: () => previewBroadcastSegment(debouncedSegment),
+    queryKey: ['broadcast-preview', debouncedSegment, channel],
+    queryFn: () => previewBroadcastSegment(debouncedSegment, channel),
   });
 
   const selectedTemplate = templates.find((t) => t.key === templateKey);
@@ -228,9 +231,11 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
       postBroadcastAction({
         action: 'create',
         name: name.trim(),
-        channel: 'whatsapp',
+        channel,
         template_key: templateKey || null,
-        meta_template: metaName ? { name: metaName.trim(), lang: 'he', params: [] } : null,
+        meta_template: channel === 'whatsapp' && metaName ? { name: metaName.trim(), lang: 'he', params: [] } : null,
+        subject: channel === 'email' ? subject.trim() : undefined,
+        body_html: channel === 'email' ? (bodyHtml.trim() || selectedTemplateHtml || undefined) : undefined,
         segment,
         scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null,
       }),
@@ -241,7 +246,12 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     onError: (err) => toast.error((err as Error).message),
   });
 
-  const canSave = name.trim().length > 0 && !!metaName.trim();
+  const selectedTemplateHtml = (selectedTemplate as { body_html?: string | null } | undefined)?.body_html ?? '';
+  const canSave =
+    name.trim().length > 0 &&
+    (channel === 'whatsapp'
+      ? !!metaName.trim()
+      : !!subject.trim() && !!(bodyHtml.trim() || selectedTemplateHtml || selectedTemplate?.body));
 
   return (
     <Modal title="תפוצה חדשה" onClose={onClose}>
@@ -249,6 +259,32 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         <Field label="שם התפוצה (פנימי)">
           <input className="kf-input w-full" value={name} onChange={(e) => setName(e.target.value)} placeholder="למשל: תזכורת וובינר השקה" />
         </Field>
+
+        <Field label="ערוץ">
+          <div className="flex gap-2">
+            {([['whatsapp', '💬 וואטסאפ'], ['email', '📧 מייל']] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => { setChannel(value); setTemplateKey(''); }}
+                className={
+                  channel === value
+                    ? 'rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white'
+                    : 'rounded-lg bg-white px-4 py-2 text-sm text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </Field>
+        {channel === 'email' ? (
+          <p className="text-xs text-slate-500">
+            תפוצת מייל נשלחת דרך רב מסר: המערכת יוצרת שם רשימה ייעודית, מוסיפה אליה את
+            הנמענים (רק מי שיש לו מייל והסכמת דיוור), ושולחת את הקמפיין. הסרות ופתיחות
+            מנוהלות ברב מסר.
+          </p>
+        ) : null}
 
         <fieldset className="rounded-lg border border-slate-200 p-3">
           <legend className="px-1 text-sm font-medium text-slate-600">סגמנט נמענים</legend>
@@ -304,13 +340,34 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <div className="rounded-lg bg-slate-50 p-3 text-sm whitespace-pre-wrap">{selectedTemplate.body}</div>
         ) : null}
 
-        <Field label="שם תבנית Meta מאושרת (נשלחת בפועל)">
-          <input className="kf-input w-full" dir="ltr" value={metaName}
-            onChange={(e) => setMetaName(e.target.value)} placeholder="webinar_launch_reminder" />
-        </Field>
-        <p className="text-xs text-slate-500">
-          וואטסאפ לנמענים קרים חייב תבנית מאושרת של Meta. הזן את שם התבנית בדיוק כפי שאושרה.
-        </p>
+        {channel === 'whatsapp' ? (
+          <>
+            <Field label="שם תבנית Meta מאושרת (נשלחת בפועל)">
+              <input className="kf-input w-full" dir="ltr" value={metaName}
+                onChange={(e) => setMetaName(e.target.value)} placeholder="webinar_launch_reminder" />
+            </Field>
+            <p className="text-xs text-slate-500">
+              וואטסאפ לנמענים קרים חייב תבנית מאושרת של Meta. הזן את שם התבנית בדיוק כפי שאושרה.
+            </p>
+          </>
+        ) : (
+          <>
+            <Field label="נושא המייל">
+              <input className="kf-input w-full" value={subject}
+                onChange={(e) => setSubject(e.target.value)} placeholder="למשל: הוובינר מתחיל הערב ב-20:30" />
+            </Field>
+            <Field label="גוף המייל (HTML פשוט — אם ריק, ישמש גוף התבנית שנבחרה)">
+              <textarea
+                className="kf-input w-full font-mono text-xs"
+                dir="ltr"
+                rows={6}
+                value={bodyHtml}
+                onChange={(e) => setBodyHtml(e.target.value)}
+                placeholder={'<p>שלום {{first_name}},</p>\n<p>תוכן ההודעה...</p>'}
+              />
+            </Field>
+          </>
+        )}
 
         <Field label="מועד שליחה">
           <input type="datetime-local" className="kf-input w-full" dir="ltr"

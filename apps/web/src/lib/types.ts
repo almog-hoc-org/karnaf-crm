@@ -336,6 +336,8 @@ export interface MessageTemplateRow {
   name_he: string;
   description: string | null;
   body: string;
+  subject?: string | null;
+  body_html?: string | null;
   variables_used: string[];
   tags: string[];
   status: TemplateStatus;
@@ -371,6 +373,9 @@ export interface BroadcastRow {
   template_key: string | null;
   meta_template: BroadcastMetaTemplate | null;
   body_snapshot: string | null;
+  subject?: string | null;
+  body_html?: string | null;
+  provider_ref?: Record<string, unknown>;
   segment: BroadcastSegment;
   scheduled_at: string | null;
   status: BroadcastStatus;

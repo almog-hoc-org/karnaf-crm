@@ -122,3 +122,100 @@ export async function addSubscriberToList(
   }
   return { ok: false, created: false, existing: false, error: String(lastErr) };
 }
+
+// ── Campaign primitives (email broadcasts) ──────────────────────────
+// Responder sends campaigns to a LIST, not to individual recipients:
+//   1. create a dedicated list per broadcast,
+//   2. push the segment's subscribers into it (addSubscriberToList),
+//   3. create a message (subject + HTML) and send it to the list.
+// Opens/clicks/unsubscribes are tracked on the Rav Messer side, which
+// also appends the legally-required opt-out footer.
+
+async function ravPost(path: string, form: Record<string, string>): Promise<{ ok: boolean; json: Record<string, unknown>; error?: string }> {
+  if (!isRavmesserConfigured()) return { ok: false, json: {}, error: 'ravmesser not configured' };
+  const body = new URLSearchParams(form);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= RETRIES; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}${path}`, {
+        method: 'POST',
+        headers: {
+          Authorization: await buildResponderAuthHeader(),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body,
+      });
+      const text = await res.text();
+      if (res.status >= 500) throw new Error(`ravmesser_5xx:${res.status}:${text.slice(0, 120)}`);
+      let json: Record<string, unknown> = {};
+      try { json = JSON.parse(text); } catch { json = { raw: text }; }
+      if (!res.ok) return { ok: false, json, error: `ravmesser ${res.status}: ${text.slice(0, 200)}` };
+      return { ok: true, json };
+    } catch (err) {
+      lastErr = err;
+      if (attempt === RETRIES) break;
+      const delay = BACKOFF_MS * Math.pow(2, attempt) + Math.floor(Math.random() * 100);
+      log.warn('ravmesser_retry', { fn: 'ravmesser', path, attempt, delay, err: String(err) });
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  return { ok: false, json: {}, error: String(lastErr) };
+}
+
+function firstNumericId(json: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const v = json[key];
+    if (typeof v === 'number' || (typeof v === 'string' && v)) return String(v);
+  }
+  return null;
+}
+
+export async function createRavmesserList(input: {
+  name: string;
+  senderName: string;
+  senderEmail: string;
+  description?: string;
+}): Promise<{ ok: boolean; listId?: string; error?: string }> {
+  const { ok, json, error } = await ravPost('/lists', {
+    info: JSON.stringify({
+      NAME: input.name,
+      DESCRIPTION: input.description ?? 'נוצרה אוטומטית מ-Karnaf CRM עבור תפוצת מייל',
+      SENDER_NAME: input.senderName,
+      SENDER_EMAIL: input.senderEmail,
+    }),
+  });
+  if (!ok) return { ok: false, error };
+  const listId = firstNumericId(json, ['LIST_ID', 'ID', 'list_id', 'id']);
+  if (!listId) return { ok: false, error: `ravmesser: no list id in response ${JSON.stringify(json).slice(0, 200)}` };
+  return { ok: true, listId };
+}
+
+export async function createRavmesserMessage(input: {
+  listId: string;
+  subject: string;
+  html: string;
+}): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+  const { ok, json, error } = await ravPost(`/lists/${encodeURIComponent(input.listId)}/messages`, {
+    info: JSON.stringify({
+      TYPE: '1',
+      BODY_TYPE: '0',
+      SUBJECT: input.subject,
+      BODY: input.html,
+      LANGUAGE: 'he',
+    }),
+  });
+  if (!ok) return { ok: false, error };
+  const messageId = firstNumericId(json, ['MESSAGE_ID', 'ID', 'message_id', 'id']);
+  if (!messageId) return { ok: false, error: `ravmesser: no message id in response ${JSON.stringify(json).slice(0, 200)}` };
+  return { ok: true, messageId };
+}
+
+export async function sendRavmesserMessage(listId: string, messageId: string): Promise<{ ok: boolean; error?: string }> {
+  const { ok, json, error } = await ravPost(
+    `/lists/${encodeURIComponent(listId)}/messages/${encodeURIComponent(messageId)}`,
+    {},
+  );
+  if (!ok) return { ok: false, error };
+  if (json.MESSAGE_SENT === true || json.MESSAGE_SENT === 'true') return { ok: true };
+  return { ok: false, error: `ravmesser: unexpected send response ${JSON.stringify(json).slice(0, 200)}` };
+}

@@ -26,15 +26,27 @@ export function splitSegmentValue(value: string): string[] {
   return value.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+export interface SegmentChannelOptions {
+  channel?: 'whatsapp' | 'email';
+  // Israeli spam law: marketing email needs prior opt-in. When true
+  // (the default for email via crm_config email_channel.requireConsent),
+  // only consent_email = true leads qualify.
+  requireEmailConsent?: boolean;
+}
+
 // Apply the segment filter + the non-negotiable suppression guards
 // (do_not_contact, removed_by_request) to a leads query builder.
-export function applySegment<T>(query: T, segment: BroadcastSegment): T {
+export function applySegment<T>(query: T, segment: BroadcastSegment, opts: SegmentChannelOptions = {}): T {
   // The Supabase query-builder type isn't chainable through a generic
   // here; a loose local type is the pragmatic choice.
   // deno-lint-ignore no-explicit-any
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let q = query as any;
   q = q.eq('do_not_contact', false).eq('removed_by_request', false);
+  if (opts.channel === 'email') {
+    q = q.not('email', 'is', null);
+    if (opts.requireEmailConsent !== false) q = q.eq('consent_email', true);
+  }
   for (const field of ALLOWED_FIELDS) {
     const value = segment?.[field];
     if (typeof value === 'string' && value.trim()) {
@@ -50,9 +62,10 @@ export function applySegment<T>(query: T, segment: BroadcastSegment): T {
 export async function countSegment(
   supabase: SupabaseClient,
   segment: BroadcastSegment,
+  opts: SegmentChannelOptions = {},
 ): Promise<number> {
   const base = supabase.from('leads').select('id', { count: 'exact', head: true });
-  const { count, error } = await applySegment(base, segment);
+  const { count, error } = await applySegment(base, segment, opts);
   if (error) throw error;
   return count ?? 0;
 }
@@ -62,13 +75,14 @@ export async function fetchSegmentLeads(
   supabase: SupabaseClient,
   segment: BroadcastSegment,
   limit = 1000,
-): Promise<Array<{ id: string; full_name: string | null; phone: string | null }>> {
+  opts: SegmentChannelOptions = {},
+): Promise<Array<{ id: string; full_name: string | null; phone: string | null; email: string | null }>> {
   const base = supabase
     .from('leads')
-    .select('id, full_name, phone')
+    .select('id, full_name, phone, email')
     .order('created_at', { ascending: true })
     .limit(limit);
-  const { data, error } = await applySegment(base, segment);
+  const { data, error } = await applySegment(base, segment, opts);
   if (error) throw error;
-  return (data ?? []) as Array<{ id: string; full_name: string | null; phone: string | null }>;
+  return (data ?? []) as Array<{ id: string; full_name: string | null; phone: string | null; email: string | null }>;
 }
