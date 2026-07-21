@@ -41,6 +41,7 @@ Deno.serve(async (req) => {
       followUpDelays: config.followUpDelays,
       slaThresholds: config.slaThresholds,
       forbiddenClaims: config.forbiddenClaims,
+      safetyNet: config.safetyNet,
     });
   }
 
@@ -63,6 +64,23 @@ Deno.serve(async (req) => {
   }
 
   switch (body.action) {
+    case 'update_ai_safety_net': {
+      const enabled = body.enabled;
+      const ackText = typeof body.ackText === 'string' ? body.ackText.trim() : '';
+      const oncePerHours = Number(body.oncePerHours);
+      if (typeof enabled !== 'boolean') return jsonResponse(req, { error: 'enabled must be boolean' }, 400);
+      if (!ackText || ackText.length > 500) {
+        return jsonResponse(req, { error: 'ackText required, up to 500 chars' }, 400);
+      }
+      if (!Number.isFinite(oncePerHours) || oncePerHours < 1 || oncePerHours > 168) {
+        return jsonResponse(req, { error: 'oncePerHours must be 1-168' }, 400);
+      }
+      return await persist(
+        'ai_safety_net',
+        { enabled, ackText, oncePerHours, mode: 'generic' },
+        'runtime_config_safety_net_updated',
+      );
+    }
     case 'update_active_hours': {
       const validationError = validateActiveHours(body as Partial<ActiveHoursPayload>);
       if (validationError) return jsonResponse(req, { error: validationError }, 400);

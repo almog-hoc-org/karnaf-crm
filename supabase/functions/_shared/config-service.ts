@@ -1,5 +1,6 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import type { AiRuntimeConfig } from './ai-contract.ts';
+import { DEFAULT_SAFETY_NET, resolveSafetyNet, type SafetyNetConfig } from './generic-ack.ts';
 
 export interface RuntimeConfig extends AiRuntimeConfig {
   slaThresholds: {
@@ -19,6 +20,7 @@ export interface RuntimeConfig extends AiRuntimeConfig {
     reactivationDays: number;
     templateName: string;
   };
+  safetyNet: SafetyNetConfig;
 }
 
 const DEFAULT: RuntimeConfig = {
@@ -38,6 +40,7 @@ const DEFAULT: RuntimeConfig = {
   ai: { model: 'gpt-4o-mini', promptVersion: 'v1', maxReplyChars: 900 },
   whatsappSession: { freeformWindowHours: 24, fallbackTemplateName: 'karnaf_followup_v1' },
   reengagement: { enabled: false, checkinDays: 7, reactivationDays: 60, templateName: '' },
+  safetyNet: DEFAULT_SAFETY_NET,
 };
 
 export async function getRuntimeConfig(supabase: SupabaseClient): Promise<RuntimeConfig> {
@@ -58,5 +61,6 @@ export async function getRuntimeConfig(supabase: SupabaseClient): Promise<Runtim
     ai: get('ai_runtime', DEFAULT.ai),
     whatsappSession: get('whatsapp_session', DEFAULT.whatsappSession),
     reengagement: get('reengagement', DEFAULT.reengagement),
+    safetyNet: resolveSafetyNet(map.get('ai_safety_net')),
   };
 }

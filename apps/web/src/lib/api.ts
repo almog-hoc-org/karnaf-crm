@@ -756,6 +756,12 @@ export interface SlaThresholdsConfig {
   paymentPendingHours: number;
 }
 
+export interface SafetyNetConfig {
+  enabled: boolean;
+  ackText: string;
+  oncePerHours: number;
+}
+
 export async function fetchRuntimeConfig() {
   return getJson<{
     ok: true;
@@ -764,7 +770,12 @@ export async function fetchRuntimeConfig() {
     followUpDelays: FollowUpDelaysConfig;
     slaThresholds: SlaThresholdsConfig;
     forbiddenClaims: string[];
+    safetyNet: SafetyNetConfig;
   }>('/runtime-config');
+}
+
+export async function postUpdateSafetyNet(payload: SafetyNetConfig) {
+  return postJson<{ ok: true }>('/runtime-config', { action: 'update_ai_safety_net', ...payload });
 }
 
 export async function postUpdateActiveHours(payload: ActiveHoursConfig) {
