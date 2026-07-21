@@ -17,6 +17,7 @@ import { releaseConversationLock, tryConversationLock } from '../_shared/convers
 import { fallbackTemplateParams, isTemplateConfigError } from '../_shared/provider-errors.ts';
 import { resolveSendMode } from '../_shared/conversation-window.ts';
 import { coveredByLatestReply, latestInboundAt } from '../_shared/answered-guard.ts';
+import { shouldSendGenericAck } from '../_shared/generic-ack.ts';
 import { maybeRefreshSummary } from '../_shared/transcript-summary.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
@@ -557,6 +558,15 @@ Deno.serve(async (req) => {
           fn: 'orchestrate', correlationId, leadId, conversationId,
         });
       }
+      // Safety net for hard send failures too — except template-config
+      // errors, where the real reply is parked and flushes on the next
+      // inbound (an ack would just precede the actual answer confusingly).
+      if (!isTemplateConfigError(sendResult.error)) {
+        await maybeSendSafetyNetAck({
+          supabase, lead, leadId, conversationId, channel, config, correlationId,
+          executionStatus: 'provider_send_error',
+        });
+      }
       await ensurePendingQueueItem(supabase, {
         leadId,
         queueType: 'failed_automation',
@@ -580,13 +590,22 @@ Deno.serve(async (req) => {
         response_data: { raw_output: decision.rawOutput ?? null, validated_output: out },
         error_message: decision.executionStatus,
       });
+      // Safety net: the customer must not sit in silence while operators
+      // fix the AI. Send the configurable generic ack (once per window)
+      // and hand the lead to Mia so the bot doesn't loop on the failure.
+      const ackSent = await maybeSendSafetyNetAck({
+        supabase, lead, leadId, conversationId, channel, config, correlationId,
+        executionStatus: decision.executionStatus,
+      });
       await ensurePendingQueueItem(supabase, {
         leadId,
         queueType: 'failed_automation',
         priorityLevel: 1,
         reason: `AI decision failed: ${decision.executionStatus}`,
-        queueSummary: 'ה־AI לא ייצר תשובה — נדרש טיפול ידני או תיקון הגדרת מודל.',
-        payloadJson: { executionStatus: decision.executionStatus, correlationId },
+        queueSummary: ackSent
+          ? 'ה־AI לא ייצר תשובה — נשלחה הודעת אישור גנרית ללקוח; נדרש מענה אנושי.'
+          : 'ה־AI לא ייצר תשובה — הלקוח לא קיבל מענה; נדרש טיפול ידני מיידי.',
+        payloadJson: { executionStatus: decision.executionStatus, correlationId, ackSent },
       });
     }
 
@@ -661,4 +680,84 @@ function isModelExecutionFailure(status: string): boolean {
     status.endsWith('_exception') ||
     /^(openai|gemini)_error:/.test(status)
   );
+}
+
+// Safety-net ack: sends the configurable "we got your message" text when
+// the AI produced nothing, stamps lead_events (once-per-window guard),
+// and hands the lead to Mia so the failure cannot loop. Never throws —
+// this path runs inside failure handling.
+async function maybeSendSafetyNetAck(input: {
+  supabase: ReturnType<typeof getServiceSupabase>;
+  lead: Record<string, unknown>;
+  leadId: string;
+  conversationId: string;
+  channel: string;
+  config: Awaited<ReturnType<typeof getRuntimeConfig>>;
+  correlationId: string;
+  executionStatus: string;
+}): Promise<boolean> {
+  const { supabase, lead, leadId, conversationId, channel, config, correlationId, executionStatus } = input;
+  try {
+    const cfg = config.safetyNet;
+    const { data: lastAck } = await supabase
+      .from('lead_events')
+      .select('created_at')
+      .eq('lead_id', leadId)
+      .eq('event_type', 'generic_ack_sent')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!shouldSendGenericAck({
+      config: cfg,
+      executionStatus,
+      lastAckAt: (lastAck?.created_at as string | undefined) ?? null,
+    })) {
+      return false;
+    }
+
+    // Inbound-triggered, so the 24h window is almost always open. When it
+    // is not, do NOT burn the fallback Meta template on an ack — the human
+    // task alone covers the closed-window case.
+    const mode = resolveSendMode('freeform', lead.last_inbound_at as string | null, config.whatsappSession.freeformWindowHours);
+    if (mode !== 'freeform') {
+      log.info('safety_net_ack_window_closed', { fn: 'orchestrate', correlationId, leadId });
+      return false;
+    }
+
+    const sendResult = channel === 'instagram'
+      ? await sendInstagramText(lead.ig_user_id as string, cfg.ackText)
+      : await sendWhatsAppText(lead.phone as string, cfg.ackText);
+    if (!sendResult.ok) {
+      log.warn('safety_net_ack_send_failed', {
+        fn: 'orchestrate', correlationId, leadId, err: sendResult.error,
+      });
+      return false;
+    }
+
+    await supabase.from('messages').insert({
+      conversation_id: conversationId,
+      lead_id: leadId,
+      provider_message_id: sendResult.providerMessageId ?? null,
+      sender_type: 'system',
+      direction: 'outbound',
+      message_type: 'text',
+      content_text: cfg.ackText,
+      provider_status: 'sent',
+      raw_payload: { source: 'generic_ack', execution_status: executionStatus, correlationId },
+    });
+    await logLeadEvent(supabase, leadId, 'generic_ack_sent', 'system', {
+      execution_status: executionStatus,
+      correlation_id: correlationId,
+    }, conversationId);
+    await updateLeadFields(supabase, leadId, { ownership_mode: 'mia_active' });
+    await transitionLeadStatus(supabase, leadId, 'human_handoff', 'ai', 'safety_net_ack');
+
+    log.info('safety_net_ack_sent', { fn: 'orchestrate', correlationId, leadId, executionStatus });
+    return true;
+  } catch (err) {
+    log.warn('safety_net_ack_error', {
+      fn: 'orchestrate', correlationId, leadId, err: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
 }

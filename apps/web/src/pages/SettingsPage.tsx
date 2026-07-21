@@ -5,9 +5,11 @@ import {
   postUpdateActiveHours,
   postUpdateFollowUpDelays,
   postUpdateForbiddenClaims,
+  postUpdateSafetyNet,
   postUpdateSlaThresholds,
   type ActiveHoursConfig,
   type FollowUpDelaysConfig,
+  type SafetyNetConfig,
   type SlaThresholdsConfig,
 } from '@/lib/api';
 import { useToast } from '@/components/Toast';
@@ -148,6 +150,12 @@ export function SettingsPage() {
 
       <ForbiddenClaimsCard
         value={configQ.data?.forbiddenClaims ?? null}
+        loading={configQ.isLoading}
+        onSaved={() => qc.invalidateQueries({ queryKey: ['runtime-config'] })}
+      />
+
+      <SafetyNetCard
+        value={configQ.data?.safetyNet ?? null}
         loading={configQ.isLoading}
         onSaved={() => qc.invalidateQueries({ queryKey: ['runtime-config'] })}
       />
@@ -375,5 +383,75 @@ function WhatsAppTemplateReadiness({
         סטטוס ידוע: הקונפיג מפנה ל־<code dir="ltr">karnaf_followup_v1</code>, אבל Meta החזירה שהתבנית לא קיימת בשפה <code dir="ltr">he</code>. צריך WABA/Meta Business access כדי ליצור ולאשר אותה.
       </div>
     </section>
+  );
+}
+
+function SafetyNetCard({
+  value,
+  loading,
+  onSaved,
+}: {
+  value: SafetyNetConfig | null;
+  loading: boolean;
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [draft, setDraft] = useState<SafetyNetConfig>({
+    enabled: true,
+    ackText: 'קיבלנו את הפנייה, נציג מצוות קרנף יחזור אליך בהקדם 🦏',
+    oncePerHours: 24,
+  });
+  useEffect(() => { if (value) setDraft(value); }, [value]);
+  const save = useMutation({
+    mutationFn: postUpdateSafetyNet,
+    onSuccess: () => { onSaved(); toast.success('רשת הביטחון נשמרה'); },
+    onError: (err) => toast.error((err as Error).message),
+  });
+  return (
+    <form
+      className="kf-card max-w-3xl space-y-4 p-5"
+      onSubmit={(e) => { e.preventDefault(); save.mutate(draft); }}
+    >
+      <div>
+        <h2 className="text-lg font-semibold">רשת ביטחון של הבוט</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          כשה-AI לא מצליח לענות (תקלה, חוסר ביטחון, חסימת תוכן) — הלקוח מקבל את ההודעה הזו
+          במקום שקט, ונפתחת משימה לנציג. נשלחת לכל היותר פעם אחת בחלון שמוגדר כאן.
+        </p>
+      </div>
+      {loading ? (
+        <div className="rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500">{t('loading')}</div>
+      ) : (
+        <div className="space-y-4">
+          <label className="inline-flex items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={draft.enabled}
+              onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
+            />
+            רשת הביטחון פעילה
+          </label>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-600">נוסח ההודעה ללקוח</label>
+            <textarea
+              className="kf-input w-full"
+              rows={3}
+              maxLength={500}
+              value={draft.ackText}
+              onChange={(e) => setDraft((d) => ({ ...d, ackText: e.target.value }))}
+            />
+          </div>
+          <div className="max-w-xs">
+            <NumberField label="מרווח מינימלי בין הודעות (שעות)" value={draft.oncePerHours} min={1} max={168}
+              onChange={(v) => setDraft((d) => ({ ...d, oncePerHours: v }))} />
+          </div>
+        </div>
+      )}
+      <div className="flex justify-end">
+        <button type="submit" className="kf-btn kf-btn-primary" disabled={save.isPending || loading || !draft.ackText.trim()}>
+          {save.isPending ? 'שומר...' : 'שמירה'}
+        </button>
+      </div>
+    </form>
   );
 }
