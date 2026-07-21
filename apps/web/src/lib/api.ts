@@ -237,9 +237,11 @@ export async function fetchMessageTemplates(filters?: { channel?: TemplateChanne
 
 export type MessageTemplateAction =
   | { action: 'create'; key: string; channel: TemplateChannel; name_he: string; body: string;
-      description?: string; variables_used?: string[]; tags?: string[]; notes?: string }
+      description?: string; variables_used?: string[]; tags?: string[]; notes?: string;
+      subject?: string; body_html?: string }
   | { action: 'update'; id: string; name_he?: string; body?: string; description?: string;
-      variables_used?: string[]; tags?: string[]; status?: TemplateStatus; notes?: string };
+      variables_used?: string[]; tags?: string[]; status?: TemplateStatus; notes?: string;
+      subject?: string; body_html?: string };
 
 export async function postMessageTemplateAction(payload: MessageTemplateAction) {
   return postJson<{ ok: true; template: MessageTemplateRow }>('/message-templates', payload as unknown as Record<string, unknown>);
