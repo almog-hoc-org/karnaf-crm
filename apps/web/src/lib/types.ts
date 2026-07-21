@@ -358,6 +358,35 @@ export interface BroadcastSegment {
   source_campaign?: string | null;
   primary_track?: string | null;
   product_interest?: string | null;
+  // Any-overlap match against leads.tags.
+  tags?: string[] | null;
+}
+
+export interface SavedListRow {
+  id: string;
+  name: string;
+  definition: BroadcastSegment;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LandingPageRow {
+  id: string;
+  slug: string;
+  title: string;
+  headline: string;
+  subheadline: string | null;
+  body_md: string | null;
+  cta_label: string;
+  campaign: string;
+  source: string;
+  form_config: { fields?: string[] };
+  theme: Record<string, unknown>;
+  active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface BroadcastMetaTemplate {

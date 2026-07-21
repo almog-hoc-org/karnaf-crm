@@ -27,6 +27,8 @@ import type {
   BroadcastSegment,
   BroadcastChannel,
   BroadcastMetaTemplate,
+  LandingPageRow,
+  SavedListRow,
   PartnerDomain,
   PartnerRow,
   PartnerWorkloadRow,
@@ -920,4 +922,35 @@ export type BroadcastAction =
 
 export async function postBroadcastAction(payload: BroadcastAction) {
   return postJson<{ ok: true; broadcast?: BroadcastRow }>('/broadcasts', payload as unknown as Record<string, unknown>);
+}
+
+// === Saved audience lists ==================================================
+
+export async function fetchSavedLists() {
+  return postJson<{ ok: true; lists: SavedListRow[] }>('/broadcasts', { action: 'list_lists' });
+}
+
+export async function postSaveList(name: string, definition: BroadcastSegment) {
+  return postJson<{ ok: true; list: SavedListRow }>('/broadcasts', { action: 'save_list', name, definition });
+}
+
+export async function postDeleteList(id: string) {
+  return postJson<{ ok: true }>('/broadcasts', { action: 'delete_list', id });
+}
+
+// === Landing pages =========================================================
+
+export async function fetchLandingPages() {
+  return getJson<{ ok: true; pages: LandingPageRow[] }>('/landing-pages');
+}
+
+export type LandingPageAction =
+  | { action: 'create'; slug: string; title: string; headline: string; subheadline?: string;
+      body_md?: string; cta_label?: string; campaign: string; active?: boolean }
+  | { action: 'update'; id: string; title?: string; headline?: string; subheadline?: string | null;
+      body_md?: string | null; cta_label?: string; campaign?: string; active?: boolean }
+  | { action: 'delete'; id: string };
+
+export async function postLandingPageAction(payload: LandingPageAction) {
+  return postJson<{ ok: true; page?: LandingPageRow }>('/landing-pages', payload as unknown as Record<string, unknown>);
 }

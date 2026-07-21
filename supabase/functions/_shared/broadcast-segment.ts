@@ -12,6 +12,8 @@ export interface BroadcastSegment {
   source_campaign?: string | null;
   primary_track?: string | null;
   product_interest?: string | null;
+  // Any-overlap match against leads.tags (GIN-indexed text[]).
+  tags?: string[] | null;
 }
 
 // The columns segment filters can target. Guards against arbitrary
@@ -55,6 +57,11 @@ export function applySegment<T>(query: T, segment: BroadcastSegment, opts: Segme
       else if (slugs.length === 1) q = q.eq(field, slugs[0]);
     }
   }
+  // Tags are handled explicitly (array overlap), never via ALLOWED_FIELDS.
+  const tags = Array.isArray(segment?.tags)
+    ? segment.tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 20)
+    : [];
+  if (tags.length > 0) q = q.overlaps('tags', tags);
   return q as T;
 }
 

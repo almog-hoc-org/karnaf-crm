@@ -6,8 +6,10 @@ import {
   fetchBroadcasts,
   fetchBroadcast,
   fetchMessageTemplates,
+  fetchSavedLists,
   previewBroadcastSegment,
   postBroadcastAction,
+  postSaveList,
   type BroadcastAction,
 } from '@/lib/api';
 import type {
@@ -201,7 +203,28 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const [metaName, setMetaName] = useState('');
   const [subject, setSubject] = useState('');
   const [bodyHtml, setBodyHtml] = useState('');
+  const [tagsInput, setTagsInput] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
+
+  // Saved audience lists — load once the dialog opens.
+  const listsQ = useQuery({ queryKey: ['saved-lists'], queryFn: fetchSavedLists });
+  const savedLists = listsQ.data?.lists ?? [];
+  const saveListMut = useMutation({
+    mutationFn: (listName: string) => postSaveList(listName, segment),
+    onSuccess: () => {
+      toast.success('הרשימה נשמרה');
+      void listsQ.refetch();
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+  function applySavedList(id: string) {
+    const list = savedLists.find((l) => l.id === id);
+    if (!list) return;
+    setSource(list.definition.source ?? '');
+    setSourceCampaign(list.definition.source_campaign ?? '');
+    setPrimaryTrack(list.definition.primary_track ?? '');
+    setTagsInput((list.definition.tags ?? []).join(', '));
+  }
 
   const templatesQ = useQuery({
     queryKey: ['message-templates', channel, 'active'],
@@ -209,14 +232,15 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   });
   const templates = templatesQ.data?.templates ?? [];
 
-  const segment: BroadcastSegment = useMemo(
-    () => ({
+  const segment: BroadcastSegment = useMemo(() => {
+    const tags = tagsInput.split(',').map((s) => s.trim()).filter(Boolean);
+    return {
       source: source || undefined,
       source_campaign: sourceCampaign || undefined,
       primary_track: primaryTrack || undefined,
-    }),
-    [source, sourceCampaign, primaryTrack],
-  );
+      tags: tags.length > 0 ? tags : undefined,
+    };
+  }, [source, sourceCampaign, primaryTrack, tagsInput]);
   const debouncedSegment = useDebouncedValue(segment, 400);
 
   const previewQ = useQuery({
@@ -308,6 +332,37 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
             <Field label="קמפיין (source_campaign)">
               <input className="kf-input w-full" dir="ltr" value={sourceCampaign}
                 onChange={(e) => setSourceCampaign(e.target.value)} placeholder="launch_webinar_2026" />
+            </Field>
+          </div>
+          <div className="mt-2 grid gap-2 md:grid-cols-2">
+            <Field label="תגיות (מופרדות בפסיק — מספיקה התאמה לאחת)">
+              <input className="kf-input w-full" dir="ltr" value={tagsInput}
+                onChange={(e) => setTagsInput(e.target.value)} placeholder="vip, webinar" />
+            </Field>
+            <Field label="רשימה שמורה">
+              <div className="flex gap-2">
+                <select
+                  className="kf-input w-full"
+                  value=""
+                  onChange={(e) => { if (e.target.value) applySavedList(e.target.value); }}
+                >
+                  <option value="">— טען רשימה —</option>
+                  {savedLists.map((l) => (
+                    <option key={l.id} value={l.id}>{l.name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="kf-btn whitespace-nowrap text-xs"
+                  disabled={saveListMut.isPending}
+                  onClick={() => {
+                    const listName = window.prompt('שם לרשימה החדשה:');
+                    if (listName?.trim()) saveListMut.mutate(listName.trim());
+                  }}
+                >
+                  שמור כרשימה
+                </button>
+              </div>
             </Field>
           </div>
           <p className="mt-2 text-sm text-slate-600">

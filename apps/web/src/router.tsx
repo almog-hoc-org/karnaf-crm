@@ -19,6 +19,7 @@ const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage').then((m) => ({ 
 const UsersPage = lazy(() => import('@/pages/UsersPage').then((m) => ({ default: m.UsersPage })));
 const TeamPage = lazy(() => import('@/pages/TeamPage').then((m) => ({ default: m.TeamPage })));
 const SourcesPage = lazy(() => import('@/pages/SourcesPage').then((m) => ({ default: m.SourcesPage })));
+const LandingPagesPage = lazy(() => import('@/pages/LandingPagesPage').then((m) => ({ default: m.LandingPagesPage })));
 const PartnersPage = lazy(() => import('@/pages/PartnersPage').then((m) => ({ default: m.PartnersPage })));
 const ProjectsPage = lazy(() => import('@/pages/ProjectsPage').then((m) => ({ default: m.ProjectsPage })));
 const CommissionsPage = lazy(() => import('@/pages/CommissionsPage').then((m) => ({ default: m.CommissionsPage })));
@@ -59,6 +60,7 @@ const router = createBrowserRouter([
           { path: '/users', element: <Suspense fallback={<PageFallback />}><UsersPage /></Suspense> },
           { path: '/team', element: <Suspense fallback={<PageFallback />}><TeamPage /></Suspense> },
           { path: '/admin/sources', element: <Suspense fallback={<PageFallback />}><SourcesPage /></Suspense> },
+          { path: '/admin/landing-pages', element: <Suspense fallback={<PageFallback />}><LandingPagesPage /></Suspense> },
           { path: '/partners', element: <Suspense fallback={<PageFallback />}><PartnersPage /></Suspense> },
           { path: '/projects', element: <Suspense fallback={<PageFallback />}><ProjectsPage /></Suspense> },
           { path: '/commissions', element: <Suspense fallback={<PageFallback />}><CommissionsPage /></Suspense> },

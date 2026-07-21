@@ -70,6 +70,12 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { error: 'Invalid email' }, 400);
   }
 
+  // Honeypot: a hidden field real users never fill. Bots that do get a
+  // silent success and no lead.
+  if (sanitize(payload.company_website, 200)) {
+    return jsonResponse(req, { ok: true });
+  }
+
   const supabase = getServiceSupabase();
   const allowed = await checkRateLimit(supabase, {
     key: `website-lead:${clientIdentifier(req)}`,
@@ -78,12 +84,40 @@ Deno.serve(async (req) => {
   });
   if (!allowed) return jsonResponse(req, { error: 'Rate limit exceeded' }, 429);
 
+  // In-system landing pages: lp_slug must match an ACTIVE landing_pages
+  // row — the page's campaign becomes source_campaign, and unknown slugs
+  // are rejected so nobody can inject arbitrary campaigns through the
+  // public endpoint. Tighter per-slug rate limit on top of the global.
+  const lpSlug = sanitize(payload.lp_slug, 60).toLowerCase();
+  let lpCampaign: string | null = null;
+  let lpSource: string | null = null;
+  if (lpSlug) {
+    if (!/^[a-z0-9-]{2,60}$/.test(lpSlug)) {
+      return jsonResponse(req, { error: 'Unknown landing page' }, 404);
+    }
+    const { data: lp } = await supabase
+      .from('landing_pages')
+      .select('slug, campaign, source, active')
+      .eq('slug', lpSlug)
+      .eq('active', true)
+      .maybeSingle();
+    if (!lp) return jsonResponse(req, { error: 'Unknown landing page' }, 404);
+    const lpAllowed = await checkRateLimit(supabase, {
+      key: `website-lead:lp:${lpSlug}:${clientIdentifier(req)}`,
+      windowSeconds: 60 * 60,
+      maxRequests: 5,
+    });
+    if (!lpAllowed) return jsonResponse(req, { error: 'Rate limit exceeded' }, 429);
+    lpCampaign = lp.campaign as string;
+    lpSource = lp.source as string;
+  }
+
   try {
     const lead = await upsertLead(supabase, {
       phone,
       email,
       fullName: name,
-      source,
+      source: lpSource ?? source,
       intakeChannel: 'form',
       metadata: {
         ...payload,
@@ -92,9 +126,9 @@ Deno.serve(async (req) => {
         phone,
         email,
         service: service || null,
-        source,
+        source: lpSource ?? source,
         source_detail: sourceDetail,
-        campaign_name: 'karnaf_website',
+        campaign_name: lpCampaign ?? 'karnaf_website',
         stage: stage || null,
         equity: equity || null,
         message: message || null,
@@ -102,7 +136,10 @@ Deno.serve(async (req) => {
       },
     });
 
-    const updates: Record<string, unknown> = { source_detail: sourceDetail, source_campaign: 'karnaf_website' };
+    const updates: Record<string, unknown> = {
+      source_detail: lpSlug || sourceDetail,
+      source_campaign: lpCampaign ?? 'karnaf_website',
+    };
     if (message) updates.pain_point_summary = message;
     // Presale landing pages carry a known track so the AI bot converses about
     // the presale project (not the flagship program). resolveTrackContext reads primary_track.
