@@ -6,6 +6,7 @@ import { normalizeIsraeliPhone } from '../_shared/phone.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { buildFirstTouchUpdates, extractAttribution } from '../_shared/attribution.ts';
 
 const MAX_NAME = 100;
 const MAX_PHONE = 30;
@@ -112,6 +113,9 @@ Deno.serve(async (req) => {
     lpSource = lp.source as string;
   }
 
+  const attrs = extractAttribution(payload);
+  const campaign = lpCampaign ?? attrs.utm_campaign ?? 'karnaf_website';
+
   try {
     const lead = await upsertLead(supabase, {
       phone,
@@ -128,7 +132,7 @@ Deno.serve(async (req) => {
         service: service || null,
         source: lpSource ?? source,
         source_detail: sourceDetail,
-        campaign_name: lpCampaign ?? 'karnaf_website',
+        campaign_name: campaign,
         stage: stage || null,
         equity: equity || null,
         message: message || null,
@@ -136,10 +140,14 @@ Deno.serve(async (req) => {
       },
     });
 
-    const updates: Record<string, unknown> = {
-      source_detail: lpSlug || sourceDetail,
-      source_campaign: lpCampaign ?? 'karnaf_website',
-    };
+    // First-touch attribution: utm_*/landing_page/referrer/fbp/fbc columns
+    // fill only when empty; the submission is always recorded in last_touch.
+    // source_detail/source_campaign follow the same first-touch rule (they
+    // used to be overwritten on every re-submission).
+    const updates = buildFirstTouchUpdates(lead, attrs, new Date().toISOString());
+    if (!lead.source_detail) updates.source_detail = lpSlug || sourceDetail;
+    if (!lead.source_campaign) updates.source_campaign = campaign;
+    if (!lead.estimated_equity && equity) updates.estimated_equity = equity;
     if (message) updates.pain_point_summary = message;
     // Presale landing pages carry a known track so the AI bot converses about
     // the presale project (not the flagship program). resolveTrackContext reads primary_track.

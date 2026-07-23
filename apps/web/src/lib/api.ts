@@ -122,6 +122,8 @@ export interface LeadsListParams {
   productGroup?: ProductGroup;
   // member=true → only program members ("הדרך לדירה").
   member?: boolean;
+  // Matches utm_campaign (first-touch ad campaign) OR source_campaign.
+  campaign?: string;
   // awaiting=true → only leads whose customer wrote and got no reply yet.
   awaiting?: boolean;
   limit?: number;
@@ -497,6 +499,18 @@ export interface SourcePerformanceRow {
   win_rate_pct: number;
 }
 
+export interface CampaignPerformanceRow {
+  campaign: string;
+  leads_total: number;
+  leads_engaged: number;
+  leads_qualified: number;
+  leads_won: number;
+  leads_paid: number;
+  win_rate_pct: number;
+  first_lead_at: string | null;
+  last_lead_at: string | null;
+}
+
 export interface AgingBucket {
   count: number;
   avgMinutes: number;
@@ -558,6 +572,7 @@ export async function fetchAnalyticsSummary() {
   return getJson<{
     ok: true;
     sourcePerformance: SourcePerformanceRow[];
+    campaignPerformance: CampaignPerformanceRow[];
     aging: Record<string, AgingBucket>;
     recentActivity: RecentActivityRow[];
     aiVsHuman: AiVsHumanRow[];

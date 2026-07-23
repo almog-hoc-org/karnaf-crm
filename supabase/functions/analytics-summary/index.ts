@@ -17,8 +17,9 @@ Deno.serve(async (req) => {
   }
 
   const supabase = getServiceSupabase();
-  const [sourcePerf, aging, recentActivity, aiVsHuman, promptVariants, cohorts, firstResponseTimes] = await Promise.all([
+  const [sourcePerf, campaignPerf, aging, recentActivity, aiVsHuman, promptVariants, cohorts, firstResponseTimes] = await Promise.all([
     supabase.from('v_source_performance').select('*'),
+    supabase.from('v_campaign_performance').select('*').order('leads_total', { ascending: false }).limit(100),
     supabase.from('v_lead_aging').select('lead_status, minutes_in_state').order('minutes_in_state', { ascending: false }).limit(500),
     supabase.from('v_recent_activity').select('*').limit(50),
     supabase.from('v_ai_vs_mia_outcomes').select('*'),
@@ -52,6 +53,7 @@ Deno.serve(async (req) => {
   return jsonResponse(req, {
     ok: true,
     sourcePerformance: sourcePerf.data ?? [],
+    campaignPerformance: campaignPerf.data ?? [],
     aging: agingSummary,
     recentActivity: recentActivity.data ?? [],
     aiVsHuman: aiVsHuman.data ?? [],

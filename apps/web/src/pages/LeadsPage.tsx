@@ -323,6 +323,7 @@ export function LeadsPage() {
   );
   const [memberOnly, setMemberOnly] = useState(searchParams.get('member') === 'true');
   const [awaitingOnly, setAwaitingOnly] = useState(searchParams.get('awaiting') === 'true');
+  const [campaign, setCampaign] = useState(searchParams.get('campaign') ?? '');
   const [createdFrom, setCreatedFrom] = useState(searchParams.get('createdFrom') ?? '');
   const [createdTo, setCreatedTo] = useState(searchParams.get('createdTo') ?? '');
   const [inboundFrom, setInboundFrom] = useState(searchParams.get('inboundFrom') ?? '');
@@ -343,11 +344,12 @@ export function LeadsPage() {
     if (productGroup) next.set('productGroup', productGroup);
     if (memberOnly) next.set('member', 'true');
     if (awaitingOnly) next.set('awaiting', 'true');
+    if (campaign) next.set('campaign', campaign);
     if (createdFrom) next.set('createdFrom', createdFrom);
     if (createdTo) next.set('createdTo', createdTo);
     if (inboundFrom) next.set('inboundFrom', inboundFrom);
     setSearchParams(next, { replace: true });
-  }, [status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, createdFrom, createdTo, inboundFrom, setSearchParams]);
+  }, [status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, campaign, createdFrom, createdTo, inboundFrom, setSearchParams]);
 
   // dates from UI come as yyyy-mm-dd; expand to UTC range so we match the
   // entire day for createdTo, and start-of-day for createdFrom / inboundFrom.
@@ -364,6 +366,7 @@ export function LeadsPage() {
     productGroup: productGroup || undefined,
     member: memberOnly || undefined,
     awaiting: awaitingOnly || undefined,
+    campaign: campaign.trim() || undefined,
     createdFrom: expandStart(createdFrom),
     createdTo: expandEnd(createdTo),
     inboundFrom: expandStart(inboundFrom),
@@ -444,7 +447,7 @@ export function LeadsPage() {
   // never references rows the manager can't currently see.
   useEffect(() => {
     setSelected(new Set());
-  }, [debouncedSearch, status, heat, ownership, source, createdFrom, createdTo, inboundFrom, offset]);
+  }, [debouncedSearch, status, heat, ownership, source, campaign, createdFrom, createdTo, inboundFrom, offset]);
 
   const bulkMut = useMutation({
     mutationFn: postBulkLeadAction,
@@ -525,7 +528,7 @@ export function LeadsPage() {
   const total = q.data?.total ?? null;
   const start = total != null ? offset + 1 : null;
   const end = total != null ? Math.min(offset + (q.data?.leads.length ?? 0), total) : null;
-  const hasFilters = !!(search || status || heat || ownership || source || createdFrom || createdTo || inboundFrom);
+  const hasFilters = !!(search || status || heat || ownership || source || campaign || createdFrom || createdTo || inboundFrom);
 
   function clearFilters() {
     setSearch('');
@@ -533,6 +536,7 @@ export function LeadsPage() {
     setHeat('');
     setOwnership('');
     setSource('');
+    setCampaign('');
     setCreatedFrom('');
     setCreatedTo('');
     setInboundFrom('');
@@ -744,7 +748,7 @@ export function LeadsPage() {
         </button>
       </nav>
 
-      <div className="kf-card grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 md:grid-cols-5">
+      <div className="kf-card grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 md:grid-cols-6">
         <div className="sm:col-span-2 md:col-span-2">
           <div className="relative">
             <span
@@ -858,7 +862,18 @@ export function LeadsPage() {
             </option>
           ))}
         </select>
-        <div className="sm:col-span-2 md:col-span-5">
+        <input
+          className="kf-input"
+          value={campaign}
+          onChange={(e) => {
+            setCampaign(e.target.value);
+            setOffset(0);
+          }}
+          placeholder="קמפיין (utm)"
+          aria-label="סינון לפי קמפיין"
+        />
+
+        <div className="sm:col-span-2 md:col-span-6">
           <details className="rounded-lg border border-slate-200 bg-slate-50/40 p-2 text-sm">
             <summary className="cursor-pointer text-xs font-medium text-slate-600">
               סינון לפי תאריכים ותצוגות שמורות

@@ -198,6 +198,8 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const [channel, setChannel] = useState<'whatsapp' | 'email'>('whatsapp');
   const [source, setSource] = useState('');
   const [sourceCampaign, setSourceCampaign] = useState('');
+  const [utmCampaign, setUtmCampaign] = useState('');
+  const [utmSource, setUtmSource] = useState('');
   const [primaryTrack, setPrimaryTrack] = useState('');
   const [templateKey, setTemplateKey] = useState('');
   const [metaName, setMetaName] = useState('');
@@ -222,6 +224,8 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     if (!list) return;
     setSource(list.definition.source ?? '');
     setSourceCampaign(list.definition.source_campaign ?? '');
+    setUtmCampaign(list.definition.utm_campaign ?? '');
+    setUtmSource(list.definition.utm_source ?? '');
     setPrimaryTrack(list.definition.primary_track ?? '');
     setTagsInput((list.definition.tags ?? []).join(', '));
   }
@@ -237,10 +241,12 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     return {
       source: source || undefined,
       source_campaign: sourceCampaign || undefined,
+      utm_campaign: utmCampaign || undefined,
+      utm_source: utmSource || undefined,
       primary_track: primaryTrack || undefined,
       tags: tags.length > 0 ? tags : undefined,
     };
-  }, [source, sourceCampaign, primaryTrack, tagsInput]);
+  }, [source, sourceCampaign, utmCampaign, utmSource, primaryTrack, tagsInput]);
   const debouncedSegment = useDebouncedValue(segment, 400);
 
   const previewQ = useQuery({
@@ -332,6 +338,14 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
             <Field label="קמפיין (source_campaign)">
               <input className="kf-input w-full" dir="ltr" value={sourceCampaign}
                 onChange={(e) => setSourceCampaign(e.target.value)} placeholder="launch_webinar_2026" />
+            </Field>
+            <Field label="קמפיין פרסום (utm_campaign)">
+              <input className="kf-input w-full" dir="ltr" value={utmCampaign}
+                onChange={(e) => setUtmCampaign(e.target.value)} placeholder="course-july" />
+            </Field>
+            <Field label="ערוץ פרסום (utm_source)">
+              <input className="kf-input w-full" dir="ltr" value={utmSource}
+                onChange={(e) => setUtmSource(e.target.value)} placeholder="facebook" />
             </Field>
           </div>
           <div className="mt-2 grid gap-2 md:grid-cols-2">
