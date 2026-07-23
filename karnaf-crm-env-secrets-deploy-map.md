@@ -90,9 +90,20 @@ Used for:
 - prompt/config version references if externalized
 
 ## Payment integration
-- payment webhook secret if available
+- payment webhook secret if available (`PAYMENT_WEBHOOK_SECRET`, HMAC lane)
+- `PAYMENT_STATIC_TOKEN` — static ?token= lane for PSPs that can't HMAC
+  (currently safelisted to `provider=grow`); generate with
+  `openssl rand -hex 24`
 - payment provider API token if needed
-- product mapping config identifiers
+- product mapping config identifiers (`course_5490` → program track)
+
+## Meta Conversions API (server-side events)
+- `META_PIXEL_ID` — Events Manager dataset/pixel id
+- `META_CAPI_TOKEN` — CAPI access token (Events Manager > Settings)
+- `META_CAPI_TEST_EVENT_CODE` — optional, set temporarily to verify
+  wiring in Test Events, then remove
+- both META_PIXEL_ID + META_CAPI_TOKEN must be set for events to send;
+  absence = feature off (intake/payment flows unaffected)
 
 ## App auth / session
 - app auth secret(s) if using middleware/session layers
