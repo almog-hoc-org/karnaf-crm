@@ -161,9 +161,30 @@ If you want email leads to flow into the same CRM:
 3. Verify a `payment_status: paid` event flows to the Supabase logs and
    moves the matching lead to `won`.
 
-If your provider can't HMAC-sign, leave `PAYMENT_WEBHOOK_SECRET` empty —
-the webhook will accept unsigned payloads. **Not recommended for
-production.**
+The webhook is **fail-closed**: with neither `PAYMENT_WEBHOOK_SECRET` nor
+`PAYMENT_STATIC_TOKEN` set it returns 503 (`WEBHOOK_ALLOW_UNSIGNED=true`
+is a dev-only escape hatch).
+
+### 5b. חיבור סליקה — Grow (קורס ₪5,490)
+
+Grow (תשתית משולם) לא חותם HMAC ושולח form-encoded — לשניהם יש תמיכה
+מובנית דרך מסלול טוקן סטטי:
+
+1. פתחו עמוד תשלום ב-Grow לקורס: סכום **5,490 ₪**, עד **12 תשלומים**,
+   ו-`productCode` = **`course_5490`** (ממופה אוטומטית למסלול program).
+2. צרו טוקן חזק: `openssl rand -hex 24` והגדירו
+   `supabase secrets set PAYMENT_STATIC_TOKEN=<הטוקן>`.
+3. ב-Grow הגדירו את כתובת ה-webhook:
+   `https://<ref>.functions.supabase.co/payment-webhook?provider=grow&token=<הטוקן>`
+   (המסלול מוגבל ל-`provider=grow` בלבד; HMAC נשאר המסלול המועדף לספקים
+   שתומכים בו).
+4. עסקת ניסיון: ודאו payment_events חדש, deal במצב won, סטטוס ליד `won`,
+   ואם הוגדרו סודות CAPI — אירוע Purchase ב-Events Manager.
+5. את קישור עמוד התשלום מזינים באתר כ-`VITE_CHECKOUT_URL` (צד האתר).
+
+השדות של Grow ממופים ב-`_shared/payment-normalize.ts`; ה-payload הגולמי
+נשמר תמיד ב-`payment_events.payload_json`, כך שכל סטייה במיפוי ניתנת
+לאבחון ותיקון בדיעבד.
 
 ---
 

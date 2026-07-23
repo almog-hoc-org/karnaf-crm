@@ -33,6 +33,9 @@ export const env = {
   watiToken: () => optional('WATI_TOKEN'),
   watiApiUrl: () => optional('WATI_API_URL', 'https://live-mt-server.wati.io'),
   paymentWebhookSecret: () => optional('PAYMENT_WEBHOOK_SECRET'),
+  /** Static-token lane for PSPs that can't sign HMAC (e.g. Grow) —
+   *  rides as ?token= on the webhook URL, safelisted per provider. */
+  paymentStaticToken: () => optional('PAYMENT_STATIC_TOKEN'),
   intakeWebhookSecret: () => optional('INTAKE_WEBHOOK_SECRET'),
   automationTickSecret: () => optional('AUTOMATION_TICK_SECRET'),
   /** Tier 8.B — static token lane for integrations that can't sign HMAC

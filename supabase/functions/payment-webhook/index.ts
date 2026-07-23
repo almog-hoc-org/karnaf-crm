@@ -7,7 +7,8 @@ import { ensureProgramMember } from '../_shared/member-service.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
 import { buildLeadContext } from '../_shared/event-context.ts';
 import { verifyHmacHeader } from '../_shared/webhook-signature.ts';
-import { env, optional } from '../_shared/env.ts';
+import { env, optional, safeEqual } from '../_shared/env.ts';
+import { normalizePaymentPayload, parseFormEncoded } from '../_shared/payment-normalize.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { buildCapiEvent, buildUserData } from '../_shared/meta-capi.ts';
@@ -22,31 +23,52 @@ Deno.serve(async (req) => {
 
   const correlationId = correlationFromRequest(req);
   const rawBody = await req.text();
+  const url = new URL(req.url);
+  const providerParam = (url.searchParams.get('provider') ?? '').toLowerCase() || null;
+
   // Fail-closed: PAYMENT_WEBHOOK_SECRET must be set in production. A missing
   // secret used to skip verification entirely — which would let an attacker
   // submit forged payment-completion events. WEBHOOK_ALLOW_UNSIGNED=true is
   // the explicit dev-only opt-out.
+  //
+  // Static-token lane (Tier 8.B pattern, like Rav Messer intake): some
+  // Israeli PSPs (Grow) can't sign HMAC. When PAYMENT_STATIC_TOKEN is
+  // set, a safelisted ?provider with a matching ?token= is accepted.
+  // HMAC remains the preferred lane and always wins when it verifies.
   const secret = env.paymentWebhookSecret();
-  if (!secret) {
+  const staticToken = env.paymentStaticToken();
+  const tokenParam = url.searchParams.get('token') ?? '';
+  const staticTokenOk = !!staticToken && providerParam === 'grow' &&
+    !!tokenParam && safeEqual(tokenParam, staticToken);
+  if (!secret && !staticToken) {
     if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
       log.error('payment_webhook_misconfigured', { fn: 'payment-webhook', correlationId });
       return jsonResponse(req, { error: 'Webhook not configured' }, 503);
     }
   } else {
-    const valid =
+    const hmacOk = !!secret && (
       (await verifyHmacHeader(req, rawBody, secret, 'x-karnaf-signature')) ||
       (await verifyHmacHeader(req, rawBody, secret, 'x-signature')) ||
-      (await verifyHmacHeader(req, rawBody, secret, 'x-hub-signature-256'));
-    if (!valid) {
+      (await verifyHmacHeader(req, rawBody, secret, 'x-hub-signature-256'))
+    );
+    if (!hmacOk && !staticTokenOk) {
       log.warn('payment_signature_invalid', { fn: 'payment-webhook', correlationId });
       return jsonResponse(req, { error: 'Invalid signature' }, 401);
     }
   }
 
+  // PSPs post JSON or form-encoded; accept both, then map any known
+  // provider's field names onto the generic shape.
   let payload: Record<string, unknown>;
-  try { payload = JSON.parse(rawBody); } catch {
-    return jsonResponse(req, { error: 'Invalid JSON' }, 400);
+  const contentType = (req.headers.get('content-type') ?? '').toLowerCase();
+  if (contentType.includes('application/x-www-form-urlencoded')) {
+    payload = parseFormEncoded(rawBody);
+  } else {
+    try { payload = JSON.parse(rawBody); } catch {
+      return jsonResponse(req, { error: 'Invalid JSON' }, 400);
+    }
   }
+  const normalized = normalizePaymentPayload(providerParam, payload);
 
   const supabase = getServiceSupabase();
 
@@ -60,11 +82,11 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { error: 'Rate limit exceeded' }, 429);
   }
 
-  const orderId = (payload.order_id || payload.transaction_id || payload.invoice_id) as string | undefined;
-  const phone = normalizeIsraeliPhone(((payload.phone || payload.customer_phone || payload.mobile) as string | null) ?? null);
-  const email = typeof payload.email === 'string' ? payload.email.toLowerCase().trim() : null;
-  const productCode = (payload.product_code || payload.product) as string | null | undefined;
-  const paymentStatus = String(payload.payment_status || payload.status || 'unknown').toLowerCase();
+  const orderId = normalized.order_id ?? undefined;
+  const phone = normalizeIsraeliPhone(normalized.phone);
+  const email = normalized.email?.toLowerCase().trim() ?? null;
+  const productCode = normalized.product_code;
+  const paymentStatus = normalized.payment_status;
 
   // Idempotency on order id.
   if (orderId) {
@@ -101,11 +123,11 @@ Deno.serve(async (req) => {
       lead_id: matchedLeadId,
       external_order_id: orderId ?? null,
       external_customer_ref: (payload.customer_id ?? null) as string | null,
-      payment_provider: (payload.provider ?? 'unknown') as string,
+      payment_provider: normalized.provider,
       product_code: productCode ?? null,
       payment_status: paymentStatus,
-      amount: payload.amount ?? null,
-      currency: (payload.currency ?? 'ILS') as string,
+      amount: normalized.amount,
+      currency: normalized.currency,
       payload_json: payload,
     })
     .select('id')
@@ -128,7 +150,7 @@ Deno.serve(async (req) => {
   }
 
   if (PAID_STATUSES.has(paymentStatus)) {
-    const linkSource = (payload.link_source ?? payload.source ?? null) as string | null;
+    const linkSource = normalized.link_source;
     const paidTrack = resolvePaidTrack(productCode);
     const leadPaymentUpdates: Record<string, unknown> = {
       payment_status: 'paid',
@@ -152,7 +174,7 @@ Deno.serve(async (req) => {
           stage: paidTrack === 'program' ? 'paid_program_member' : 'closed_won',
           status: 'won',
           closed_at: new Date().toISOString(),
-          value: payload.amount ?? null,
+          value: normalized.amount,
           metadata: { orderId: orderId ?? null, productCode, linkSource, correlationId },
         }).eq('id', existingDeal.id);
         wonDealId = existingDeal.id;
@@ -166,7 +188,7 @@ Deno.serve(async (req) => {
           stage: paidTrack === 'program' ? 'paid_program_member' : 'closed_won',
           status: 'won',
           closed_at: new Date().toISOString(),
-          value: payload.amount ?? null,
+          value: normalized.amount,
           metadata: { orderId: orderId ?? null, productCode, linkSource, correlationId },
         }).select('id').maybeSingle();
         wonDealId = createdDeal?.id ?? null;
@@ -232,15 +254,14 @@ Deno.serve(async (req) => {
         fbp: (capiLead?.fbp as string | null) ?? null,
         fbc: (capiLead?.fbc as string | null) ?? null,
       });
-      const amount = Number(payload.amount);
       await sendCapiEvents([
         buildCapiEvent({
           eventName: 'Purchase',
           eventId: orderId ? `purchase-${orderId}` : `purchase-${correlationId}`,
           eventTimeSec: Date.now() / 1000,
           userData,
-          value: Number.isFinite(amount) ? amount : undefined,
-          currency: (payload.currency as string | undefined) ?? 'ILS',
+          value: normalized.amount ?? undefined,
+          currency: normalized.currency,
         }),
       ], correlationId);
     } catch (capiErr) {
@@ -270,6 +291,8 @@ Deno.serve(async (req) => {
 
 function resolvePaidTrack(productCode: string | null | undefined): string | null {
   const raw = String(productCode ?? '').toLowerCase();
+  // 'course' also matches course_5490 — the hosted-checkout product code
+  // for the flagship program (docs: DEPLOYMENT.md "חיבור סליקה").
   if (!raw || raw.includes('program') || raw.includes('digital') || raw.includes('course') || raw.includes('תכנית') || raw.includes('תוכנית')) return 'program';
   if (raw.includes('investor') || raw.includes('mentorship') || raw.includes('משקיע')) return 'investor_mentorship';
   if (raw.includes('presale') || raw.includes('contractor') || raw.includes('פריסייל')) return 'presale';
