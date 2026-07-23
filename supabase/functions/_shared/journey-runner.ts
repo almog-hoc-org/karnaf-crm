@@ -9,6 +9,7 @@ interface JourneyRunRow {
   contact_id: string;
   current_step: number;
   state: Record<string, unknown>;
+  started_at: string;
 }
 
 interface JourneyDefinitionRow {
@@ -19,6 +20,7 @@ interface JourneyDefinitionRow {
     delay_hours?: number;
     actions?: Array<Record<string, unknown>>;
   }>;
+  metadata?: Record<string, unknown> | null;
 }
 
 export async function advanceDueJourneys(
@@ -28,7 +30,7 @@ export async function advanceDueJourneys(
 ): Promise<{ advanced: number; completed: number; failed: number }> {
   const { data: runs, error } = await supabase
     .from('journey_runs')
-    .select('id, definition_id, definition_code, contact_id, current_step, state')
+    .select('id, definition_id, definition_code, contact_id, current_step, state, started_at')
     .eq('status', 'active')
     .lte('scheduled_next_at', new Date().toISOString())
     .order('scheduled_next_at', { ascending: true })
@@ -39,7 +41,7 @@ export async function advanceDueJourneys(
   for (const run of (runs ?? []) as JourneyRunRow[]) {
     const { data: definition, error: definitionErr } = await supabase
       .from('journey_definitions')
-      .select('id, code, steps')
+      .select('id, code, steps, metadata')
       .eq('id', run.definition_id)
       .single();
     if (definitionErr || !definition) {
@@ -74,6 +76,27 @@ export async function advanceDueJourneys(
       }).eq('id', run.id);
       counters.failed++;
       continue;
+    }
+
+    // Opt-in kill switch for nurture-style journeys (definition metadata
+    // cancel_on_reply=true): the sequence exists to elicit a reply, so a
+    // lead who replied after enrollment — or closed won/lost — is
+    // cancelled before the next step ever sends. Existing journeys
+    // without the flag are untouched.
+    if ((def.metadata as Record<string, unknown> | null)?.cancel_on_reply === true) {
+      const leadRow = lead as LeadRow;
+      const replied = !!leadRow.last_inbound_at &&
+        Date.parse(leadRow.last_inbound_at as string) > Date.parse(run.started_at);
+      const closed = leadRow.lead_status === 'won' || leadRow.lead_status === 'lost';
+      if (replied || closed) {
+        await supabase.from('journey_runs').update({
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+          cancellation_reason: replied ? 'lead_replied' : 'lead_closed',
+        }).eq('id', run.id);
+        counters.completed++;
+        continue;
+      }
     }
 
     const ctx: EngineContext = {
