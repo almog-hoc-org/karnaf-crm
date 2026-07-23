@@ -13,7 +13,7 @@ export function AnalyticsPage() {
   if (q.error) return <p className="text-rose-600">{t('error_prefix')}: {(q.error as Error).message}</p>;
   if (!q.data) return null;
 
-  const { sourcePerformance, aging, recentActivity, aiVsHuman, promptVariants, cohorts, firstResponseTimes } = q.data;
+  const { sourcePerformance, campaignPerformance, aging, recentActivity, aiVsHuman, promptVariants, cohorts, firstResponseTimes } = q.data;
 
   return (
     <div className="space-y-6">
@@ -71,6 +71,54 @@ export function AnalyticsPage() {
           </table>
         </div>
       </section>
+
+      {/* Campaign-grained performance (v_campaign_performance, migration 111):
+          utm_campaign first-touch with source_campaign fallback. Hidden when
+          no lead carries campaign data yet. */}
+      {campaignPerformance.length > 0 ? (
+        <section className="kf-card p-4 sm:p-5">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">ביצועי קמפיינים</h2>
+              <p className="text-sm text-slate-500">איזה קמפיין פרסום מביא לידים שסוגרים, לפי utm_campaign מהאתר.</p>
+            </div>
+          </div>
+          <div className="mt-3 -mx-4 overflow-x-auto sm:mx-0">
+            <table className="kf-table min-w-[44rem]">
+              <thead>
+                <tr>
+                  <th>קמפיין</th>
+                  <th>{t('analytics_total')}</th>
+                  <th>{t('analytics_engaged')}</th>
+                  <th>{t('analytics_qualified')}</th>
+                  <th>{t('analytics_won')}</th>
+                  <th>שילמו</th>
+                  <th>{t('analytics_conversion_pct')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {campaignPerformance.map((row) => (
+                  <tr key={row.campaign}>
+                    <td className="font-medium">
+                      <Link to={`/leads?campaign=${encodeURIComponent(row.campaign)}`} className="text-brand-700 hover:underline">
+                        {row.campaign}
+                      </Link>
+                    </td>
+                    <td className="tabular-nums">{row.leads_total}</td>
+                    <td className="tabular-nums">{row.leads_engaged}</td>
+                    <td className="tabular-nums">{row.leads_qualified}</td>
+                    <td className="tabular-nums text-emerald-700">{row.leads_won}</td>
+                    <td className="tabular-nums text-emerald-700">{row.leads_paid}</td>
+                    <td className="tabular-nums">
+                      <ConversionBar pct={row.win_rate_pct} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="kf-card p-4 sm:p-5">

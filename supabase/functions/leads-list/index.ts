@@ -49,6 +49,9 @@ Deno.serve(async (req) => {
   // a freshly-classified lead). Coarse-grained groups instead of raw
   // enum values to keep the UI scannable for a non-CRM user.
   const productGroup = url.searchParams.get('productGroup');
+  // campaign filter matches either the real ad campaign (utm_campaign,
+  // first-touch) or the CRM-side source_campaign.
+  const campaign = url.searchParams.get('campaign');
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 200);
   const offset = Math.max(0, Number(url.searchParams.get('offset') ?? 0));
 
@@ -58,7 +61,7 @@ Deno.serve(async (req) => {
   let query = supabase
     .from('leads')
     .select(
-      'id, full_name, phone, email, source, source_campaign, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, program_members(lead_id)',
+      'id, full_name, phone, email, source, source_campaign, utm_campaign, utm_source, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, program_members(lead_id)',
       { count: 'exact' },
     )
     .order('updated_at', { ascending: false })
@@ -70,7 +73,7 @@ Deno.serve(async (req) => {
     query = supabase
       .from('leads')
       .select(
-        'id, full_name, phone, email, source, source_campaign, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, program_members(lead_id)',
+        'id, full_name, phone, email, source, source_campaign, utm_campaign, utm_source, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, program_members(lead_id)',
       )
       .not('last_inbound_at', 'is', null)
       .not('lead_status', 'in', '("won","lost","do_not_contact","removed_by_request")')
@@ -114,6 +117,12 @@ Deno.serve(async (req) => {
       // Unknown group key → return empty rather than ignore. Loud is
       // better than silently broad.
       return jsonResponse(req, { ok: true, leads: [], total: 0, limit, offset });
+    }
+  }
+  if (campaign) {
+    const safeCampaign = escapeForOr(campaign);
+    if (safeCampaign) {
+      query = query.or(`utm_campaign.eq.${safeCampaign},source_campaign.eq.${safeCampaign}`);
     }
   }
   if (isValidDate(createdFrom)) query = query.gte('created_at', createdFrom as string);

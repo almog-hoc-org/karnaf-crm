@@ -12,13 +12,16 @@ export interface BroadcastSegment {
   source_campaign?: string | null;
   primary_track?: string | null;
   product_interest?: string | null;
+  // First-touch ad attribution (columns added in migration 110).
+  utm_campaign?: string | null;
+  utm_source?: string | null;
   // Any-overlap match against leads.tags (GIN-indexed text[]).
   tags?: string[] | null;
 }
 
 // The columns segment filters can target. Guards against arbitrary
 // column injection from a client-supplied segment object.
-const ALLOWED_FIELDS = ['source', 'source_campaign', 'primary_track', 'product_interest'] as const;
+const ALLOWED_FIELDS = ['source', 'source_campaign', 'primary_track', 'product_interest', 'utm_campaign', 'utm_source'] as const;
 
 // A segment value may carry several slugs comma-joined — one Hebrew UI
 // label fronts multiple raw source slugs (e.g. "אתר" → website,

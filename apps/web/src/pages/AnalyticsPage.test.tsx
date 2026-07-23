@@ -38,6 +38,14 @@ const SAMPLE = {
       leads_checkout_pushed: 2, leads_won: 1, leads_lost: 0, win_rate_pct: 25,
     },
   ],
+  campaignPerformance: [
+    {
+      campaign: 'course-july',
+      leads_total: 6, leads_engaged: 5, leads_qualified: 3,
+      leads_won: 2, leads_paid: 1, win_rate_pct: 33.33,
+      first_lead_at: '2026-07-01T08:00:00Z', last_lead_at: '2026-07-20T08:00:00Z',
+    },
+  ],
   aging: {
     qualified: { count: 3, avgMinutes: 90, maxMinutes: 240 },
     nurture: { count: 1, avgMinutes: 5760, maxMinutes: 5760 },

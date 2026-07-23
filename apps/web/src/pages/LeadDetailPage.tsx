@@ -354,6 +354,23 @@ export function LeadDetailPage() {
                 value={`${AI_PLAYBOOK_STAGE_LABELS[lead.ai_playbook_stage] ?? lead.ai_playbook_stage}${lead.ai_playbook_stage_at ? ` · ${formatRelative(lead.ai_playbook_stage_at)}` : ''}`}
               />
             ) : null}
+            {/* First-touch attribution (migration 110) — shown only when
+                the lead actually arrived with campaign data. */}
+            {lead.source_detail ? <DataRow label="טופס/עמוד מקור" value={lead.source_detail} /> : null}
+            {lead.utm_campaign || lead.source_campaign ? (
+              <DataRow label="קמפיין" value={lead.utm_campaign || lead.source_campaign} />
+            ) : null}
+            {lead.utm_source ? (
+              <DataRow
+                label="ערוץ פרסום"
+                value={`${lead.utm_source}${lead.utm_medium ? ` / ${lead.utm_medium}` : ''}`}
+              />
+            ) : null}
+            {lead.utm_content ? <DataRow label="מודעה (utm_content)" value={lead.utm_content} /> : null}
+            {lead.utm_term ? <DataRow label="מילת חיפוש" value={lead.utm_term} /> : null}
+            {lead.landing_page ? <DataRow label="עמוד נחיתה" value={lead.landing_page} /> : null}
+            {lead.referrer ? <DataRow label="הגיע מ־" value={lead.referrer} /> : null}
+            {lead.first_touch_at ? <DataRow label="מגע ראשון" value={formatDateTime(lead.first_touch_at)} /> : null}
           </dl>
         </details>
 

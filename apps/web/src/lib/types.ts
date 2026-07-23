@@ -36,6 +36,8 @@ export interface LeadRow {
   email: string | null;
   source: string;
   source_campaign?: string | null;
+  utm_campaign?: string | null;
+  utm_source?: string | null;
   lead_status: LeadStatus;
   lead_heat: LeadHeat;
   ownership_mode: OwnershipMode;
@@ -358,6 +360,9 @@ export interface BroadcastSegment {
   source_campaign?: string | null;
   primary_track?: string | null;
   product_interest?: string | null;
+  // First-touch ad attribution (migration 110).
+  utm_campaign?: string | null;
+  utm_source?: string | null;
   // Any-overlap match against leads.tags.
   tags?: string[] | null;
 }
@@ -519,6 +524,14 @@ export type IntakeSegment =
 export interface LeadDetail extends LeadRow {
   source_detail: string | null;
   source_campaign: string | null;
+  // First-touch attribution (migration 110) — filled once, never overwritten.
+  utm_medium?: string | null;
+  utm_content?: string | null;
+  utm_term?: string | null;
+  landing_page?: string | null;
+  referrer?: string | null;
+  first_touch_at?: string | null;
+  last_touch?: Record<string, unknown> | null;
   webinar_name: string | null;
   city: string | null;
   conversation_summary: string | null;
