@@ -7,6 +7,8 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { buildFirstTouchUpdates, extractAttribution } from '../_shared/attribution.ts';
+import { buildLeadContextFromRow } from '../_shared/event-context.ts';
+import { runMatchingRules } from '../_shared/automation-engine.ts';
 
 const MAX_NAME = 100;
 const MAX_PHONE = 30;
@@ -180,6 +182,36 @@ Deno.serve(async (req) => {
       payloadJson: { source, sourceDetail, service: service || null, correlationId },
       dueAt,
     });
+
+    // Emit lead.created for the automation engine — but only for genuinely
+    // NEW leads. upsert_lead_smart sets created_at and updated_at from the
+    // same statement's now() on INSERT (identical), and bumps only
+    // updated_at on a match — so equality is a deterministic new-lead
+    // signal with no schema change. Re-submissions never re-enroll.
+    // Fail-safe: any error here must not lose the lead response.
+    if (lead.created_at === lead.updated_at) {
+      try {
+        const leadCtx = await buildLeadContextFromRow(supabase, {
+          id: lead.id,
+          full_name: lead.full_name,
+          phone: lead.phone,
+          email: lead.email,
+          do_not_contact: lead.do_not_contact,
+          primary_track: source === 'presale_form' ? 'presale' : null,
+          source: lpSource ?? source,
+          source_campaign: campaign,
+          created_at: lead.created_at as string,
+        });
+        await runMatchingRules(supabase, {
+          triggerEvent: 'lead.created',
+          context: { lead: leadCtx },
+          contactId: lead.id,
+          correlationId,
+        });
+      } catch (ruleErr) {
+        log.warn('website_lead_rules_failed', { fn: 'website-leads-intake', correlationId, leadId: lead.id, err: String(ruleErr) });
+      }
+    }
 
     log.info('website_lead_accepted', { fn: 'website-leads-intake', correlationId, leadId: lead.id, source, sourceDetail });
     return jsonResponse(req, { ok: true, leadId: lead.id, correlationId });
