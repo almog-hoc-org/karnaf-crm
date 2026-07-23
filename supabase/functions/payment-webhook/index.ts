@@ -10,6 +10,8 @@ import { verifyHmacHeader } from '../_shared/webhook-signature.ts';
 import { env, optional } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
+import { buildCapiEvent, buildUserData } from '../_shared/meta-capi.ts';
+import { sendCapiEvents } from '../_shared/meta-capi-send.ts';
 
 const PAID_STATUSES = new Set(['paid', 'completed', 'success', 'approved']);
 
@@ -214,6 +216,35 @@ Deno.serve(async (req) => {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+    // Meta CAPI Purchase — fire-and-forget, no-op until META_PIXEL_ID +
+    // META_CAPI_TOKEN are provisioned. event_id is stable per order so
+    // provider retries dedup on Meta's side.
+    try {
+      const { data: capiLead } = await supabase
+        .from('leads')
+        .select('email, phone, fbp, fbc')
+        .eq('id', matchedLeadId)
+        .maybeSingle();
+      const userData = await buildUserData({
+        email: (capiLead?.email as string | null) ?? email,
+        phone: (capiLead?.phone as string | null) ?? phone,
+        fbp: (capiLead?.fbp as string | null) ?? null,
+        fbc: (capiLead?.fbc as string | null) ?? null,
+      });
+      const amount = Number(payload.amount);
+      await sendCapiEvents([
+        buildCapiEvent({
+          eventName: 'Purchase',
+          eventId: orderId ? `purchase-${orderId}` : `purchase-${correlationId}`,
+          eventTimeSec: Date.now() / 1000,
+          userData,
+          value: Number.isFinite(amount) ? amount : undefined,
+          currency: (payload.currency as string | undefined) ?? 'ILS',
+        }),
+      ], correlationId);
+    } catch (capiErr) {
+      log.warn('capi_purchase_failed', { fn: 'payment-webhook', correlationId, err: String(capiErr) });
     }
   } else if (paymentStatus === 'pending' || paymentStatus === 'started') {
     await transitionLeadStatus(supabase, matchedLeadId, 'payment_pending', 'provider', 'payment_signal');

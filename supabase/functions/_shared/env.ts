@@ -57,6 +57,12 @@ export const env = {
   metaAppSecret: () => optional('META_APP_SECRET'),
   metaGraphVersion: () => optional('META_GRAPH_VERSION', 'v21.0'),
   facebookPageAccessToken: () => optional('FACEBOOK_PAGE_ACCESS_TOKEN'),
+  /** Meta Conversions API — server-side Lead/Purchase events. Both must
+   *  be set for events to send; absence = feature off (silent no-op). */
+  metaPixelId: () => optional('META_PIXEL_ID'),
+  metaCapiToken: () => optional('META_CAPI_TOKEN'),
+  /** Events Manager test-events code — set temporarily to verify wiring. */
+  metaCapiTestEventCode: () => optional('META_CAPI_TEST_EVENT_CODE'),
   /** Student Portal (provision-student) — cross-project invite issuing. */
   portalBaseUrl: () => optional('PORTAL_BASE_URL'),
   portalSupabaseUrl: () => optional('PORTAL_SUPABASE_URL'),

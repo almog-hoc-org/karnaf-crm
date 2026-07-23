@@ -6,9 +6,11 @@ import { normalizeIsraeliPhone } from '../_shared/phone.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
-import { buildFirstTouchUpdates, extractAttribution } from '../_shared/attribution.ts';
+import { buildFirstTouchUpdates, deriveFbc, extractAttribution } from '../_shared/attribution.ts';
 import { buildLeadContextFromRow } from '../_shared/event-context.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
+import { buildCapiEvent, buildUserData } from '../_shared/meta-capi.ts';
+import { sendCapiEvents } from '../_shared/meta-capi-send.ts';
 
 const MAX_NAME = 100;
 const MAX_PHONE = 30;
@@ -211,6 +213,30 @@ Deno.serve(async (req) => {
       } catch (ruleErr) {
         log.warn('website_lead_rules_failed', { fn: 'website-leads-intake', correlationId, leadId: lead.id, err: String(ruleErr) });
       }
+    }
+
+    // Meta CAPI Lead event — fire-and-forget, silent no-op until the
+    // operator provisions META_PIXEL_ID + META_CAPI_TOKEN. event_id
+    // prefers the browser pixel's id (when the site forwards one) so
+    // Meta dedups the browser/server pair.
+    try {
+      const userData = await buildUserData({
+        email,
+        phone,
+        fbp: attrs.fbp,
+        fbc: attrs.fbc ?? deriveFbc(attrs.fbclid, Date.now()),
+      });
+      await sendCapiEvents([
+        buildCapiEvent({
+          eventName: 'Lead',
+          eventId: attrs.event_id ?? correlationId,
+          eventTimeSec: Date.now() / 1000,
+          sourceUrl: attrs.page_url,
+          userData,
+        }),
+      ], correlationId);
+    } catch (capiErr) {
+      log.warn('capi_lead_failed', { fn: 'website-leads-intake', correlationId, err: String(capiErr) });
     }
 
     log.info('website_lead_accepted', { fn: 'website-leads-intake', correlationId, leadId: lead.id, source, sourceDetail });
