@@ -8,8 +8,8 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 type Track = 'program' | 'presale' | 'investor_mentorship' | 'human';
 
 type Payload =
-  | { action: 'create'; option_key: string; display_order?: number; label_he: string; match_terms?: string[]; track: Track; stage?: string | null; interest_topic?: string | null; presale_project?: string | null; is_active?: boolean }
-  | { action: 'update'; option_key: string; display_order?: number; label_he?: string; match_terms?: string[]; track?: Track; stage?: string | null; interest_topic?: string | null; presale_project?: string | null; is_active?: boolean }
+  | { action: 'create'; option_key: string; display_order?: number; label_he: string; match_terms?: string[]; track: Track; stage?: string | null; interest_topic?: string | null; presale_project?: string | null; followup_text?: string | null; is_active?: boolean }
+  | { action: 'update'; option_key: string; display_order?: number; label_he?: string; match_terms?: string[]; track?: Track; stage?: string | null; interest_topic?: string | null; presale_project?: string | null; followup_text?: string | null; is_active?: boolean }
   | { action: 'delete'; option_key: string };
 
 const OPTION_KEY_RE = /^[a-z][a-z0-9_]{1,59}$/;
@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
 
     const { data, error } = await supabase
       .from('whatsapp_router_options')
-      .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project, is_active, updated_at')
+      .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project, followup_text, is_active, updated_at')
       .order('display_order', { ascending: true })
       .order('option_key', { ascending: true });
     if (error) return jsonResponse(req, { error: error.message }, 500);
@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
     const { data, error } = await supabase
       .from('whatsapp_router_options')
       .insert(cleanOptionPatch(body, true))
-      .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project, is_active, updated_at')
+      .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project, followup_text, is_active, updated_at')
       .single();
     if (error) return jsonResponse(req, { error: error.message }, 400);
     await logRouterOptionEvent(supabase, {
@@ -103,7 +103,7 @@ Deno.serve(async (req) => {
     .from('whatsapp_router_options')
     .update(patch)
     .eq('option_key', body.option_key)
-    .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project, is_active, updated_at')
+    .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project, followup_text, is_active, updated_at')
     .single();
   if (error) return jsonResponse(req, { error: error.message }, 400);
   await logRouterOptionEvent(supabase, {
@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
 async function fetchOption(supabase: ReturnType<typeof getServiceSupabase>, optionKey: string): Promise<Record<string, unknown> | null> {
   const { data, error } = await supabase
     .from('whatsapp_router_options')
-    .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project, is_active, updated_at')
+    .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project, followup_text, is_active, updated_at')
     .eq('option_key', optionKey)
     .maybeSingle();
   if (error) return null;
@@ -185,6 +185,7 @@ function cleanOptionPatch(body: Extract<Payload, { action: 'create' | 'update' }
   if (body.stage !== undefined) patch.stage = cleanNullableText(body.stage, 80);
   if (body.interest_topic !== undefined) patch.interest_topic = cleanNullableText(body.interest_topic, 180);
   if (body.presale_project !== undefined) patch.presale_project = cleanNullableText(body.presale_project, 180);
+  if (body.followup_text !== undefined) patch.followup_text = cleanNullableText(body.followup_text, 1000);
   if (body.is_active !== undefined) patch.is_active = body.is_active;
   return patch;
 }

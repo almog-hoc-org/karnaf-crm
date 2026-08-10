@@ -69,6 +69,7 @@ export function WhatsAppRouterOptionsPage() {
               <th>מילות התאמה</th>
               <th>מסלול</th>
               <th>שלב/פרויקט</th>
+              <th>הודעת המשך</th>
               <th>סדר</th>
               <th>פעיל</th>
               <th>פעולות</th>
@@ -76,7 +77,7 @@ export function WhatsAppRouterOptionsPage() {
           </thead>
           <tbody>
             {optionsQ.isLoading ? (
-              <tr><td colSpan={8} className="p-6 text-center text-slate-500">{t('loading')}</td></tr>
+              <tr><td colSpan={9} className="p-6 text-center text-slate-500">{t('loading')}</td></tr>
             ) : optionsQ.data?.length ? (
               optionsQ.data.map((option) => (
                 <tr key={option.option_key} className={option.is_active ? undefined : 'opacity-60'}>
@@ -95,6 +96,14 @@ export function WhatsAppRouterOptionsPage() {
                   <td data-label="שלב/פרויקט" className="space-y-1 text-xs">
                     <EditableText value={option.stage ?? ''} placeholder="stage" maxLength={80} onSave={(stage) => update.mutate({ option_key: option.option_key, stage: stage || null })} />
                     <EditableText value={option.presale_project ?? ''} placeholder="presale_project" maxLength={180} onSave={(presale_project) => update.mutate({ option_key: option.option_key, presale_project: presale_project || null })} />
+                  </td>
+                  <td data-label="הודעת המשך" className="max-w-[16rem] text-xs">
+                    <EditableText
+                      value={option.followup_text ?? ''}
+                      placeholder="נשלחת מיד אחרי הבחירה (אופציונלי)"
+                      maxLength={1000}
+                      onSave={(followup_text) => update.mutate({ option_key: option.option_key, followup_text: followup_text || null })}
+                    />
                   </td>
                   <td data-label="סדר">
                     <input
@@ -121,7 +130,7 @@ export function WhatsAppRouterOptionsPage() {
                 </tr>
               ))
             ) : (
-              <tr><td colSpan={8} className="p-10 text-center text-slate-500">אין אפשרויות.</td></tr>
+              <tr><td colSpan={9} className="p-10 text-center text-slate-500">אין אפשרויות.</td></tr>
             )}
           </tbody>
         </table>

@@ -34,14 +34,34 @@ export function normalizeProviderInbound(payload: Record<string, unknown>): Norm
     const textObj = msg.text as Record<string, unknown> | undefined;
     const type = typeof msg.type === 'string' ? msg.type : 'unknown';
 
+    // Button taps carry the choice outside msg.text: template quick-reply
+    // buttons arrive as type='button' with {button:{text,payload}}, and
+    // interactive replies as type='interactive' with
+    // {interactive:{button_reply|list_reply:{id,title}}}. Surface the
+    // tapped label as the message text so the router (and the AI) see
+    // exactly what the customer chose.
+    const buttonObj = msg.button as Record<string, unknown> | undefined;
+    const interactiveObj = msg.interactive as Record<string, unknown> | undefined;
+    const interactiveReply = (interactiveObj?.button_reply ?? interactiveObj?.list_reply) as
+      | Record<string, unknown>
+      | undefined;
+    const buttonText =
+      typeof buttonObj?.text === 'string' ? buttonObj.text :
+      typeof buttonObj?.payload === 'string' ? buttonObj.payload :
+      typeof interactiveReply?.title === 'string' ? interactiveReply.title :
+      typeof interactiveReply?.id === 'string' ? interactiveReply.id : null;
+
+    const text = typeof textObj?.body === 'string' ? textObj.body : buttonText;
+    const isTextLike = type === 'text' || ((type === 'button' || type === 'interactive') && !!buttonText);
+
     return {
       provider: 'meta_cloud_api',
       providerMessageId: typeof msg.id === 'string' ? msg.id : null,
       phone: String(msg.from || ''),
       senderName: typeof profile?.name === 'string' ? profile.name : null,
-      text: typeof textObj?.body === 'string' ? textObj.body : null,
-      messageType: type === 'text' ? 'text' : type === 'unknown' ? 'unknown' : 'media',
-      mediaType: type === 'text' ? null : type,
+      text,
+      messageType: isTextLike ? 'text' : type === 'unknown' ? 'unknown' : 'media',
+      mediaType: isTextLike || type === 'text' ? null : type,
       rawPayload: payload,
       receivedAt: now,
     };
