@@ -1,6 +1,6 @@
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { normalizeIsraeliPhone } from '../_shared/phone.ts';
-import { normalizeProviderInbound, sendWhatsAppText } from '../_shared/whatsapp-provider.ts';
+import { normalizeProviderInbound, sendWhatsAppTemplate, sendWhatsAppText } from '../_shared/whatsapp-provider.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { ensureConversation, logLeadEvent, updateLeadFields, upsertLeadByPhone } from '../_shared/lead-service.ts';
 import { messageAlreadyLogged } from '../_shared/idempotency.ts';
@@ -233,6 +233,7 @@ Deno.serve(async (req) => {
     text: normalized.text,
     correlationId,
     hasTrack: !!lead.primary_track,
+    fullName: (lead.full_name as string | null) ?? normalized.senderName ?? null,
   });
   if (routed.handled) {
     log.info('whatsapp_router_handled', {
@@ -356,14 +357,14 @@ async function flushPendingManualReplies(
 
 async function handleWhatsAppRouter(
   supabase: ReturnType<typeof getServiceSupabase>,
-  input: { leadId: string; conversationId: string; phone: string; text: string | null; correlationId: string; hasTrack: boolean },
+  input: { leadId: string; conversationId: string; phone: string; text: string | null; correlationId: string; hasTrack: boolean; fullName: string | null },
 ): Promise<{ handled: boolean; action?: string }> {
   if (input.hasTrack) return { handled: false };
 
   const text = (input.text ?? '').trim().toLowerCase();
   const { data: options, error: optionsErr } = await supabase
     .from('whatsapp_router_options')
-    .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project')
+    .select('option_key, display_order, label_he, match_terms, track, stage, interest_topic, presale_project, followup_text')
     .eq('is_active', true)
     .order('display_order', { ascending: true });
   if (optionsErr || !options?.length) return { handled: false };
@@ -415,10 +416,13 @@ async function handleWhatsAppRouter(
     }
 
     await routeLeadToOption(supabase, input, matched);
+    // Per-option follow-up (e.g. the investors division short link) beats
+    // the generic confirmation. Operator-editable in /admin/whatsapp-router.
     await sendRouterText(
       supabase,
       input,
-      `קיבלתי — סימנתי אותך למסלול ${matched.label_he}. נמשיך מכאן עם הפרטים הרלוונטיים.`,
+      matched.followup_text?.trim() ||
+        `קיבלתי — סימנתי אותך למסלול ${matched.label_he}. נמשיך מכאן עם הפרטים הרלוונטיים.`,
     );
     return { handled: true, action: `routed:${matched.option_key}` };
   }
@@ -448,10 +452,18 @@ async function handleWhatsAppRouter(
         dueAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
         payloadJson: { correlationId: input.correlationId },
       });
+      // The entry menu is the approved welcome template (quick-reply
+      // buttons). If the template send fails (e.g. paused/rejected in
+      // Meta), fall back to the plain-text numbered menu so a new
+      // customer is never left without a greeting.
+      const templateSent = await sendRouterWelcomeTemplate(supabase, input);
       await logLeadEvent(supabase, input.leadId, 'whatsapp_router_prompted', 'system', {
         correlation_id: input.correlationId,
+        via: templateSent ? 'welcome_template' : 'text_menu',
       }, input.conversationId);
-      await sendRouterText(supabase, input, buildRouterPrompt(options as RouterOption[]));
+      if (!templateSent) {
+        await sendRouterText(supabase, input, buildRouterPrompt(options as RouterOption[]));
+      }
       return { handled: true, action: 'prompted' };
     }
     return { handled: true, action: 'awaiting_topic' };
@@ -469,15 +481,29 @@ interface RouterOption {
   stage: string | null;
   interest_topic: string | null;
   presale_project: string | null;
+  followup_text: string | null;
 }
 
+// Exact term match wins outright; otherwise the option whose matching
+// term is LONGEST wins. Plain first-match-by-display-order broke on the
+// template button titles — "ליווי משקיעים פרימיום 1:1" contains both
+// '1' and short generic terms of earlier options, so the most specific
+// term must decide, not option order.
 function matchRouterOption(text: string, options: RouterOption[]): RouterOption | null {
-  return options.find((option) =>
-    option.match_terms.some((term) => {
+  let best: RouterOption | null = null;
+  let bestLen = 0;
+  for (const option of options) {
+    for (const term of option.match_terms) {
       const t = String(term).trim().toLowerCase();
-      return t && (text === t || text.includes(t));
-    })
-  ) ?? null;
+      if (!t) continue;
+      if (text === t) return option;
+      if (text.includes(t) && t.length > bestLen) {
+        best = option;
+        bestLen = t.length;
+      }
+    }
+  }
+  return best;
 }
 
 function buildRouterPrompt(options: RouterOption[]): string {
@@ -491,10 +517,16 @@ async function routeLeadToOption(
   option: RouterOption,
 ) {
   const activeTracks = [option.track];
+  const productInterestByTrack: Record<string, string> = {
+    program: 'digital_program',
+    investor_mentorship: 'investor_mentorship',
+    presale: 'contractor_group_purchase',
+  };
   await updateLeadFields(supabase, input.leadId, {
     primary_track: option.track,
     active_tracks: activeTracks,
     interest_topic: option.interest_topic ?? option.label_he,
+    product_interest: productInterestByTrack[option.track] ?? null,
     ownership_mode: option.track === 'presale' || option.track === 'investor_mentorship' ? 'mia_active' : 'ai_active',
   });
 
@@ -541,6 +573,19 @@ async function routeLeadToOption(
       dueAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       payloadJson: { correlationId: input.correlationId, optionKey: option.option_key },
     });
+  } else {
+    // Every routed WhatsApp lead gets a fast-response flag matching its
+    // classification — course pickers included, one step below the
+    // human/investor lanes.
+    await ensurePendingQueueItem(supabase, {
+      leadId: input.leadId,
+      queueType: 'hot_lead',
+      priorityLevel: 2,
+      reason: `ליד וואטסאפ חדש בחר: ${option.label_he}`,
+      queueSummary: input.text,
+      dueAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      payloadJson: { correlationId: input.correlationId, optionKey: option.option_key },
+    });
   }
 
   await logLeadEvent(supabase, input.leadId, 'whatsapp_router_routed', 'system', {
@@ -549,6 +594,69 @@ async function routeLeadToOption(
     track: option.track,
     stage: option.stage,
   }, input.conversationId);
+}
+
+const WELCOME_TEMPLATE_KEY = 'karnaf_landing_welcome_v1';
+
+// Entry greeting = the approved Meta template with quick-reply buttons.
+// Param shape is read from the synced local registry (the operator edits
+// the template in Meta; sync stores the live body under metadata.meta.body
+// with {{1}}-style placeholders) so adding/removing the first-name
+// variable never needs a code change. Returns false on any failure so
+// the caller can fall back to the plain-text menu.
+async function sendRouterWelcomeTemplate(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  input: { leadId: string; conversationId: string; phone: string; correlationId: string; fullName: string | null },
+): Promise<boolean> {
+  try {
+    const { data: row } = await supabase
+      .from('message_templates')
+      .select('body, variables_used, metadata, status')
+      .eq('key', WELCOME_TEMPLATE_KEY)
+      .eq('channel', 'whatsapp')
+      .maybeSingle();
+    const metadata = (row?.metadata ?? {}) as Record<string, unknown>;
+    const metaInfo = (metadata.meta ?? {}) as Record<string, unknown>;
+    const templateName = typeof metadata.meta_template_name === 'string'
+      ? metadata.meta_template_name
+      : WELCOME_TEMPLATE_KEY;
+    const language = typeof metadata.meta_language === 'string' ? metadata.meta_language : 'he';
+
+    const liveBody = typeof metaInfo.body === 'string' ? metaInfo.body : null;
+    const paramCount = liveBody
+      ? (liveBody.match(/\{\{\s*\d+\s*\}\}/g) ?? []).length
+      : ((row?.variables_used as string[] | null) ?? []).length;
+    const firstName = (input.fullName ?? '').trim().split(/\s+/)[0] || 'שלום';
+    const params = Array.from({ length: paramCount }, () => ({ name: 'first_name', value: firstName }));
+
+    const result = await sendWhatsAppTemplate(input.phone, templateName, params, language);
+    if (!result.ok) {
+      log.warn('router_welcome_template_failed', {
+        fn: 'whatsapp-webhook', correlationId: input.correlationId, leadId: input.leadId, err: result.error ?? 'send failed',
+      });
+      return false;
+    }
+
+    await supabase.from('messages').insert({
+      conversation_id: input.conversationId,
+      lead_id: input.leadId,
+      provider_message_id: result.providerMessageId ?? null,
+      sender_type: 'system',
+      sender_name: 'Karnaf Router',
+      direction: 'outbound',
+      message_type: 'template',
+      content_text: (row?.body as string | null)?.replaceAll('{{first_name}}', firstName)
+        ?? `תבנית פתיחה: ${templateName}`,
+      provider_status: 'sent',
+      raw_payload: { source: 'whatsapp_router_welcome', template: templateName, correlation_id: input.correlationId },
+    });
+    return true;
+  } catch (err) {
+    log.warn('router_welcome_template_failed', {
+      fn: 'whatsapp-webhook', correlationId: input.correlationId, leadId: input.leadId, err: String(err),
+    });
+    return false;
+  }
 }
 
 async function sendRouterText(

@@ -691,6 +691,9 @@ export interface WhatsAppRouterOption {
   stage: string | null;
   interest_topic: string | null;
   presale_project: string | null;
+  // Optional bot message sent right after the option is picked (e.g. the
+  // investors division short link).
+  followup_text: string | null;
   is_active: boolean;
   updated_at: string;
 }
@@ -725,6 +728,7 @@ export async function postCreateWhatsAppRouterOption(payload: {
   stage?: string | null;
   interest_topic?: string | null;
   presale_project?: string | null;
+  followup_text?: string | null;
   is_active?: boolean;
 }) {
   return postJson<{ ok: true; option: WhatsAppRouterOption }>('/whatsapp-router-options', { action: 'create', ...payload });
@@ -739,6 +743,7 @@ export async function postUpdateWhatsAppRouterOption(payload: {
   stage?: string | null;
   interest_topic?: string | null;
   presale_project?: string | null;
+  followup_text?: string | null;
   is_active?: boolean;
 }) {
   return postJson<{ ok: true; option: WhatsAppRouterOption }>('/whatsapp-router-options', { action: 'update', ...payload });
