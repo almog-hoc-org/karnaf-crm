@@ -3,6 +3,7 @@ import { sendWhatsAppText, sendWhatsAppTemplate } from '../_shared/whatsapp-prov
 import { sendInstagramText } from '../_shared/instagram-provider.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
+import { maybeAlertHumanInbound } from '../_shared/inbound-alert.ts';
 import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared/lead-service.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { runAiDecision } from '../_shared/ai-decision-service.ts';
@@ -115,11 +116,16 @@ Deno.serve(async (req) => {
 
     if (lead.ownership_mode !== 'ai_active') {
       const queueType = lead.ownership_mode === 'phone_sales_pending' ? 'phone_escalation' : 'human_handoff';
+      // refresh:true — a repeat inbound from a human-owned lead bumps the
+      // existing pending row (due_at = now, fresh reason) so the inbox
+      // shows a truthful "customer just wrote" signal, not a days-old row.
       await ensurePendingQueueItem(supabase, {
         leadId,
         queueType,
         priorityLevel: lead.ownership_mode === 'phone_sales_pending' ? 1 : 2,
-        reason: `AI suppressed: lead ownership is ${lead.ownership_mode}`,
+        reason: 'הלקוח כתב — ליד בטיפול אנושי ממתין למענה',
+        dueAt: new Date().toISOString(),
+        refresh: true,
         payloadJson: { ownership_mode: lead.ownership_mode, lead_status: lead.lead_status, correlationId },
         createdByActorType: 'system',
       });
@@ -135,6 +141,22 @@ Deno.serve(async (req) => {
         },
         conversationId,
       );
+      // Real-time operator ping (config-gated + 10-min throttled inside).
+      const { data: lastInbound } = await supabase
+        .from('messages')
+        .select('content_text')
+        .eq('conversation_id', conversationId)
+        .eq('direction', 'inbound')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      await maybeAlertHumanInbound(supabase, {
+        leadId,
+        leadName: lead.full_name,
+        phone: lead.phone,
+        snippet: lastInbound?.content_text ?? null,
+        correlationId,
+      });
       log.info('orchestrate_ai_suppressed_by_owner', {
         fn: 'orchestrate',
         correlationId,
@@ -485,11 +507,11 @@ Deno.serve(async (req) => {
       if (out.interestSummary) updates.goal_summary = out.interestSummary;
       if (out.leadHeatUpdate) updates.lead_heat = out.leadHeatUpdate;
       if (out.nextActionType) updates.next_action_type = out.nextActionType;
+      // Only an EXPLICIT AI-set date persists ("נדבר ביום ראשון"). The old
+      // default of now()+30min after every reply turned nearly every lead
+      // into a permanent priority-1 overdue_action row in the inbox
+      // (cleaned up one-time in migration 114).
       if (out.nextActionDueAt) updates.next_action_due_at = out.nextActionDueAt;
-      else
-        updates.next_action_due_at = new Date(
-          Date.now() + config.followUpDelays.firstResponseMinutes * 60_000,
-        ).toISOString();
       if (out.playbookName && lead.ai_playbook_stage !== out.playbookName) {
         updates.ai_playbook_stage = out.playbookName;
         updates.ai_playbook_stage_at = new Date().toISOString();

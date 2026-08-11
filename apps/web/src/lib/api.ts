@@ -352,7 +352,14 @@ export type AdminAction =
   | 'advance_deal_stage'
   | 'update_lead_meta'
   | 'merge_lead_duplicate'
-  | 'mark_program_member';
+  | 'mark_program_member'
+  | 'mark_reviewed'
+  | 'snooze_lead'
+  | 'unsnooze_lead'
+  | 'set_outcome'
+  | 'set_no_followup';
+
+export type LeadOutcome = 'program' | 'investor_mentorship' | 'consultation' | 'other';
 
 export type ReopenTarget = 'responded' | 'qualified' | 'nurture' | 'human_handoff';
 
@@ -401,6 +408,10 @@ export async function postAdminAction(payload: {
   meetingStatus?: MeetingRow['status'];
   metaUpdates?: LeadMetaUpdates;
   duplicateLeadId?: string;
+  snoozeUntil?: string;
+  outcome?: LeadOutcome | null;
+  outcomeNote?: string | null;
+  enabled?: boolean;
 }) {
   return postJson<{ ok: true; action: string }>('/admin-actions', payload);
 }
@@ -473,13 +484,15 @@ export async function postImportLeads(payload: {
   return postJson<ImportLeadsResult>('/leads-manage', { action: 'import', ...payload });
 }
 
-export type BulkLeadAction = 'assign_owner' | 'change_heat';
+export type BulkLeadAction = 'assign_owner' | 'change_heat' | 'snooze';
 
 export interface BulkLeadActionPayload {
   action: BulkLeadAction;
   leadIds: string[];
   assigneeUserId?: string;
   heat?: 'hot' | 'warm' | 'cool' | 'cold';
+  snoozeUntil?: string;
+  note?: string | null;
 }
 
 export async function postBulkLeadAction(payload: BulkLeadActionPayload) {

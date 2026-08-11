@@ -472,14 +472,18 @@ async function actionJourneyStart(action: Record<string, unknown>, ctx: ActionCo
 
 async function actionSetField(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
   const table = action.table as string | undefined;
-  const field = action.field as string | undefined;
+  let field = action.field as string | undefined;
   if (!table || !field) return { type: 'set_field', status: 'skipped', detail: 'missing table/field' };
   if (!ctx.contactId) return { type: 'set_field', status: 'skipped', detail: 'no contactId' };
+
+  // Rules stored in the DB (e.g. retention_resurrect day 21) say 'heat',
+  // but the real column is lead_heat — alias instead of failing forever.
+  if (table === 'leads' && field === 'heat') field = 'lead_heat';
 
   // Guardrail: engine can only write to a small whitelist of safe
   // columns. Opening this up to arbitrary columns is a foot-gun.
   const allowed: Record<string, string[]> = {
-    leads: ['heat', 'next_action_type', 'next_action_due_at', 'tags'],
+    leads: ['lead_heat', 'next_action_type', 'next_action_due_at', 'tags'],
   };
   if (!allowed[table]?.includes(field)) {
     return { type: 'set_field', status: 'skipped', detail: `field ${table}.${field} not in safelist` };

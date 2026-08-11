@@ -21,6 +21,12 @@ export interface RuntimeConfig extends AiRuntimeConfig {
     templateName: string;
   };
   safetyNet: SafetyNetConfig;
+  notifications: {
+    // Telegram alert the moment a human-owned lead writes (throttled
+    // per-lead). Seeded ON in migration 117; the operator can flip the
+    // crm_config row off.
+    perInboundTelegram: boolean;
+  };
 }
 
 const DEFAULT: RuntimeConfig = {
@@ -41,6 +47,7 @@ const DEFAULT: RuntimeConfig = {
   whatsappSession: { freeformWindowHours: 24, fallbackTemplateName: 'karnaf_followup_v1' },
   reengagement: { enabled: false, checkinDays: 7, reactivationDays: 60, templateName: '' },
   safetyNet: DEFAULT_SAFETY_NET,
+  notifications: { perInboundTelegram: false },
 };
 
 export async function getRuntimeConfig(supabase: SupabaseClient): Promise<RuntimeConfig> {
@@ -56,6 +63,7 @@ export async function getRuntimeConfig(supabase: SupabaseClient): Promise<Runtim
     activeHours: get('active_hours', DEFAULT.activeHours),
     followUpDelays: get('follow_up_delays', DEFAULT.followUpDelays),
     slaThresholds: get('sla_thresholds', DEFAULT.slaThresholds),
+    notifications: get('notifications', DEFAULT.notifications),
     product: get('product', DEFAULT.product),
     forbiddenClaims: get('forbidden_claims', DEFAULT.forbiddenClaims),
     ai: get('ai_runtime', DEFAULT.ai),

@@ -9,6 +9,7 @@ import { env, optional, safeEqual } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
+import { maybeAlertHumanInbound } from '../_shared/inbound-alert.ts';
 import { archiveWhatsAppMedia } from '../_shared/media-fetch.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { buildHumanHandoffSchedule } from '../_shared/handoff-schedule.ts';
@@ -147,6 +148,40 @@ Deno.serve(async (req) => {
     log.info('pending_manual_replies_flushed', {
       fn: 'whatsapp-webhook', correlationId, leadId: lead.id, conversationId: conversation.id, count: flushedManualReplies,
     });
+    // This inbound is exactly the one that reopened the 24h window — the
+    // parked reply went out, but the CUSTOMER'S NEW MESSAGE still needs a
+    // human look. We deliberately skip the AI dispatch (the bot must not
+    // answer on top of a manual reply that just flushed), but the lead
+    // must re-flag in the inbox instead of silently dropping off.
+    try {
+      await ensurePendingQueueItem(supabase, {
+        leadId: lead.id,
+        queueType: 'human_handoff',
+        priorityLevel: 1,
+        reason: 'הלקוח כתב שוב — נשלחה תשובה שהמתינה; לבדוק את ההודעה החדשה',
+        queueSummary: normalized.text,
+        dueAt: new Date().toISOString(),
+        refresh: true,
+        payloadJson: { correlationId, flushedManualReplies },
+        createdByActorType: 'system',
+      });
+      await logLeadEvent(supabase, lead.id, 'inbound_after_flush', 'system', {
+        correlation_id: correlationId,
+        flushed: flushedManualReplies,
+      }, conversation.id);
+      // Real-time operator ping (config-gated + 10-min throttled inside).
+      await maybeAlertHumanInbound(supabase, {
+        leadId: lead.id,
+        leadName: (lead.full_name as string | null) ?? normalized.senderName ?? null,
+        phone,
+        snippet: normalized.text,
+        correlationId,
+      });
+    } catch (flagErr) {
+      log.error('inbound_after_flush_flag_failed', {
+        fn: 'whatsapp-webhook', correlationId, leadId: lead.id, err: String(flagErr),
+      });
+    }
     return jsonResponse(req, {
       ok: true,
       leadId: lead.id,

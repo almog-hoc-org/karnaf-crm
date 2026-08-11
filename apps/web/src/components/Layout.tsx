@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { useAuth } from '@/auth/auth-context';
 import { t, type TranslationKey } from '@/lib/i18n';
 import { RoleHelp } from '@/components/RoleHelp';
+import { useAttentionCount, useAttentionTitle } from '@/lib/useAttentionCount';
 
 interface NavItem {
   to: string;
@@ -41,6 +42,10 @@ export function Layout() {
   const visible = NAV.filter((item) => (!item.adminOnly || isAdmin) && (!item.managerOnly || isManager));
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
+  // Live "someone is waiting" counter — red badge on the inbox link and
+  // a "(n)" title prefix so an open-but-backgrounded tab still signals.
+  const attentionCount = useAttentionCount();
+  useAttentionTitle(attentionCount);
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
 
@@ -84,6 +89,11 @@ export function Layout() {
                   <>
                     <span aria-hidden="true" className="text-current opacity-80">{item.icon}</span>
                     <span aria-current={isActive ? 'page' : undefined}>{t(item.labelKey)}</span>
+                    {item.to === '/inbox' && attentionCount > 0 ? (
+                      <span className="ms-0.5 grid min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[11px] font-bold leading-5 text-white" aria-label={`${attentionCount} ממתינים למענה`}>
+                        {attentionCount > 99 ? '99+' : attentionCount}
+                      </span>
+                    ) : null}
                   </>
                 )}
               </NavLink>
@@ -150,6 +160,11 @@ export function Layout() {
                     <>
                       <span aria-hidden="true">{item.icon}</span>
                       <span aria-current={isActive ? 'page' : undefined}>{t(item.labelKey)}</span>
+                      {item.to === '/inbox' && attentionCount > 0 ? (
+                        <span className="ms-auto grid min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[11px] font-bold leading-5 text-white" aria-label={`${attentionCount} ממתינים למענה`}>
+                          {attentionCount > 99 ? '99+' : attentionCount}
+                        </span>
+                      ) : null}
                     </>
                   )}
                 </NavLink>

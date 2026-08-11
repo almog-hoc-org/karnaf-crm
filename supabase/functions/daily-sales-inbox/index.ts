@@ -21,6 +21,28 @@ interface AttentionRow {
   priority_level: number;
   ownership_mode: string;
   lead_status: string;
+  lead_id: string;
+  lead_name: string | null;
+  due_at: string | null;
+}
+
+const APP_BASE_URL = 'https://karnaf-crm.vercel.app';
+
+// Compact Hebrew relative time for the digest lines ("לפני שעתיים",
+// "בעוד 3 ימים"). Coarse on purpose — the operator needs a sense of
+// urgency, not a stopwatch.
+function relativeHe(iso: string | null, now: number): string | null {
+  if (!iso) return null;
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return null;
+  const diffMin = Math.round((now - ts) / 60_000);
+  const abs = Math.abs(diffMin);
+  const phrase = abs < 60
+    ? `${Math.max(abs, 1)} דק'`
+    : abs < 48 * 60
+      ? `${Math.round(abs / 60)} שע'`
+      : `${Math.round(abs / (24 * 60))} ימים`;
+  return diffMin >= 0 ? `לפני ${phrase}` : `בעוד ${phrase}`;
 }
 
 Deno.serve(async (req) => {
@@ -76,6 +98,19 @@ Deno.serve(async (req) => {
       for (const [kind, count] of sortedKinds) {
         const label = kindLabel(kind);
         lines.push(`• ${label}: ${count}`);
+      }
+      // The RPC already returns rows ordered worst-first (priority, then
+      // due date) — the first five ARE the morning's top priorities.
+      const top = rows.slice(0, 5);
+      const now = Date.now();
+      lines.push('');
+      lines.push('🔝 5 הראשונים:');
+      for (const row of top) {
+        const rel = relativeHe(row.due_at, now);
+        lines.push(
+          `• ${row.lead_name || 'ליד ללא שם'} — ${kindLabel(row.kind)}${rel ? ` (${rel})` : ''}`,
+        );
+        lines.push(`  ${APP_BASE_URL}/leads/${row.lead_id}`);
       }
     } else {
       lines.push('');

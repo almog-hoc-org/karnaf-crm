@@ -37,11 +37,23 @@ export function ChatTimeline({ activities, className }: ChatTimelineProps) {
   );
   const grouped = useMemo(() => groupByDay(messages), [messages]);
   const bottomRef = useRef<HTMLLIElement | null>(null);
+  const listRef = useRef<HTMLOListElement | null>(null);
 
-  // WhatsApp-style "stick to bottom" — new inbound + outbound park the
-  // operator at the latest message.
+  // WhatsApp-style "stick to bottom" — but ONLY the chat container.
+  // scrollIntoView scrolled every ancestor including the page, so the
+  // 5s poll yanked the operator's viewport back to the chat while they
+  // were filling forms elsewhere on the card. Also: don't jump when the
+  // operator has deliberately scrolled up into history (>80px from
+  // the bottom).
+  const didInitialScroll = useRef(false);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
+    const el = listRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+    if (!didInitialScroll.current || nearBottom) {
+      el.scrollTop = el.scrollHeight;
+      didInitialScroll.current = true;
+    }
   }, [messages.length]);
 
   if (messages.length === 0) {
@@ -55,7 +67,7 @@ export function ChatTimeline({ activities, className }: ChatTimelineProps) {
   }
 
   return (
-    <ol className={clsx('mt-3 max-h-[60vh] space-y-3 overflow-auto pr-1 sm:max-h-[36rem]', className)}>
+    <ol ref={listRef} className={clsx('mt-3 max-h-[60vh] space-y-3 overflow-auto pr-1 sm:max-h-[36rem]', className)}>
       {grouped.map(({ day, items }) => (
         <li key={day}>
           <div className="my-1 flex items-center gap-3">

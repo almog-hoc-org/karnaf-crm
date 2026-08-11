@@ -11,10 +11,12 @@ const MAX_BATCH_SIZE = 200;
 const ALLOWED_HEATS = new Set(['hot', 'warm', 'cool', 'cold']);
 
 interface BulkPayload {
-  action: 'assign_owner' | 'change_heat';
+  action: 'assign_owner' | 'change_heat' | 'snooze';
   leadIds: string[];
   assigneeUserId?: string;
   heat?: string;
+  snoozeUntil?: string;
+  note?: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -95,6 +97,49 @@ Deno.serve(async (req) => {
       heat: body.heat, count: updated,
     });
     return jsonResponse(req, { ok: true, updated });
+  }
+
+  if (action === 'snooze') {
+    const untilMs = Date.parse(body.snoozeUntil ?? '');
+    if (!Number.isFinite(untilMs) || untilMs <= Date.now()) {
+      return jsonResponse(req, { error: 'snoozeUntil חייב להיות תאריך עתידי' }, 400);
+    }
+    if (untilMs > Date.now() + 180 * 24 * 3600 * 1000) {
+      return jsonResponse(req, { error: 'השהיה מוגבלת ל-180 יום' }, 400);
+    }
+    const nowIso = new Date().toISOString();
+    const untilIso = new Date(untilMs).toISOString();
+    const cleanNote = body.note ? String(body.note).trim().slice(0, 280) || null : null;
+    const { data: updatedRows, error } = await supabase
+      .from('leads')
+      .update({
+        snoozed_until: untilIso,
+        snoozed_at: nowIso,
+        snooze_note: cleanNote,
+        triage_cleared_at: nowIso,
+      })
+      .in('id', leadIds)
+      .select('id');
+    if (error) return jsonResponse(req, { error: error.message }, 500);
+    const ids = (updatedRows ?? []).map((r) => r.id as string);
+    if (ids.length) {
+      await supabase.from('lead_events').insert(ids.map((id) => ({
+        lead_id: id,
+        event_type: 'lead_snoozed',
+        actor_type: staff.role,
+        event_payload: {
+          actor_user_id: staff.userId,
+          snoozed_until: untilIso,
+          note: cleanNote,
+          bulk: true,
+          correlation_id: correlationId,
+        },
+      })));
+    }
+    log.info('bulk_snooze', {
+      fn: 'bulk-lead-actions', correlationId, by: staff.userId, count: ids.length, until: untilIso,
+    });
+    return jsonResponse(req, { ok: true, updated: ids.length });
   }
 
   return jsonResponse(req, { error: 'Unsupported action' }, 400);

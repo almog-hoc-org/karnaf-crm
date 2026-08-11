@@ -12,12 +12,15 @@ import type { QueueRow } from '@/lib/types';
 
 import { computeSlaState, slaRowClass } from '@/lib/queue-sla';
 
+// Kept in sync with work_queue_queue_type_check (migration 114).
 const QUEUE_TYPES = [
   '', 'first_response_due', 'hot_lead', 'sla_risk', 'ai_stuck', 'human_handoff',
-  'payment_pending', 'phone_escalation', 'nurture_due', 'dormant_review',
+  'payment_pending', 'phone_escalation', 'phone_overdue', 'handoff_stale',
+  'nurture_due', 'dormant_review', 'deal_stalled', 'meeting_outcome_pending',
   'whatsapp_topic_unselected', 'whatsapp_human_requested', 'presale_followup_due', 'investor_followup_due',
   'webinar_registered', 'webinar_attended_not_purchased', 'webinar_no_show',
   'failed_automation', 'weekend_carryover', 'low_fit_cleanup',
+  'manual_review_required', 'onboarding_action',
 ];
 
 type QueueStatus = 'pending' | 'claimed' | 'resolved';

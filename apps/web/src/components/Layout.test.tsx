@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthContext, type AuthState, type Role } from '@/auth/auth-context';
 import { Layout } from './Layout';
+
+vi.mock('@/lib/api', () => ({
+  fetchAttentionInbox: vi.fn(async () => []),
+}));
+
+import { fetchAttentionInbox } from '@/lib/api';
 
 interface RenderOpts {
   role?: Role | null;
@@ -28,18 +35,21 @@ function makeAuth({ role = 'viewer', email = 'op@example.com', signOut = async (
 
 function renderLayout(opts: RenderOpts = {}) {
   const initialPath = opts.initialPath ?? '/leads';
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <AuthContext.Provider value={makeAuth(opts)}>
-      <MemoryRouter initialEntries={[initialPath]}>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<div>dashboard outlet</div>} />
-            <Route path="/leads" element={<div>leads outlet</div>} />
-            <Route path="/users" element={<div>users outlet</div>} />
-          </Route>
-        </Routes>
-      </MemoryRouter>
-    </AuthContext.Provider>,
+    <QueryClientProvider client={qc}>
+      <AuthContext.Provider value={makeAuth(opts)}>
+        <MemoryRouter initialEntries={[initialPath]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<div>dashboard outlet</div>} />
+              <Route path="/leads" element={<div>leads outlet</div>} />
+              <Route path="/users" element={<div>users outlet</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>
+    </QueryClientProvider>,
   );
 }
 
@@ -89,6 +99,19 @@ describe('Layout', () => {
     renderLayout({ role: 'admin', email: 'admin@karnaf.io' });
     expect(screen.getByText('admin@karnaf.io')).toBeInTheDocument();
     expect(screen.getByText('admin')).toBeInTheDocument();
+  });
+
+  it('shows a red attention badge on the inbox link and prefixes the title', async () => {
+    // 2 reply-lane rows + 1 snooze_due count; the queue row does not.
+    vi.mocked(fetchAttentionInbox).mockResolvedValueOnce([
+      { kind: 'mia_reply' },
+      { kind: 'awaiting_reply' },
+      { kind: 'snooze_due' },
+      { kind: 'queue' },
+    ] as never);
+    renderLayout({ role: 'viewer' });
+    expect(await screen.findByText('3')).toBeInTheDocument();
+    expect(document.title).toBe('(3) Karnaf CRM');
   });
 
   it('invokes signOut when the exit button is pressed', () => {

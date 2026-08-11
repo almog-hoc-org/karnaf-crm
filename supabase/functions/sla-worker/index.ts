@@ -272,7 +272,18 @@ Deno.serve(async (req) => {
     log.error('dormant_query_failed', { fn: 'sla-worker', correlationId, err: dormantErr.message });
   }
   for (const lead of dormantLeads ?? []) {
-    await transitionLeadStatus(supabase, lead.id, 'dormant', 'system', 'sla_worker');
+    // responded → dormant is an ILLEGAL transition (silently rejected by
+    // the RPC) — the old code still fired dormant_review + lead.dormant
+    // every 10 minutes for such leads, forever. Step them through the
+    // legal path instead (responded → nurture now, → dormant on a later
+    // sweep) and only emit the dormant side effects when the transition
+    // actually happened.
+    const target = lead.lead_status === 'nurture' ? 'dormant' : 'nurture';
+    const transitioned = await transitionLeadStatus(supabase, lead.id, target, 'system', 'sla_worker');
+    if (!transitioned || target !== 'dormant') {
+      if (transitioned && target === 'nurture') counters.dormant++;
+      continue;
+    }
     await ensurePendingQueueItem(supabase, {
       leadId: lead.id, queueType: 'dormant_review', priorityLevel: 3,
       reason: 'Dormant lead; review for reactivation',

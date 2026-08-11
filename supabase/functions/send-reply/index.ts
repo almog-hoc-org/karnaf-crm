@@ -169,11 +169,42 @@ Deno.serve(async (req) => {
   }
 
   if (mode === 'template' && pendingReplyId) {
+    // The reply DID go out to the customer (wrapped in the approved
+    // template, first 600 chars). Truth-keeping:
+    // - ≤600 chars: the full content was delivered → the pending row is
+    //   done ('sent'), no re-send on the next inbound.
+    // - >600 chars: the customer got a truncated version; keep
+    //   'reopen_sent' so flushPendingManualReplies delivers the full text
+    //   when the window reopens.
+    const fullyDelivered = text.length <= 600;
     await supabase.from('pending_manual_replies').update({
-      status: 'reopen_sent',
+      status: fullyDelivered ? 'sent' : 'reopen_sent',
       reopen_provider_message_id: result.providerMessageId ?? null,
       reopen_sent_at: new Date().toISOString(),
+      ...(fullyDelivered ? { sent_at: new Date().toISOString() } : {}),
     }).eq('id', pendingReplyId);
+
+    // Record the outbound that actually happened — the messages trigger
+    // bumps leads.last_outbound_at, which is what clears the lead from
+    // the "ממתין לתשובה" lane. Before this fix the operator's reply left
+    // the lead flagged forever.
+    await supabase.from('messages').insert({
+      conversation_id: conversationId,
+      lead_id: leadId,
+      provider_message_id: result.providerMessageId ?? null,
+      sender_type: staff.role === 'sales_rep' ? 'sales_rep' : 'mia',
+      sender_name: staff.fullName || staff.email,
+      direction: 'outbound',
+      message_type: 'template',
+      content_text: text.slice(0, 600),
+      provider_status: 'sent',
+      raw_payload: {
+        source: 'manual_reply_template',
+        pending_reply_id: pendingReplyId,
+        truncated: !fullyDelivered,
+        correlation_id: correlationId,
+      },
+    });
 
     await updateLeadFields(supabase, leadId, {
       ownership_mode: lead.ownership_mode === 'ai_active' ? 'mia_active' : lead.ownership_mode,
@@ -190,10 +221,19 @@ Deno.serve(async (req) => {
       template_name: config.whatsappSession.fallbackTemplateName,
       template_provider_message_id: result.providerMessageId ?? null,
       length: text.length,
+      fully_delivered: fullyDelivered,
     }, conversationId, staff.userId);
 
     log.info('manual_reply_queued_after_24h', { fn: 'send-reply', correlationId, leadId, userId: staff.userId, pendingReplyId });
-    return jsonResponse(req, { ok: true, mode: 'queued_template', queued: true, pendingReplyId });
+    return jsonResponse(req, {
+      ok: true,
+      mode: 'sent_as_template',
+      queued: !fullyDelivered,
+      pendingReplyId,
+      warning: fullyDelivered
+        ? undefined
+        : 'ההודעה ארוכה מ-600 תווים: הלקוח קיבל כעת את 600 התווים הראשונים כתבנית, והנוסח המלא יישלח אוטומטית כשיענה.',
+    });
   }
 
   await supabase.from('messages').insert({

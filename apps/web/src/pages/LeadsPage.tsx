@@ -72,6 +72,13 @@ const PRODUCT_INTEREST_LABELS: Record<string, string> = {
   unknown: 'לא ידוע',
 };
 
+const OUTCOME_LABELS: Record<string, string> = {
+  program: 'קורס הנדל"ן המקיף',
+  investor_mentorship: 'ליווי משקיעים',
+  consultation: 'פגישת ייעוץ',
+  other: 'אחר',
+};
+
 interface SavedView {
   id: string;
   name: string;
@@ -83,6 +90,13 @@ interface SavedView {
   createdTo: string;
   inboundFrom: string;
   source: string;
+  // Added after the applyView audit: saved views used to silently forget
+  // these filters. All optional so old saved views keep loading.
+  productGroup?: string;
+  memberOnly?: boolean;
+  awaitingOnly?: boolean;
+  campaign?: string;
+  outcome?: string;
 }
 
 const SAVED_VIEWS_KEY = 'karnaf:leads:savedViews';
@@ -144,6 +158,24 @@ function LeadWorkCard({
                 title={lead.last_inbound_at ? `ההודעה האחרונה מהלקוח: ${formatRelative(lead.last_inbound_at)}` : undefined}
               >
                 ⏳ ממתין לתשובה
+              </span>
+            ) : null}
+            {lead.outcome ? (
+              <span
+                className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-800 ring-1 ring-violet-300"
+                title={lead.outcome_note ?? undefined}
+              >
+                🏷 נסגר ל: {OUTCOME_LABELS[lead.outcome] ?? lead.outcome}
+              </span>
+            ) : null}
+            {lead.snoozed_until && Date.parse(lead.snoozed_until) > Date.now() ? (
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
+                ⏰ בהשהיה עד {new Date(lead.snoozed_until).toLocaleDateString('he-IL')}
+              </span>
+            ) : null}
+            {lead.no_proactive_contact ? (
+              <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700 ring-1 ring-orange-200">
+                ללא פנייה יזומה
               </span>
             ) : null}
             {canPurge ? (
@@ -324,6 +356,7 @@ export function LeadsPage() {
   const [memberOnly, setMemberOnly] = useState(searchParams.get('member') === 'true');
   const [awaitingOnly, setAwaitingOnly] = useState(searchParams.get('awaiting') === 'true');
   const [campaign, setCampaign] = useState(searchParams.get('campaign') ?? '');
+  const [outcomeFilter, setOutcomeFilter] = useState(searchParams.get('outcome') ?? '');
   const [createdFrom, setCreatedFrom] = useState(searchParams.get('createdFrom') ?? '');
   const [createdTo, setCreatedTo] = useState(searchParams.get('createdTo') ?? '');
   const [inboundFrom, setInboundFrom] = useState(searchParams.get('inboundFrom') ?? '');
@@ -345,11 +378,12 @@ export function LeadsPage() {
     if (memberOnly) next.set('member', 'true');
     if (awaitingOnly) next.set('awaiting', 'true');
     if (campaign) next.set('campaign', campaign);
+    if (outcomeFilter) next.set('outcome', outcomeFilter);
     if (createdFrom) next.set('createdFrom', createdFrom);
     if (createdTo) next.set('createdTo', createdTo);
     if (inboundFrom) next.set('inboundFrom', inboundFrom);
     setSearchParams(next, { replace: true });
-  }, [status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, campaign, createdFrom, createdTo, inboundFrom, setSearchParams]);
+  }, [status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, campaign, outcomeFilter, createdFrom, createdTo, inboundFrom, setSearchParams]);
 
   // dates from UI come as yyyy-mm-dd; expand to UTC range so we match the
   // entire day for createdTo, and start-of-day for createdFrom / inboundFrom.
@@ -367,6 +401,7 @@ export function LeadsPage() {
     member: memberOnly || undefined,
     awaiting: awaitingOnly || undefined,
     campaign: campaign.trim() || undefined,
+    outcome: outcomeFilter || undefined,
     createdFrom: expandStart(createdFrom),
     createdTo: expandEnd(createdTo),
     inboundFrom: expandStart(inboundFrom),
@@ -383,6 +418,11 @@ export function LeadsPage() {
     setCreatedFrom(view.createdFrom);
     setCreatedTo(view.createdTo);
     setInboundFrom(view.inboundFrom);
+    setProductGroup((view.productGroup as ProductGroup | '') ?? '');
+    setMemberOnly(view.memberOnly ?? false);
+    setAwaitingOnly(view.awaitingOnly ?? false);
+    setCampaign(view.campaign ?? '');
+    setOutcomeFilter(view.outcome ?? '');
     setOffset(0);
   }
 
@@ -400,6 +440,11 @@ export function LeadsPage() {
       createdTo,
       inboundFrom,
       source,
+      productGroup,
+      memberOnly,
+      awaitingOnly,
+      campaign,
+      outcome: outcomeFilter,
     };
     const next = [...savedViews.filter((v) => v.name !== name), view];
     setSavedViews(next);
@@ -447,7 +492,7 @@ export function LeadsPage() {
   // never references rows the manager can't currently see.
   useEffect(() => {
     setSelected(new Set());
-  }, [debouncedSearch, status, heat, ownership, source, campaign, createdFrom, createdTo, inboundFrom, offset]);
+  }, [debouncedSearch, status, heat, ownership, source, campaign, outcomeFilter, createdFrom, createdTo, inboundFrom, offset]);
 
   const bulkMut = useMutation({
     mutationFn: postBulkLeadAction,
@@ -528,7 +573,7 @@ export function LeadsPage() {
   const total = q.data?.total ?? null;
   const start = total != null ? offset + 1 : null;
   const end = total != null ? Math.min(offset + (q.data?.leads.length ?? 0), total) : null;
-  const hasFilters = !!(search || status || heat || ownership || source || campaign || createdFrom || createdTo || inboundFrom);
+  const hasFilters = !!(search || status || heat || ownership || source || campaign || outcomeFilter || createdFrom || createdTo || inboundFrom);
 
   function clearFilters() {
     setSearch('');
@@ -537,6 +582,7 @@ export function LeadsPage() {
     setOwnership('');
     setSource('');
     setCampaign('');
+    setOutcomeFilter('');
     setCreatedFrom('');
     setCreatedTo('');
     setInboundFrom('');
@@ -872,6 +918,23 @@ export function LeadsPage() {
           placeholder="קמפיין (utm)"
           aria-label="סינון לפי קמפיין"
         />
+        <select
+          className="kf-input"
+          value={outcomeFilter}
+          onChange={(e) => {
+            setOutcomeFilter(e.target.value);
+            setOffset(0);
+          }}
+          aria-label="סינון לפי תוצאה"
+        >
+          <option value="">תוצאה: הכל</option>
+          <option value="none">עדיין בתהליך (ללא תוצאה)</option>
+          <option value="any">נסגרו לתהליך כלשהו</option>
+          <option value="program">נסגר: קורס הנדל"ן</option>
+          <option value="investor_mentorship">נסגר: ליווי משקיעים</option>
+          <option value="consultation">נסגר: פגישת ייעוץ</option>
+          <option value="other">נסגר: אחר</option>
+        </select>
 
         <div className="sm:col-span-2 md:col-span-6">
           <details className="rounded-lg border border-slate-200 bg-slate-50/40 p-2 text-sm">
@@ -1053,6 +1116,9 @@ export function LeadsPage() {
           }
           onChangeHeat={(h) =>
             bulkMut.mutate({ action: 'change_heat', leadIds: Array.from(selected), heat: h })
+          }
+          onSnooze={(snoozeUntil, note) =>
+            bulkMut.mutate({ action: 'snooze', leadIds: Array.from(selected), snoozeUntil, note })
           }
         />
       ) : null}

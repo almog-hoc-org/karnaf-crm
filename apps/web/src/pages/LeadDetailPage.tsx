@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import clsx from 'clsx';
@@ -8,6 +8,7 @@ import {
   fetchLeadDetail,
   fetchMessageTemplates,
   postAdminAction,
+  type LeadOutcome,
   postLeadManage,
   postSendReply,
   postQueueResolve,
@@ -19,6 +20,8 @@ import {
 import { contextFromLead, renderTemplate } from '@/lib/template-render';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { EmojiPicker } from '@/components/EmojiPicker';
+import { SnoozePopover } from '@/components/SnoozePopover';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
 import { ChatTimeline } from '@/components/ChatTimeline';
 import { ActivityFeed } from '@/components/ActivityFeed';
@@ -39,6 +42,7 @@ import {
   formatDateTime, formatRelative,
 } from '@/lib/format';
 import type {
+  ConversationRow,
   DealRow,
   IntakeSegment,
   InquiryType,
@@ -108,6 +112,9 @@ export function LeadDetailPage() {
       toast.success(`${data.label} – בוצע`);
     },
     onError: (err) => toast.error((err as Error).message),
+    // Close the confirm dialog only when the request settles — the old
+    // code closed it on click, so the busy spinner never rendered.
+    onSettled: () => setPendingAction(null),
   });
 
   const logCall = useMutation({
@@ -168,7 +175,19 @@ export function LeadDetailPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
-  const conversationId = detailQ.data?.conversations[0]?.id;
+  // B7 fix: with multiple conversations (WhatsApp + Instagram), default to
+  // the most recently active one instead of blindly conversations[0], and
+  // let the operator switch explicitly.
+  const conversations = useMemo(() => detailQ.data?.conversations ?? [], [detailQ.data?.conversations]);
+  const defaultConversationId = useMemo(() => {
+    if (!conversations.length) return undefined;
+    return [...conversations].sort((a, b) =>
+      Date.parse(b.last_activity_at ?? '') - Date.parse(a.last_activity_at ?? ''),
+    )[0]?.id;
+  }, [conversations]);
+  const [pickedConversationId, setPickedConversationId] = useState<string | undefined>(undefined);
+  const conversationId = pickedConversationId ?? defaultConversationId;
+  const activeConversation = conversations.find((c) => c.id === conversationId);
 
   const sendReply = useMutation({
     mutationFn: (text: string) => {
@@ -177,11 +196,17 @@ export function LeadDetailPage() {
     },
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['lead-detail', leadId] });
-      if (result.queued) {
+      // Truthful feedback per server mode (the old generic toast claimed
+      // "will send when the customer replies" even when the reply WAS
+      // sent as a template).
+      if (result.warning) toast.info(result.warning);
+      if (result.mode === 'sent_as_template') {
+        toast.success('נשלח ללקוח כתבנית (מחוץ לחלון 24 שעות)');
+      } else if (result.queued) {
         toast.success('ההודעה נשמרה ותישלח אוטומטית כשהלקוח יענה');
-        return;
+      } else {
+        toast.success('הודעה נשלחה');
       }
-      toast.success('הודעה נשלחה');
     },
     onError: (err) => toast.error((err as Error).message),
   });
@@ -194,11 +219,14 @@ export function LeadDetailPage() {
       toast.success('פריט תור נסגר');
     },
     onError: (err) => toast.error((err as Error).message),
+    onSettled: () => setPendingQueueClose(null),
   });
 
+  const [actionNote, setActionNote] = useState('');
   const [pendingAction, setPendingAction] = useState<{
     action: AdminAction;
     note?: string;
+    askNote?: boolean;
     label: string;
     description: string;
     destructive: boolean;
@@ -339,6 +367,12 @@ export function LeadDetailPage() {
           ) : null}
         </div>
 
+        <TriageStateBanner lead={lead} />
+
+        {canEditMeta ? (
+          <LeadQuickActions leadId={lead.id} leadName={lead.full_name} onDone={() => qc.invalidateQueries({ queryKey: ['lead-detail', leadId] })} />
+        ) : null}
+
         {/* Long-tail metadata collapses behind a disclosure. AI playbook
             stage is mostly debug info; created / last-in / last-out are
             interesting once a week, not every conversation. */}
@@ -447,10 +481,10 @@ export function LeadDetailPage() {
                     onClick={() =>
                       setPendingAction({
                         action: 'mark_lost',
-                        note: 'manual_close',
                         label: 'סומן כאבוד',
-                        description: 'לסמן את הליד כאבוד. פעולה זו לא ניתנת לשחזור.',
+                        description: 'לסמן את הליד כאבוד. אפשר (ומומלץ) לציין סיבה — היא נשמרת על הליד.',
                         destructive: true,
+                        askNote: true,
                       })
                     }
                   >
@@ -576,11 +610,15 @@ export function LeadDetailPage() {
           )}
           <ReplyBox
             disabled={!conversationId || lead.do_not_contact || lead.removed_by_request}
-            onSend={(text) => sendReply.mutate(text)}
+            onSend={(text) => sendReply.mutateAsync(text)}
             sending={sendReply.isPending}
             errorMessage={sendReply.error ? (sendReply.error as Error).message : null}
             lead={lead}
-            channel={detailQ.data?.conversations[0]?.channel ?? 'whatsapp'}
+            channel={activeConversation?.channel ?? 'whatsapp'}
+            lastInboundAt={lead.last_inbound_at}
+            conversations={conversations}
+            conversationId={conversationId}
+            onPickConversation={setPickedConversationId}
           />
         </div>
 
@@ -625,7 +663,7 @@ export function LeadDetailPage() {
               value={lead.notes_internal}
               editable={canEditMeta}
               saving={updateMeta.isPending && 'notes_internal' in (updateMeta.variables ?? {})}
-              onSave={(next) => updateMeta.mutate({ notes_internal: next })}
+              onSave={(next) => updateMeta.mutateAsync({ notes_internal: next })}
             />
           </div>
           {/* Operator-editable identity card. Phone is intentionally read-only
@@ -644,6 +682,7 @@ export function LeadDetailPage() {
                 k="אימייל"
                 v={lead.email}
                 editable={canEditMeta}
+                dir="ltr"
                 onSave={(next) => updateMeta.mutate({ email: next })}
               />
               <EditableRow
@@ -767,6 +806,7 @@ export function LeadDetailPage() {
                   v={lead.goal_summary}
                   editable={canEditMeta}
                   saving={updateMeta.isPending && 'goal_summary' in (updateMeta.variables ?? {})}
+                  maxLength={600}
                   onSave={(next) => updateMeta.mutate({ goal_summary: next })}
                 />
                 <EditableRow
@@ -774,6 +814,7 @@ export function LeadDetailPage() {
                   v={lead.pain_point_summary}
                   editable={canEditMeta}
                   saving={updateMeta.isPending && 'pain_point_summary' in (updateMeta.variables ?? {})}
+                  maxLength={600}
                   onSave={(next) => updateMeta.mutate({ pain_point_summary: next })}
                 />
                 <EditableRow
@@ -781,12 +822,14 @@ export function LeadDetailPage() {
                   v={lead.main_blocker}
                   editable={canEditMeta}
                   saving={updateMeta.isPending && 'main_blocker' in (updateMeta.variables ?? {})}
+                  maxLength={600}
                   onSave={(next) => updateMeta.mutate({ main_blocker: next })}
                 />
                 <EditableRow
                   k="הקשר החלטה"
                   v={lead.decision_context}
                   editable={canEditMeta}
+                  maxLength={600}
                   onSave={(next) => updateMeta.mutate({ decision_context: next })}
                 />
                 <EditableRow
@@ -803,13 +846,19 @@ export function LeadDetailPage() {
                     k="סיבת אובדן"
                     v={lead.lost_reason}
                     editable={canEditMeta}
-                    onSave={(next) => updateMeta.mutate({ lost_reason: next })}
+                    maxLength={600}
+                  onSave={(next) => updateMeta.mutate({ lost_reason: next })}
                   />
                 ) : null}
               </dl>
             </details>
           </div>
 
+          <details className="kf-card p-0">
+            <summary className="cursor-pointer select-none p-4 text-sm font-semibold text-slate-700 hover:text-slate-900">
+              מסלולים, עסקאות ופגישות (מתקדם)
+            </summary>
+            <div className="px-4 pb-4">
           <PipelineOverviewCard
             lead={lead}
             deals={deals}
@@ -832,6 +881,8 @@ export function LeadDetailPage() {
               })
             }
           />
+            </div>
+          </details>
 
 
           {/* Tier 5.C — sidebar slimming. The earlier "תורי עבודה" /
@@ -910,17 +961,31 @@ export function LeadDetailPage() {
         title={pendingAction?.label ?? t('destructive_action_title')}
         description={pendingAction?.description ?? t('destructive_action_warning')}
         destructive={pendingAction?.destructive ?? false}
-        onCancel={() => setPendingAction(null)}
+        busy={action.isPending}
+        onCancel={() => { setPendingAction(null); setActionNote(''); }}
         onConfirm={() => {
           if (!pendingAction) return;
           action.mutate({
             action: pendingAction.action,
-            note: pendingAction.note,
+            note: pendingAction.askNote ? (actionNote.trim() || undefined) : pendingAction.note,
             label: pendingAction.label,
           });
-          setPendingAction(null);
+          setActionNote('');
         }}
-      />
+      >
+        {pendingAction?.askNote ? (
+          <label className="block text-sm">
+            <span className="text-slate-600">סיבה</span>
+            <textarea
+              className="kf-input mt-1 min-h-[64px] w-full"
+              maxLength={600}
+              value={actionNote}
+              onChange={(e) => setActionNote(e.target.value)}
+              placeholder="למשל: לא רלוונטי כרגע, סגר עם גורם אחר, מחיר..."
+            />
+          </label>
+        ) : null}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={deleteOpen}
@@ -944,7 +1009,6 @@ export function LeadDetailPage() {
           if (!pendingQueueClose) return;
           const note = queueCloseNote.trim();
           resolveQueue.mutate({ queueItemId: pendingQueueClose.id, note: note.length ? note : undefined });
-          setPendingQueueClose(null);
         }}
       >
         <label className="block text-sm">
@@ -1324,8 +1388,13 @@ function ScheduleMeetingForm({
       meetingUrl: meetingUrl.trim() || null,
       dealId: dealId || null,
     });
+    // Full reset so the form isn't primed to double-book the same slot.
     setSummary('');
     setMeetingUrl('');
+    setStartsAt('');
+    setDealId('');
+    setMeetingType('phone');
+    setDuration('30');
   }
 
   return (
@@ -1395,7 +1464,14 @@ function MeetingsList({
                   </div>
                   <div className="mt-1 text-xs text-slate-500">
                     סטטוס: {MEETING_STATUS_LABELS[meeting.status] ?? meeting.status}
-                    {meeting.meeting_url ? ` · ${meeting.meeting_url}` : ''}
+                    {meeting.meeting_url ? (
+                      <>
+                        {' · '}
+                        <a href={meeting.meeting_url} target="_blank" rel="noreferrer" className="text-brand-700 underline" dir="ltr">
+                          קישור לפגישה
+                        </a>
+                      </>
+                    ) : null}
                   </div>
                   {meeting.summary ? <div className="mt-1 text-xs text-slate-600">{meeting.summary}</div> : null}
                 </div>
@@ -1647,6 +1723,179 @@ function ActionGroup({ label, children }: { label: string; children: React.React
   );
 }
 
+
+// Phase C — the triage quick bar: the same one-click actions the inbox
+// has (טופל / השהיה / נסגר לתהליך / ללא פנייה יזומה), directly on the
+// lead card, so handling a lead never requires hunting through the
+// sidebar disclosures.
+function LeadQuickActions({ leadId, leadName, onDone }: { leadId: string; leadName: string | null; onDone: () => void }) {
+  const toast = useToast();
+  const [outcomeOpen, setOutcomeOpen] = useState(false);
+  const [outcomeChoice, setOutcomeChoice] = useState<LeadOutcome>('investor_mentorship');
+  const [outcomeNote, setOutcomeNote] = useState('');
+
+  const act = useMutation({
+    mutationFn: (payload: Parameters<typeof postAdminAction>[0]) => postAdminAction(payload),
+    onSuccess: (_r, payload) => {
+      onDone();
+      const labels: Record<string, string> = {
+        mark_reviewed: 'סומן כטופל — ירד מהתור',
+        snooze_lead: 'הושהה — יקפוץ חזרה במועד',
+        set_outcome: 'נרשמה תוצאה — הליד יצא מהתור הפעיל',
+        set_no_followup: 'סומן: ללא פנייה יזומה',
+      };
+      toast.success(labels[payload.action] ?? 'בוצע');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-brand-50/60 p-2 ring-1 ring-brand-100">
+      <span className="px-1 text-xs font-semibold text-brand-700">טיפול מהיר:</span>
+      <button
+        type="button"
+        className="kf-btn bg-emerald-600 text-xs text-white hover:bg-emerald-700"
+        disabled={act.isPending}
+        onClick={() => act.mutate({ action: 'mark_reviewed', leadId, note: 'טופל מכרטיס הליד' })}
+      >
+        טופל ✓
+      </button>
+      <SnoozePopover
+        buttonClassName="kf-btn kf-btn-ghost text-xs"
+        busy={act.isPending}
+        onSnooze={(until, note) => act.mutate({ action: 'snooze_lead', leadId, snoozeUntil: until, note })}
+      />
+      <button
+        type="button"
+        className="kf-btn kf-btn-ghost text-xs"
+        disabled={act.isPending}
+        onClick={() => setOutcomeOpen(true)}
+      >
+        נסגר לתהליך 🏷
+      </button>
+      <button
+        type="button"
+        className="kf-btn kf-btn-ghost text-xs text-slate-500"
+        disabled={act.isPending}
+        onClick={() => act.mutate({ action: 'set_no_followup', leadId, enabled: true })}
+      >
+        ללא פנייה יזומה
+      </button>
+
+      <ConfirmDialog
+        open={outcomeOpen}
+        title={`נסגר לתהליך — ${leadName ?? ''}`}
+        description="הליד יסומן בתוצאה ויירד מהתור הפעיל. סגירה לקורס/ליווי משקיעים מריצה גם את שרשרת הזכייה (עסקה, מסע, עמלות)."
+        confirmLabel="שמירת תוצאה"
+        busy={act.isPending}
+        onCancel={() => setOutcomeOpen(false)}
+        onConfirm={() => {
+          const note = outcomeNote.trim();
+          if (outcomeChoice === 'other' && !note) return;
+          act.mutate({ action: 'set_outcome', leadId, outcome: outcomeChoice, outcomeNote: note || null });
+          setOutcomeOpen(false);
+          setOutcomeNote('');
+        }}
+      >
+        <label className="block text-sm">
+          <span className="text-slate-600">לאיזה תהליך נסגר?</span>
+          <select className="kf-input mt-1 w-full" value={outcomeChoice} onChange={(e) => setOutcomeChoice(e.target.value as LeadOutcome)}>
+            <option value="investor_mentorship">ליווי משקיעים</option>
+            <option value="program">קורס הנדל"ן המקיף</option>
+            <option value="consultation">פגישת ייעוץ</option>
+            <option value="other">אחר (תיאור חופשי)</option>
+          </select>
+        </label>
+        <label className="mt-3 block text-sm">
+          <span className="text-slate-600">{outcomeChoice === 'other' ? 'תיאור (חובה)' : 'הערה (אופציונלי)'}</span>
+          <textarea
+            className="kf-input mt-1 min-h-[64px] w-full"
+            maxLength={600}
+            value={outcomeNote}
+            onChange={(e) => setOutcomeNote(e.target.value)}
+          />
+        </label>
+      </ConfirmDialog>
+    </div>
+  );
+}
+
+
+// Phase B — triage state surfaced on the card: snooze / outcome /
+// no-proactive-contact, with inline undo. Full card redesign lands in
+// phase C; this keeps the state visible (and reversible) from day one.
+function TriageStateBanner({ lead }: { lead: LeadDetailType }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const auth = useAuth();
+  const act = useMutation({
+    mutationFn: (payload: Parameters<typeof postAdminAction>[0]) => postAdminAction(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lead-detail', lead.id] });
+      toast.success('עודכן');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
+  const snoozeActive = lead.snoozed_until && Date.parse(lead.snoozed_until) > Date.now();
+  const outcomeLabels: Record<string, string> = {
+    program: 'קורס הנדל"ן המקיף',
+    investor_mentorship: 'ליווי משקיעים',
+    consultation: 'פגישת ייעוץ',
+    other: lead.outcome_note ? `אחר — ${lead.outcome_note}` : 'אחר',
+  };
+  const isManager = auth.role === 'owner' || auth.role === 'admin';
+
+  if (!snoozeActive && !lead.outcome && !lead.no_proactive_contact) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-2.5 text-sm ring-1 ring-slate-200">
+      {lead.outcome ? (
+        <span className="inline-flex items-center gap-2 rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
+          🏷 נסגר ל: {outcomeLabels[lead.outcome] ?? lead.outcome}
+          {isManager ? (
+            <button
+              type="button"
+              className="text-violet-600 underline hover:text-violet-900"
+              disabled={act.isPending}
+              onClick={() => act.mutate({ action: 'set_outcome', leadId: lead.id, outcome: null })}
+            >
+              ביטול
+            </button>
+          ) : null}
+        </span>
+      ) : null}
+      {snoozeActive ? (
+        <span className="inline-flex items-center gap-2 rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
+          ⏰ בהשהיה עד {new Date(lead.snoozed_until as string).toLocaleDateString('he-IL')}
+          {lead.snooze_note ? ` · ${lead.snooze_note}` : ''}
+          <button
+            type="button"
+            className="text-slate-500 underline hover:text-slate-900"
+            disabled={act.isPending}
+            onClick={() => act.mutate({ action: 'unsnooze_lead', leadId: lead.id })}
+          >
+            ביטול
+          </button>
+        </span>
+      ) : null}
+      {lead.no_proactive_contact ? (
+        <span className="inline-flex items-center gap-2 rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700 ring-1 ring-orange-200">
+          ללא פנייה יזומה בשלב הזה
+          <button
+            type="button"
+            className="text-orange-500 underline hover:text-orange-800"
+            disabled={act.isPending}
+            onClick={() => act.mutate({ action: 'set_no_followup', leadId: lead.id, enabled: false })}
+          >
+            ביטול
+          </button>
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function NextActionBadge({ actionType, dueAt }: { actionType: string | null; dueAt: string | null }) {
   if (!actionType && !dueAt) return null;
   const dueMs = dueAt ? Date.parse(dueAt) : NaN;
@@ -1770,22 +2019,36 @@ function NotesEditor({
   value: string | null | undefined;
   editable: boolean;
   saving?: boolean;
-  onSave: (next: string | null) => void;
+  onSave: (next: string | null) => Promise<unknown>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!editing) setDraft(value ?? '');
   }, [value, editing]);
-  useEffect(() => {
-    if (saving) setEditing(false);
-  }, [saving]);
+
+  // The editor closes only after the save SUCCEEDS. The old version
+  // closed the moment the request started, so a failed save threw the
+  // operator's typed note away.
+  async function save() {
+    const next = draft.trim();
+    setBusy(true);
+    try {
+      await onSave(next.length ? next : null);
+      setEditing(false);
+    } catch {
+      // toast fired by the mutation's onError; the draft stays editable.
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="mt-3 border-t border-slate-200 pt-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-slate-500">הערות נציג</span>
-        {saving ? (
+        {saving || busy ? (
           <span className="text-xs text-slate-500" aria-live="polite">שומר...</span>
         ) : (
           editable && !editing && (
@@ -1809,21 +2072,16 @@ function NotesEditor({
             maxLength={2000}
             className="kf-input w-full text-sm"
             placeholder="הערות חשובות על הליד לטובת הצוות..."
+            disabled={busy}
           />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="kf-btn kf-btn-primary text-xs"
-              onClick={() => {
-                const next = draft.trim();
-                onSave(next.length ? next : null);
-              }}
-            >
-              שמירה
+          <div className="flex items-center gap-2">
+            <button type="button" className="kf-btn kf-btn-primary text-xs" disabled={busy} onClick={() => void save()}>
+              {busy ? 'שומר...' : 'שמירה'}
             </button>
-            <button type="button" className="kf-btn text-xs" onClick={() => setEditing(false)}>
+            <button type="button" className="kf-btn text-xs" disabled={busy} onClick={() => setEditing(false)}>
               ביטול
             </button>
+            <span className="ms-auto text-[11px] text-slate-400" dir="ltr">{draft.length}/2000</span>
           </div>
         </div>
       ) : (
@@ -1840,26 +2098,39 @@ function EditableRow({
   v,
   editable,
   saving = false,
+  maxLength = 280,
+  dir,
   onSave,
 }: {
   k: string;
   v: string | null | undefined;
   editable: boolean;
   saving?: boolean;
+  maxLength?: number;
+  dir?: 'ltr' | 'rtl';
   onSave: (next: string | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(v ?? '');
+  // Optimistic display: after שמירה the row closes immediately and shows
+  // the draft until the refetched server value replaces it. This fixed
+  // two audited bugs: rows that never closed (missing `saving` prop) and
+  // values visibly snapping back to the stale server prop.
+  const [pending, setPending] = useState<string | null>(null);
 
   useEffect(() => {
     if (!editing) setDraft(v ?? '');
+    setPending(null);
   }, [v, editing]);
 
-  // While a save is in-flight, exit edit mode so the row goes back to display
-  // with a spinner overlay; on success the parent invalidates the query.
-  useEffect(() => {
-    if (saving) setEditing(false);
-  }, [saving]);
+  const shown = pending ?? (v || '');
+
+  function save() {
+    const next = draft.trim();
+    setPending(next);
+    setEditing(false);
+    onSave(next.length ? next : null);
+  }
 
   if (!editable) return <Row k={k} v={v} />;
 
@@ -1868,8 +2139,8 @@ function EditableRow({
       <div className={clsx('grid grid-cols-3 items-center gap-2', saving && 'opacity-60')}>
         <dt className="col-span-1 text-slate-500">{k}</dt>
         <dd className="col-span-2 flex items-center gap-2 text-slate-800">
-          <span className="min-w-0 flex-1 truncate">{v || '—'}</span>
-          {saving ? (
+          <span className="min-w-0 flex-1 truncate" dir={dir}>{shown || '—'}</span>
+          {saving || pending !== null ? (
             <span className="inline-flex items-center gap-1 text-xs text-slate-500" aria-live="polite">
               <svg
                 viewBox="0 0 20 20"
@@ -1896,32 +2167,30 @@ function EditableRow({
     );
   }
 
+  const nearLimit = draft.length >= Math.floor(maxLength * 0.8);
+
   return (
     <div className="grid grid-cols-3 items-center gap-2">
       <dt className="col-span-1 text-slate-500">{k}</dt>
       <dd className="col-span-2 flex items-center gap-2">
-        <input
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          className="kf-input text-sm"
-          maxLength={280}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setEditing(false);
-            if (e.key === 'Enter') {
-              const next = draft.trim();
-              onSave(next.length ? next : null);
-            }
-          }}
-        />
-        <button
-          type="button"
-          className="kf-btn kf-btn-primary text-xs"
-          onClick={() => {
-            const next = draft.trim();
-            onSave(next.length ? next : null);
-          }}
-        >
+        <div className="min-w-0 flex-1">
+          <input
+            autoFocus
+            value={draft}
+            dir={dir}
+            onChange={(e) => setDraft(e.target.value)}
+            className="kf-input w-full text-sm"
+            maxLength={maxLength}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setEditing(false);
+              if (e.key === 'Enter') save();
+            }}
+          />
+          {nearLimit ? (
+            <div className="mt-0.5 text-[11px] text-slate-400" dir="ltr">{draft.length}/{maxLength}</div>
+          ) : null}
+        </div>
+        <button type="button" className="kf-btn kf-btn-primary text-xs" onClick={save}>
           שמירה
         </button>
         <button type="button" className="kf-btn text-xs" onClick={() => setEditing(false)}>
@@ -1945,7 +2214,16 @@ function EditableEnumRow({
   options: Array<{ value: string; label: string }>;
   onSave: (next: string | null) => void;
 }) {
-  const display = options.find((o) => o.value === v)?.label ?? v ?? '—';
+  // Optimistic: show the picked value immediately instead of snapping
+  // back to the stale server prop until the refetch lands; disable the
+  // select while the write is in flight to prevent racing double writes.
+  const [pending, setPending] = useState<string | null>(null);
+  useEffect(() => {
+    setPending(null);
+  }, [v]);
+
+  const effective = pending ?? (v ?? '');
+  const display = options.find((o) => o.value === effective)?.label ?? effective ?? '—';
   if (!editable) return <Row k={k} v={display} />;
   return (
     <div className="grid grid-cols-3 items-center gap-2">
@@ -1955,10 +2233,12 @@ function EditableEnumRow({
             mobile a lot, and native pickers behave correctly with the OS
             keyboard + screen reader without extra a11y wiring. */}
         <select
-          value={v ?? ''}
-          className="kf-input text-sm"
+          value={effective}
+          disabled={pending !== null}
+          className="kf-input text-sm disabled:opacity-60"
           onChange={(e) => {
             const next = e.target.value;
+            setPending(next);
             onSave(next.length ? next : null);
           }}
         >
@@ -2144,24 +2424,26 @@ function ReplyBox({
   errorMessage,
   lead,
   channel = 'whatsapp',
+  lastInboundAt,
+  conversations = [],
+  conversationId,
+  onPickConversation,
 }: {
   disabled: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string) => Promise<unknown>;
   sending: boolean;
   errorMessage: string | null;
-  // Tier 2.D — needed so the template renderer can expand
-  // {{first_name}} and other markers against the actual contact
-  // when Mia inserts a template into the reply.
   lead: { full_name: string | null; phone: string | null; email: string | null; city: string | null };
-  // Tier 8.A — conversation channel; Instagram hides the WhatsApp
-  // template picker and gets its own 24h-window copy (IG has no
-  // template fallback — late replies queue until the next inbound).
   channel?: string;
+  lastInboundAt?: string | null;
+  conversations?: ConversationRow[];
+  conversationId?: string;
+  onPickConversation?: (id: string) => void;
 }) {
   const [text, setText] = useState('');
+  const [missingVars, setMissingVars] = useState<string[]>([]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Lazy fetch active WA templates only when the picker drawer opens.
-  // Keeps the lead detail page's initial render light.
   const [pickerOpen, setPickerOpen] = useState(false);
   const templatesQ = useQuery({
     queryKey: ['templates', 'whatsapp', 'active'],
@@ -2169,31 +2451,106 @@ function ReplyBox({
     enabled: pickerOpen,
   });
 
+  // 24h-window awareness: outside the window a WhatsApp reply goes out as
+  // the fallback template, whose single body param holds 600 chars max.
+  const windowOpen = channel !== 'instagram' && !!lastInboundAt &&
+    Date.now() - Date.parse(lastInboundAt) < 24 * 60 * 60 * 1000;
+  const templateMode = channel !== 'instagram' && !windowOpen;
+  const overTemplateLimit = templateMode && text.length > 600;
+
+  // The draft clears ONLY after a successful send — a failed send keeps
+  // the operator's text (the old version wiped it on submit).
+  async function send() {
+    if (!text.trim() || disabled || sending) return;
+    try {
+      await onSend(text.trim());
+      setText('');
+      setMissingVars([]);
+    } catch {
+      // The mutation's onError already toasts; the draft stays put.
+    }
+  }
+
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!text.trim() || disabled) return;
-    onSend(text.trim());
-    setText('');
+    void send();
+  }
+
+  // Caret-aware insertion — used by both the emoji picker and the
+  // template picker (which used to WIPE whatever was already typed).
+  function insertAtCaret(insert: string) {
+    const el = textareaRef.current;
+    if (!el) {
+      setText((t) => t + insert);
+      return;
+    }
+    const start = el.selectionStart ?? text.length;
+    const endPos = el.selectionEnd ?? text.length;
+    const next = text.slice(0, start) + insert + text.slice(endPos);
+    setText(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const caret = start + insert.length;
+      el.setSelectionRange(caret, caret);
+    });
   }
 
   function insertTemplate(template: MessageTemplateRow) {
     const ctx = contextFromLead(lead);
-    const { text: rendered } = renderTemplate(template.body, ctx);
-    setText(rendered);
+    const { text: rendered, missing } = renderTemplate(template.body, ctx);
+    setMissingVars(missing);
+    insertAtCaret(text.trim().length ? `\n${rendered}` : rendered);
     setPickerOpen(false);
   }
 
+  const showConversationPicker = conversations.length > 1 && onPickConversation;
+
   return (
     <form onSubmit={submit} className="mt-3 space-y-2">
+      {showConversationPicker ? (
+        <select
+          className="kf-input w-full text-xs sm:w-auto"
+          value={conversationId ?? ''}
+          onChange={(e) => onPickConversation?.(e.target.value)}
+          aria-label="בחירת שיחה לשליחה"
+        >
+          {conversations.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.channel === 'instagram' ? 'אינסטגרם' : 'וואטסאפ'} · פעילות אחרונה {formatRelative(c.last_activity_at)}
+            </option>
+          ))}
+        </select>
+      ) : null}
       <textarea
-        className="kf-input min-h-[88px]"
-        placeholder={disabled ? 'לא ניתן לשלוח (ליד מושתק או חסרה שיחה).' : 'הקלד תשובה ידנית...'}
+        ref={textareaRef}
+        className="kf-input min-h-[88px] w-full"
+        placeholder={disabled ? 'לא ניתן לשלוח (ליד מושתק או חסרה שיחה).' : 'הקלד תשובה ידנית... (Enter לשליחה, Shift+Enter לשורה חדשה)'}
         value={text}
+        maxLength={2000}
         onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            void send();
+          }
+        }}
         disabled={disabled}
       />
+      {missingVars.length ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+          שים לב: בתבנית חסרים נתונים לליד הזה — {missingVars.map((m) => `{{${m}}}`).join(', ')} יישלחו כפי שהם.
+          מומלץ להשלים ידנית לפני שליחה.
+        </div>
+      ) : null}
+      {overTemplateLimit ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+          מחוץ לחלון 24 שעות: הלקוח יקבל כעת רק את 600 התווים הראשונים (כתבנית), והנוסח המלא
+          יישלח אוטומטית כשיענה.
+        </div>
+      ) : null}
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <EmojiPicker disabled={disabled} onPick={insertAtCaret} />
           {channel !== 'instagram' ? (
             <button type="button" className="kf-btn text-xs" disabled={disabled}
               onClick={() => setPickerOpen((open) => !open)}>
@@ -2203,7 +2560,12 @@ function ReplyBox({
           <span className="text-slate-500">
             {channel === 'instagram'
               ? 'ייצא דרך אינסטגרם. מחוץ לחלון 24 שעות ההודעה תמתין עד שהלקוח יכתוב שוב.'
-              : 'ייצא דרך WhatsApp. מחוץ לחלון 24 שעות תישלח תבנית.'}
+              : windowOpen
+                ? 'ייצא דרך WhatsApp — חלון 24 השעות פתוח.'
+                : 'ייצא דרך WhatsApp. מחוץ לחלון 24 שעות תישלח תבנית.'}
+          </span>
+          <span className={clsx('tabular-nums', text.length > 1800 ? 'text-amber-600' : 'text-slate-400')} dir="ltr">
+            {text.length}/2000
           </span>
         </div>
         <button

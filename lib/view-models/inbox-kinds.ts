@@ -5,11 +5,12 @@
 // test fails otherwise, instead of new kinds silently bucketing under
 // "אחר"/ops.
 
-/** Every kind attention_inbox() can emit (see migration 105). */
+/** Every kind attention_inbox() can emit (see migration 116). */
 export const ATTENTION_KINDS = [
   'awaiting_reply',
   'mia_reply',
   'overdue_action',
+  'snooze_due',
   'phone_overdue',
   'phone_escalation',
   'ai_stuck',
@@ -25,6 +26,7 @@ export const KIND_LABELS: Record<AttentionKind, string> = {
   awaiting_reply: 'ממתין לתשובה',
   mia_reply: 'הלקוח השיב',
   overdue_action: 'פעולה הבאה באיחור',
+  snooze_due: 'חזר מהשהיה',
   phone_overdue: 'שיחת טלפון באיחור',
   phone_escalation: 'הוסלם לטלפון',
   ai_stuck: 'AI תקוע',
@@ -37,6 +39,7 @@ export const KIND_LANES: Record<AttentionKind, WorkLane> = {
   awaiting_reply: 'reply',
   mia_reply: 'reply',
   overdue_action: 'risk',
+  snooze_due: 'risk',
   phone_overdue: 'call',
   phone_escalation: 'call',
   ai_stuck: 'risk',
