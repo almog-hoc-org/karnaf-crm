@@ -349,18 +349,23 @@ describe('LeadDetailPage', () => {
     });
   });
 
-  it('invokes mark_lost with manual_close note after confirming dialog', async () => {
+  it('invokes mark_lost with the typed reason after confirming dialog', async () => {
     renderDetail();
     fireEvent.click(await screen.findByText('פעולות נוספות'));
     fireEvent.click(await screen.findByRole('button', { name: 'סימון כאבוד' }));
     const dialog = await screen.findByRole('alertdialog');
+    // The dialog now asks for a free-text reason instead of hardcoding
+    // 'manual_close' into lost_reason.
+    fireEvent.change(within(dialog).getByPlaceholderText(/לא רלוונטי כרגע/), {
+      target: { value: 'סגר עם גורם אחר' },
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: 'אישור' }));
     await waitFor(() => {
       expect(postAdminAction).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'mark_lost',
           leadId: 'lead-1',
-          note: 'manual_close',
+          note: 'סגר עם גורם אחר',
         }),
       );
     });
@@ -379,7 +384,7 @@ describe('LeadDetailPage', () => {
 
   it('sends a manual reply with trimmed text and clears the textarea afterward', async () => {
     renderDetail();
-    const textarea = await screen.findByPlaceholderText('הקלד תשובה ידנית...');
+    const textarea = await screen.findByPlaceholderText(/הקלד תשובה ידנית/);
     fireEvent.change(textarea, { target: { value: '  שלום, מתי נוח לך?  ' } });
     fireEvent.click(screen.getByRole('button', { name: 'שליחה' }));
     await waitFor(() => {
@@ -389,7 +394,9 @@ describe('LeadDetailPage', () => {
         text: 'שלום, מתי נוח לך?',
       });
     });
-    expect(textarea).toHaveValue('');
+    // Clearing now happens only after the mutation SUCCEEDS (a failed
+    // send keeps the operator's draft), so wait for the settle.
+    await waitFor(() => expect(textarea).toHaveValue(''));
   });
 
   it('disables the reply box when the lead is marked do_not_contact', async () => {
