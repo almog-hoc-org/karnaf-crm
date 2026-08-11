@@ -122,6 +122,7 @@ async function queue(
   reason: string,
   payloadJson: Record<string, unknown>,
   dueAt?: string,
+  refresh?: boolean,
 ): Promise<void> {
   try {
     const item = await ensurePendingQueueItem(supabase, {
@@ -130,6 +131,7 @@ async function queue(
       priorityLevel,
       reason,
       dueAt,
+      refresh,
       payloadJson,
       createdByActorType: 'system',
     });
@@ -161,7 +163,14 @@ async function applyLeadJourneyRule(
   }
 
   if (classification === 'human_requested') {
-    await queue(supabase, counters, lead, 'human_handoff', 1, 'Lead needs human handling or requested a call', payload);
+    // Only when the customer is actually waiting (inbound after our last
+    // outbound). The old unconditional queue parked a permanent
+    // human_handoff row on EVERY mia_active lead, which both flooded the
+    // queue and suppressed the fresh "הלקוח השיב" inbox row via the
+    // attention_inbox NOT EXISTS guard.
+    if (hasInboundAfterOutbound(lead)) {
+      await queue(supabase, counters, lead, 'human_handoff', 1, 'הלקוח כתב — ליד בטיפול אנושי ממתין למענה', payload, lead.last_inbound_at ?? undefined, true);
+    }
     return;
   }
 

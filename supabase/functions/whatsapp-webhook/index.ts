@@ -147,6 +147,32 @@ Deno.serve(async (req) => {
     log.info('pending_manual_replies_flushed', {
       fn: 'whatsapp-webhook', correlationId, leadId: lead.id, conversationId: conversation.id, count: flushedManualReplies,
     });
+    // This inbound is exactly the one that reopened the 24h window — the
+    // parked reply went out, but the CUSTOMER'S NEW MESSAGE still needs a
+    // human look. We deliberately skip the AI dispatch (the bot must not
+    // answer on top of a manual reply that just flushed), but the lead
+    // must re-flag in the inbox instead of silently dropping off.
+    try {
+      await ensurePendingQueueItem(supabase, {
+        leadId: lead.id,
+        queueType: 'human_handoff',
+        priorityLevel: 1,
+        reason: 'הלקוח כתב שוב — נשלחה תשובה שהמתינה; לבדוק את ההודעה החדשה',
+        queueSummary: normalized.text,
+        dueAt: new Date().toISOString(),
+        refresh: true,
+        payloadJson: { correlationId, flushedManualReplies },
+        createdByActorType: 'system',
+      });
+      await logLeadEvent(supabase, lead.id, 'inbound_after_flush', 'system', {
+        correlation_id: correlationId,
+        flushed: flushedManualReplies,
+      }, conversation.id);
+    } catch (flagErr) {
+      log.error('inbound_after_flush_flag_failed', {
+        fn: 'whatsapp-webhook', correlationId, leadId: lead.id, err: String(flagErr),
+      });
+    }
     return jsonResponse(req, {
       ok: true,
       leadId: lead.id,

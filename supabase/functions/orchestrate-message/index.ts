@@ -115,11 +115,16 @@ Deno.serve(async (req) => {
 
     if (lead.ownership_mode !== 'ai_active') {
       const queueType = lead.ownership_mode === 'phone_sales_pending' ? 'phone_escalation' : 'human_handoff';
+      // refresh:true — a repeat inbound from a human-owned lead bumps the
+      // existing pending row (due_at = now, fresh reason) so the inbox
+      // shows a truthful "customer just wrote" signal, not a days-old row.
       await ensurePendingQueueItem(supabase, {
         leadId,
         queueType,
         priorityLevel: lead.ownership_mode === 'phone_sales_pending' ? 1 : 2,
-        reason: `AI suppressed: lead ownership is ${lead.ownership_mode}`,
+        reason: 'הלקוח כתב — ליד בטיפול אנושי ממתין למענה',
+        dueAt: new Date().toISOString(),
+        refresh: true,
         payloadJson: { ownership_mode: lead.ownership_mode, lead_status: lead.lead_status, correlationId },
         createdByActorType: 'system',
       });
@@ -485,11 +490,11 @@ Deno.serve(async (req) => {
       if (out.interestSummary) updates.goal_summary = out.interestSummary;
       if (out.leadHeatUpdate) updates.lead_heat = out.leadHeatUpdate;
       if (out.nextActionType) updates.next_action_type = out.nextActionType;
+      // Only an EXPLICIT AI-set date persists ("נדבר ביום ראשון"). The old
+      // default of now()+30min after every reply turned nearly every lead
+      // into a permanent priority-1 overdue_action row in the inbox
+      // (cleaned up one-time in migration 114).
       if (out.nextActionDueAt) updates.next_action_due_at = out.nextActionDueAt;
-      else
-        updates.next_action_due_at = new Date(
-          Date.now() + config.followUpDelays.firstResponseMinutes * 60_000,
-        ).toISOString();
       if (out.playbookName && lead.ai_playbook_stage !== out.playbookName) {
         updates.ai_playbook_stage = out.playbookName;
         updates.ai_playbook_stage_at = new Date().toISOString();

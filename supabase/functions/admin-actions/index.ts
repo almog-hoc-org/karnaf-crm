@@ -140,7 +140,18 @@ const META_ENUM_FIELDS: Record<string, Set<string>> = {
   ]),
   primary_track: new Set(['program', 'presale', 'investor_mentorship']),
 };
+// Per-field caps. The old blanket 280 silently amputated operator notes
+// and long AI-written summaries (open row + save = data loss); free-prose
+// fields now get room to breathe while label-ish fields stay short.
 const META_MAX_LENGTH = 280;
+const META_FIELD_MAX: Record<string, number> = {
+  notes_internal: 2000,
+  goal_summary: 600,
+  pain_point_summary: 600,
+  main_blocker: 600,
+  decision_context: 600,
+  lost_reason: 600,
+};
 
 function sanitiseMetaUpdates(input: ActionPayload['metaUpdates']): Record<string, string | null> | null {
   if (!input || typeof input !== 'object') return null;
@@ -150,7 +161,7 @@ function sanitiseMetaUpdates(input: ActionPayload['metaUpdates']): Record<string
       if (v === null) {
         out[k] = null;
       } else if (typeof v === 'string') {
-        const trimmed = v.trim().slice(0, META_MAX_LENGTH);
+        const trimmed = v.trim().slice(0, META_FIELD_MAX[k] ?? META_MAX_LENGTH);
         out[k] = trimmed.length === 0 ? null : trimmed;
       }
     } else if (k in META_ENUM_FIELDS) {
@@ -743,6 +754,24 @@ Deno.serve(async (req) => {
         payload_json: callMeta,
       });
       await updateLeadFields(supabase, leadId, { last_human_touch_at: ts });
+      // A logged call IS the handling of the phone queues — resolve them
+      // so the inbox row doesn't stay critical forever. no_answer keeps
+      // phone_escalation open (the customer still needs to be reached),
+      // but phone_overdue clears either way (sla-worker won't re-raise it
+      // thanks to its recent-call guard).
+      const resolvedTypes = callOutcome === 'connected'
+        ? ['phone_overdue', 'phone_escalation']
+        : ['phone_overdue'];
+      await supabase
+        .from('work_queue')
+        .update({
+          status: 'resolved',
+          resolved_at: ts,
+          resolution_note: `נרשמה שיחה (${callOutcome ?? 'connected'})`,
+        })
+        .eq('lead_id', leadId)
+        .in('status', ['pending', 'claimed'])
+        .in('queue_type', resolvedTypes);
       await logLeadEvent(
         supabase,
         leadId,

@@ -257,6 +257,11 @@ export const QUEUE_LABELS: Record<string, string> = {
   webinar_registered: 'נרשם לוובינר',
   webinar_attended_not_purchased: 'וובינר — השתתף ולא רכש',
   webinar_no_show: 'וובינר — לא השתתף',
+  phone_overdue: 'שיחת טלפון באיחור',
+  handoff_stale: 'העברה לנציג — תקועה',
+  deal_stalled: 'עסקה תקועה',
+  meeting_outcome_pending: 'פגישה לסיכום',
+  onboarding_action: 'משימת אונבורדינג',
 };
 
 export function heatBadgeClass(heat: LeadHeat | string): string {
