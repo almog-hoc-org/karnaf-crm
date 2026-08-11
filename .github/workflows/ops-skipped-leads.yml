@@ -1,6 +1,6 @@
-# TEMPORARY read-only diagnostic — after_webinar incident, round 2:
-# WABA config value, template sync history, and whether any customer
-# actually received the broadcast. Remove after the incident.
+# TEMPORARY ops task — set the corrected WhatsApp Business Account id
+# (supplied by the operator from Meta WhatsApp Manager), fire the template
+# sync, and verify templates now carry live Meta status. Remove afterwards.
 name: Ops - Skipped Leads
 
 on:
@@ -13,13 +13,13 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: after_webinar incident round 2
+      - name: Fix WABA id and verify template sync
         env:
           SUPABASE_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
           PROJECT_REF: svkzkpgccahwmyflobvn
         run: |
           python3 - <<'EOF'
-          import json, os, urllib.request
+          import json, os, time, urllib.request
 
           token = os.environ['SUPABASE_TOKEN']
           ref = os.environ['PROJECT_REF']
@@ -43,35 +43,26 @@ jobs:
               print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
               print()
 
-          q('whatsapp_waba_id config', """
-              select config_key, config_value, updated_at
-              from crm_config where config_key = 'whatsapp_waba_id'""")
-          q('whatsapp templates - meta sync state', """
+          q('set corrected waba id', """
+              update crm_config
+              set config_value = '"1481486296955334"'::jsonb, updated_at = now()
+              where config_key = 'whatsapp_waba_id'
+              returning config_key, config_value, updated_at""")
+          q('fire template sync', 'select public.run_template_sync()')
+          time.sleep(15)
+          q('sync response', """
+              select status_code, left(content, 1500) as content, created
+              from net._http_response
+              where content like '%stage%'
+              order by created desc limit 1""")
+          q('templates meta state post-sync', """
               select key, status,
                      metadata->'meta'->>'status' as meta_status,
                      metadata->'meta'->>'language' as meta_lang,
                      metadata->'meta'->>'synced_at' as synced_at
               from message_templates where channel = 'whatsapp'
-              order by key""")
-          q('meta-template-status responses last 7 days', """
-              select status_code, left(content, 200) as content, created
-              from net._http_response
-              where content like '%stage%'
-              order by created desc limit 10""")
-          q('messages actually created for failed broadcast', """
-              select count(*)
-              from messages
-              where raw_payload->>'broadcast_id' in (
-                select id::text from broadcasts where template_key = 'after_webinar')""")
-          q('after_webinar dispatch status counts', """
-              select status, count(*)
-              from outbound_dispatch
-              where payload->'meta_template'->>'name' = 'after_webinar'
-              group by 1""")
-          q('after_webinar broadcast recipient status counts', """
-              select r.status, count(*)
-              from broadcast_recipients r
-              join broadcasts b on b.id = r.broadcast_id
-              where b.template_key = 'after_webinar'
-              group by 1""")
+              order by (metadata->'meta'->>'status') nulls last, key""")
+          q('after_webinar full meta', """
+              select key, status, metadata->'meta' as meta
+              from message_templates where key = 'after_webinar'""")
           EOF
