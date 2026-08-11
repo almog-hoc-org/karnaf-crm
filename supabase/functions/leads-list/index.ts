@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
   let query = supabase
     .from('leads')
     .select(
-      'id, full_name, phone, email, source, source_campaign, utm_campaign, utm_source, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, outcome, outcome_note, outcome_at, snoozed_until, no_proactive_contact, program_members(lead_id)',
+      'id, full_name, phone, email, source, source_detail, source_campaign, utm_campaign, utm_source, landing_page, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, outcome, outcome_note, outcome_at, snoozed_until, no_proactive_contact, program_members(lead_id)',
       { count: 'exact' },
     )
     .order('updated_at', { ascending: false })
@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
     query = supabase
       .from('leads')
       .select(
-        'id, full_name, phone, email, source, source_campaign, utm_campaign, utm_source, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, outcome, outcome_note, outcome_at, snoozed_until, no_proactive_contact, program_members(lead_id)',
+        'id, full_name, phone, email, source, source_detail, source_campaign, utm_campaign, utm_source, landing_page, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, outcome, outcome_note, outcome_at, snoozed_until, no_proactive_contact, program_members(lead_id)',
       )
       .not('last_inbound_at', 'is', null)
       .not('lead_status', 'in', '("won","lost","do_not_contact","removed_by_request")')

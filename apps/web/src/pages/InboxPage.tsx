@@ -8,7 +8,7 @@ import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/component
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
-import { formatRelative, PRODUCT_LABELS } from '@/lib/format';
+import { describeLeadOrigin, formatRelative, PRODUCT_LABELS } from '@/lib/format';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import type { AttentionRow } from '@/lib/types';
 
@@ -37,6 +37,16 @@ const CLOSE_NOTE_TEMPLATES = [
 const QUEUE_BACKED_KINDS = new Set([
   'queue', 'ai_stuck', 'phone_overdue', 'phone_escalation', 'deal_stalled', 'meeting_outcome_pending',
 ]);
+
+// "טיפול מיידי" = the customer replied to the bot and is waiting inside
+// the 24h window (or an operator-set snooze popped). Everything else is
+// follow-up work, rendered in a separate, calmer section — the inbox
+// never again nags about a lead who wrote nothing.
+const IMMEDIATE_KINDS = new Set(['mia_reply', 'awaiting_reply', 'snooze_due']);
+
+function isImmediateRow(row: AttentionRow): boolean {
+  return IMMEDIATE_KINDS.has(row.kind);
+}
 
 const OUTCOME_OPTIONS: Array<{ value: LeadOutcome; label: string }> = [
   { value: 'investor_mentorship', label: 'ליווי משקיעים' },
@@ -68,10 +78,20 @@ export function InboxPage() {
     refetchOnWindowFocus: true,
   });
 
+  const [originFilter, setOriginFilter] = useState('');
+
   const allRows = useMemo(() => sortRows(q.data ?? []), [q.data]);
-  const rows = useMemo(() => (
-    lane === 'all' ? allRows : allRows.filter((row) => classifyRow(row).lane === lane)
-  ), [allRows, lane]);
+  const originOptions = useMemo(() => {
+    const labels = new Set<string>();
+    for (const row of allRows) labels.add(describeLeadOrigin(row).label);
+    return Array.from(labels).sort((a, b) => a.localeCompare(b, 'he'));
+  }, [allRows]);
+  const rows = useMemo(() => {
+    const byLane = lane === 'all' ? allRows : allRows.filter((row) => classifyRow(row).lane === lane);
+    return originFilter ? byLane.filter((row) => describeLeadOrigin(row).label === originFilter) : byLane;
+  }, [allRows, lane, originFilter]);
+  const immediateRows = useMemo(() => rows.filter(isImmediateRow), [rows]);
+  const laterRows = useMemo(() => rows.filter((row) => !isImmediateRow(row)), [rows]);
 
   const counts = useMemo(() => {
     const acc: Record<WorkLane, number> = { all: allRows.length, reply: 0, call: 0, risk: 0, ops: 0 };
@@ -149,6 +169,24 @@ export function InboxPage() {
   });
 
   const urgent = allRows.filter((row) => classifyRow(row).urgency === 'critical').length;
+  const immediateTotal = allRows.filter(isImmediateRow).length;
+
+  const displayGroups = [
+    {
+      key: 'immediate',
+      title: `טיפול מיידי — ענו וממתינים (${immediateRows.length})`,
+      hint: 'לקוחות שכתבו לנו ומחכים — חלון ה-24 שעות רץ. זה התור החשוב.',
+      rows: immediateRows,
+      tone: 'hot' as const,
+    },
+    {
+      key: 'later',
+      title: `מעקב ותפעול — לא דחוף (${laterRows.length})`,
+      hint: 'משימות המשך על לידים שכבר כתבו בעבר. אחרי שסיימתם את המענים.',
+      rows: laterRows,
+      tone: 'calm' as const,
+    },
+  ].filter((group) => group.rows.length > 0);
 
   return (
     <div className="space-y-5">
@@ -163,9 +201,9 @@ export function InboxPage() {
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:min-w-[360px]">
-            <Metric label="פתוח" value={allRows.length} />
+            <Metric label="מיידי" value={immediateTotal} tone={immediateTotal > 0 ? 'danger' : 'ok'} />
             <Metric label="דחוף" value={urgent} tone={urgent > 0 ? 'danger' : 'ok'} />
-            <Metric label="רענון" value="30ש׳" />
+            <Metric label="סה״כ פתוח" value={allRows.length} />
           </div>
         </div>
       </header>
@@ -209,6 +247,32 @@ export function InboxPage() {
         })}
       </section>
 
+      {originOptions.length > 1 ? (
+        <section className="flex flex-wrap items-center gap-2" aria-label="סינון לפי מקור הגעה">
+          <label htmlFor="inbox-origin-filter" className="text-sm font-medium text-slate-600">מקור הגעה:</label>
+          <select
+            id="inbox-origin-filter"
+            className="kf-input max-w-[220px]"
+            value={originFilter}
+            onChange={(e) => setOriginFilter(e.target.value)}
+          >
+            <option value="">כל המקורות</option>
+            {originOptions.map((label) => (
+              <option key={label} value={label}>{label}</option>
+            ))}
+          </select>
+          {originFilter ? (
+            <button
+              type="button"
+              className="text-xs font-semibold text-brand-700 hover:underline"
+              onClick={() => setOriginFilter('')}
+            >
+              ניקוי סינון
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="space-y-3">
         {q.isLoading ? (
           <div className="kf-card p-10 text-center text-slate-500">טוען משימות...</div>
@@ -219,13 +283,25 @@ export function InboxPage() {
             hint="המסך מתרענן אוטומטית. אם נכנס ליד או שהלקוח ענה — הוא יופיע כאן."
           />
         ) : (
-          rows.map((row) => {
+          displayGroups.map((group) => (
+            <div key={group.key} className="space-y-3">
+              <div className={clsx(
+                'flex flex-wrap items-baseline justify-between gap-2 rounded-2xl px-4 py-2',
+                group.tone === 'hot' ? 'bg-rose-50 ring-1 ring-rose-100' : 'bg-slate-100',
+              )}>
+                <h2 className={clsx('text-sm font-bold', group.tone === 'hot' ? 'text-rose-800' : 'text-slate-700')}>
+                  {group.title}
+                </h2>
+                <span className="text-xs text-slate-500">{group.hint}</span>
+              </div>
+              {group.rows.map((row) => {
             const meta = classifyRow(row);
             const plan = operatingPlan(row, meta);
             const chips = reasonChips(row, meta);
             const talkTrack = repTalkTrack(row, meta);
             const whatsappWindow = whatsappWindowStatus(row);
             const whatsappUrl = whatsappConversationUrl(row);
+            const origin = describeLeadOrigin(row);
             return (
               <article
                 key={`${row.kind}:${row.ref_id}`}
@@ -251,6 +327,9 @@ export function InboxPage() {
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
                         {row.lead_phone ? <a href={`tel:${row.lead_phone}`} className="tabular-nums hover:text-brand-700">{row.lead_phone}</a> : null}
                         <span>{humanReason(row)}</span>
+                        <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700 ring-1 ring-teal-100">
+                          מקור: {origin.label}{origin.detail ? ` · ${origin.detail}` : ''}
+                        </span>
                         {row.product_interest ? (
                           <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
                             {PRODUCT_LABELS[row.product_interest] ?? row.product_interest}
@@ -258,6 +337,20 @@ export function InboxPage() {
                         ) : null}
                       </div>
                     </div>
+
+                    {row.last_inbound_text ? (
+                      <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs font-semibold text-sky-700">ההודעה האחרונה של הלקוח</div>
+                          {row.last_inbound_at ? (
+                            <span className="text-xs text-slate-400">{formatRelative(row.last_inbound_at)}</span>
+                          ) : null}
+                        </div>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-800">
+                          ״{row.last_inbound_text}״
+                        </p>
+                      </div>
+                    ) : null}
 
                     <div className="grid gap-2 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
                       <div>
@@ -401,7 +494,9 @@ export function InboxPage() {
                 </div>
               </article>
             );
-          })
+          })}
+            </div>
+          ))
         )}
       </section>
 

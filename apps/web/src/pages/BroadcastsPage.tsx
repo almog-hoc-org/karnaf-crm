@@ -56,6 +56,18 @@ export const SOURCE_OPTIONS: Array<{ value: string; label: string }> = (() => {
   }
   return Array.from(byLabel.entries()).map(([label, slugs]) => ({ value: slugs.join(','), label }));
 })();
+// Live Meta state recorded on the local template row by the template
+// sync (metadata.meta). Only APPROVED templates may be broadcast, and
+// the send must use the language Meta registered — after_webinar was
+// approved under 'en' with a Hebrew body, and sending it as 'he' failed
+// every recipient with #132001.
+function metaTemplateInfo(t: MessageTemplateRow): {
+  status: string | null; language: string | null; body: string | null;
+} {
+  const meta = (t.metadata as { meta?: { status?: string; language?: string; body?: string } } | null)?.meta;
+  return { status: meta?.status ?? null, language: meta?.language ?? null, body: meta?.body ?? null };
+}
+
 const TRACK_OPTIONS = [
   { value: 'program', label: 'הדרך לדירה' },
   { value: 'presale', label: 'פריסייל' },
@@ -234,7 +246,7 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     queryKey: ['message-templates', channel, 'active'],
     queryFn: () => fetchMessageTemplates({ channel, status: 'active' }),
   });
-  const templates = templatesQ.data?.templates ?? [];
+  const templates = useMemo(() => templatesQ.data?.templates ?? [], [templatesQ.data]);
 
   const segment: BroadcastSegment = useMemo(() => {
     const tags = tagsInput.split(',').map((s) => s.trim()).filter(Boolean);
@@ -263,7 +275,9 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         name: name.trim(),
         channel,
         template_key: templateKey || null,
-        meta_template: channel === 'whatsapp' && metaName ? { name: metaName.trim(), lang: 'he', params: [] } : null,
+        meta_template: channel === 'whatsapp' && metaName
+          ? { name: metaName.trim(), lang: selectedMetaInfo?.language ?? 'he', params: [] }
+          : null,
         subject: channel === 'email' ? subject.trim() : undefined,
         body_html: channel === 'email' ? (bodyHtml.trim() || selectedTemplateHtml || undefined) : undefined,
         segment,
@@ -275,6 +289,14 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     },
     onError: (err) => toast.error((err as Error).message),
   });
+
+  // WhatsApp broadcasts: only Meta-APPROVED synced templates are offered.
+  const approvedMetaTemplates = useMemo(
+    () => templates.filter((t) => metaTemplateInfo(t).status === 'APPROVED'),
+    [templates],
+  );
+  const selectedMetaTemplate = approvedMetaTemplates.find((t) => t.key === metaName);
+  const selectedMetaInfo = selectedMetaTemplate ? metaTemplateInfo(selectedMetaTemplate) : null;
 
   const selectedTemplateHtml = (selectedTemplate as { body_html?: string | null } | undefined)?.body_html ?? '';
   const canSave =
@@ -420,13 +442,35 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 
         {channel === 'whatsapp' ? (
           <>
-            <Field label="שם תבנית Meta מאושרת (נשלחת בפועל)">
-              <input className="kf-input w-full" dir="ltr" value={metaName}
-                onChange={(e) => setMetaName(e.target.value)} placeholder="webinar_launch_reminder" />
+            <Field label="תבנית Meta מאושרת (נשלחת בפועל)">
+              <select className="kf-input w-full" value={metaName} onChange={(e) => setMetaName(e.target.value)}>
+                <option value="">בחרו תבנית מאושרת...</option>
+                {approvedMetaTemplates.map((t) => {
+                  const info = metaTemplateInfo(t);
+                  return (
+                    <option key={t.key} value={t.key}>
+                      {t.key} — {t.name_he}{info.language ? ` (שפה: ${info.language})` : ''}
+                    </option>
+                  );
+                })}
+              </select>
             </Field>
-            <p className="text-xs text-slate-500">
-              וואטסאפ לנמענים קרים חייב תבנית מאושרת של Meta. הזן את שם התבנית בדיוק כפי שאושרה.
-            </p>
+            {approvedMetaTemplates.length === 0 ? (
+              <p className="text-xs text-rose-600">
+                אין תבניות מאושרות מסונכרנות ממטא. היכנסו למסך התבניות ולחצו ״סנכרן ממטא״ —
+                רק תבנית בסטטוס APPROVED ניתנת לשליחה כתפוצה.
+              </p>
+            ) : (
+              <p className="text-xs text-slate-500">
+                מוצגות רק תבניות שאושרו במטא (לפי הסנכרון). ההודעה תישלח בשפה שבה התבנית רשומה במטא.
+              </p>
+            )}
+            {selectedMetaInfo?.body ? (
+              <div className="rounded-lg bg-emerald-50 p-3 text-sm whitespace-pre-wrap ring-1 ring-emerald-100">
+                <div className="mb-1 text-xs font-semibold text-emerald-700">הנוסח המאושר במטא (מה שיישלח בפועל):</div>
+                {selectedMetaInfo.body}
+              </div>
+            ) : null}
           </>
         ) : (
           <>

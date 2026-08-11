@@ -6,6 +6,7 @@ import {
   OWNERSHIP_LABELS,
   QUEUE_LABELS,
   STATUS_LABELS,
+  describeLeadOrigin,
   formatDateTime,
   formatRelative,
   heatBadgeClass,
@@ -125,5 +126,42 @@ describe('formatRelative', () => {
   it('returns days for older deltas', () => {
     const twoDaysAgo = new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString();
     expect(formatRelative(twoDaysAgo, NOW)).toBe('לפני 2 ימים');
+  });
+});
+
+// The origin descriptor answers "מאיפה הליד הגיע" without opening the
+// card: short Hebrew source label + the most specific detail available
+// (Rav Messer form/list, campaign, landing-page path).
+describe('describeLeadOrigin', () => {
+  it('prefers source_detail (Rav Messer form/list name)', () => {
+    expect(describeLeadOrigin({
+      source: 'responder_form',
+      source_detail: 'רשימת וובינר אוגוסט',
+      utm_campaign: 'launch_webinar_2026',
+    })).toEqual({ label: 'רב מסר', detail: 'רשימת וובינר אוגוסט' });
+  });
+
+  it('falls back to utm_campaign, then source_campaign', () => {
+    expect(describeLeadOrigin({ source: 'webinar', utm_campaign: 'launch_webinar_2026' }).detail)
+      .toBe('launch_webinar_2026');
+    expect(describeLeadOrigin({ source: 'webinar', source_campaign: 'aug_launch' }).detail)
+      .toBe('aug_launch');
+  });
+
+  it('uses the landing-page path as last resort and strips the host', () => {
+    expect(describeLeadOrigin({ source: 'landing_page', landing_page: 'https://karnaf.co.il/webinar-signup?x=1' }))
+      .toEqual({ label: 'אתר', detail: '/webinar-signup' });
+  });
+
+  it('handles a bare WhatsApp inbound lead with no detail', () => {
+    expect(describeLeadOrigin({ source: 'whatsapp_direct' })).toEqual({ label: 'וואטסאפ', detail: null });
+  });
+
+  it('never repeats the raw source slug as detail', () => {
+    expect(describeLeadOrigin({ source: 'webinar', source_detail: 'webinar' }).detail).toBeNull();
+  });
+
+  it('labels a missing source as unknown', () => {
+    expect(describeLeadOrigin({}).label).toBe('לא ידוע');
   });
 });

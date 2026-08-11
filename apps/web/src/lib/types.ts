@@ -35,9 +35,11 @@ export interface LeadRow {
   phone: string | null;
   email: string | null;
   source: string;
+  source_detail?: string | null;
   source_campaign?: string | null;
   utm_campaign?: string | null;
   utm_source?: string | null;
+  landing_page?: string | null;
   lead_status: LeadStatus;
   lead_heat: LeadHeat;
   ownership_mode: OwnershipMode;
@@ -741,6 +743,14 @@ export interface AttentionRow {
   due_at: string | null;
   created_at: string | null;
   is_program_member?: boolean;
+  // v4 — arrival-source context + last customer message, so the row is
+  // understandable and filterable without opening the lead card.
+  source?: string | null;
+  source_detail?: string | null;
+  source_campaign?: string | null;
+  utm_campaign?: string | null;
+  landing_page?: string | null;
+  last_inbound_text?: string | null;
 }
 
 export interface ApiOk {

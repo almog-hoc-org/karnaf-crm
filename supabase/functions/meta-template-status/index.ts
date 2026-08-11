@@ -59,6 +59,7 @@ Deno.serve(async (req) => {
     const phoneText = await phoneRes.text();
     phoneJson = JSON.parse(phoneText || '{}');
     if (!phoneRes.ok) {
+      if (postBody?.action === 'sync') await notifySyncFailure('phone_lookup', phoneText);
       return jsonResponse(req, {
         ok: false,
         stage: 'phone_lookup',
@@ -69,6 +70,7 @@ Deno.serve(async (req) => {
     wabaId = phoneJson?.whatsapp_business_account?.id ?? '';
   }
   if (!wabaId) {
+    if (postBody?.action === 'sync') await notifySyncFailure('phone_lookup', 'No WABA id available');
     return jsonResponse(req, { ok: false, stage: 'phone_lookup', error: 'No WABA id available' }, 500);
   }
 
@@ -189,6 +191,19 @@ Deno.serve(async (req) => {
   });
 });
 
+async function notifySyncFailure(stage: string, detail: string): Promise<void> {
+  await notifyTelegram({
+    source: 'meta-template-status',
+    severity: 'warn',
+    title: 'סנכרון תבניות וואטסאפ ממטא נכשל',
+    lines: [
+      `שלב: ${stage}`,
+      detail.slice(0, 300),
+      'עד שהסנכרון יתוקן, המערכת עיוורת לסטטוס התבניות במטא ותפוצות עלולות להיחסם.',
+    ],
+  });
+}
+
 // Pull the live template list from Meta and record status + body on the
 // matching local message_templates rows (metadata.meta). The local body
 // is NOT overwritten — the journey engine renders from it with named
@@ -206,7 +221,13 @@ async function syncTemplates(
   templateUrl.searchParams.set('limit', '100');
   const res = await fetch(templateUrl, { headers: { Authorization: `Bearer ${token}` } });
   const text = await res.text();
-  if (!res.ok) return jsonResponse(req, { ok: false, stage: 'template_lookup', errorText: text }, 200);
+  if (!res.ok) {
+    // A broken sync is worse than a non-approved template: the whole CRM
+    // goes blind to Meta template state and nobody notices (the WABA-id
+    // misconfiguration hid for 3 weeks exactly this way). Alert loudly.
+    await notifySyncFailure('template_lookup', text);
+    return jsonResponse(req, { ok: false, stage: 'template_lookup', errorText: text }, 200);
+  }
   const json = JSON.parse(text || '{}');
 
   const metaByName = new Map<string, { status: string; category: string; language: string; body: string | null }>();
@@ -229,7 +250,10 @@ async function syncTemplates(
     .from('message_templates')
     .select('id, key, body, metadata')
     .eq('channel', 'whatsapp');
-  if (error) return jsonResponse(req, { ok: false, stage: 'local_lookup', error: error.message }, 500);
+  if (error) {
+    await notifySyncFailure('local_lookup', error.message);
+    return jsonResponse(req, { ok: false, stage: 'local_lookup', error: error.message }, 500);
+  }
 
   const syncedAt = new Date().toISOString();
   const drifted: string[] = [];

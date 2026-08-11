@@ -20,6 +20,38 @@ import { sanitizeEmailHtml } from '../_shared/email-html.ts';
 
 interface MetaTemplate { name: string; lang?: string; params?: string[] }
 
+// A WhatsApp broadcast may only reference a Meta template the sync has
+// confirmed as APPROVED — and it must be sent in the template's REAL
+// registered language, not an assumed one. The after_webinar incident:
+// the template was approved under 'en' (with Hebrew body), the UI sent
+// lang 'he', and Meta rejected every single recipient with #132001
+// AFTER the broadcast was already running.
+async function resolveApprovedMetaTemplate(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  name: string,
+): Promise<{ ok: true; lang: string } | { ok: false; error: string }> {
+  const { data } = await supabase
+    .from('message_templates')
+    .select('key, metadata')
+    .eq('key', name)
+    .eq('channel', 'whatsapp')
+    .maybeSingle();
+  const meta = (data?.metadata as { meta?: { status?: string; language?: string } } | null)?.meta;
+  if (!data || !meta?.status) {
+    return {
+      ok: false,
+      error: `התבנית "${name}" לא מסונכרנת ממטא — לחצו "סנכרן ממטא" במסך התבניות וודאו שהיא קיימת ומאושרת לפני תזמון תפוצה.`,
+    };
+  }
+  if (meta.status !== 'APPROVED') {
+    return {
+      ok: false,
+      error: `התבנית "${name}" אינה מאושרת במטא (סטטוס: ${meta.status}) — אי אפשר לשלוח איתה תפוצה.`,
+    };
+  }
+  return { ok: true, lang: meta.language || 'he' };
+}
+
 async function bodyForTemplate(
   supabase: ReturnType<typeof getServiceSupabase>,
   templateKey: string | null | undefined,
@@ -157,11 +189,17 @@ Deno.serve(async (req) => {
     if (channel === 'email' && !subject) {
       return jsonResponse(req, { error: 'תפוצת מייל דורשת שורת נושא' }, 400);
     }
+    let metaTemplate = (body.meta_template as MetaTemplate | undefined) ?? null;
+    if (channel === 'whatsapp' && metaTemplate?.name) {
+      const resolved = await resolveApprovedMetaTemplate(supabase, metaTemplate.name);
+      if (!resolved.ok) return jsonResponse(req, { error: resolved.error }, 400);
+      metaTemplate = { ...metaTemplate, lang: resolved.lang };
+    }
     const { data, error } = await supabase.from('broadcasts').insert({
       name,
       channel,
       template_key: templateKey,
-      meta_template: (body.meta_template as MetaTemplate | undefined) ?? null,
+      meta_template: metaTemplate,
       body_snapshot: bodySnapshot,
       subject,
       body_html: bodyHtml,
@@ -186,7 +224,15 @@ Deno.serve(async (req) => {
     if (body.channel !== undefined) patch.channel = channel;
     if (body.segment !== undefined) patch.segment = body.segment;
     if (body.scheduled_at !== undefined) patch.scheduled_at = body.scheduled_at;
-    if (body.meta_template !== undefined) patch.meta_template = body.meta_template;
+    if (body.meta_template !== undefined) {
+      let metaTemplate = body.meta_template as MetaTemplate | null;
+      if (channel === 'whatsapp' && metaTemplate?.name) {
+        const resolved = await resolveApprovedMetaTemplate(supabase, metaTemplate.name);
+        if (!resolved.ok) return jsonResponse(req, { error: resolved.error }, 400);
+        metaTemplate = { ...metaTemplate, lang: resolved.lang };
+      }
+      patch.meta_template = metaTemplate;
+    }
     if (body.template_key !== undefined) {
       patch.template_key = body.template_key;
       patch.body_snapshot = await bodyForTemplate(supabase, body.template_key as string, channel);
@@ -205,8 +251,21 @@ Deno.serve(async (req) => {
     if (!b) return jsonResponse(req, { error: 'not found' }, 404);
     if (b.status !== 'draft') return jsonResponse(req, { error: `cannot schedule a ${b.status} broadcast` }, 409);
     if (!b.scheduled_at) return jsonResponse(req, { error: 'scheduled_at required before scheduling' }, 400);
-    if (b.channel === 'whatsapp' && !(b.meta_template as MetaTemplate | null)?.name) {
-      return jsonResponse(req, { error: 'WhatsApp broadcasts require an approved Meta template (meta_template.name)' }, 400);
+    const scheduleMetaTemplate = b.meta_template as MetaTemplate | null;
+    if (b.channel === 'whatsapp' && !scheduleMetaTemplate?.name) {
+      return jsonResponse(req, { error: 'תפוצת וואטסאפ דורשת תבנית מטא מאושרת — בחרו תבנית מהרשימה' }, 400);
+    }
+    // Re-validate at schedule time: approval status may have changed since
+    // the draft was written (nightly sync updates it), and the language
+    // must be the one Meta actually registered.
+    if (b.channel === 'whatsapp' && scheduleMetaTemplate?.name) {
+      const resolved = await resolveApprovedMetaTemplate(supabase, scheduleMetaTemplate.name);
+      if (!resolved.ok) return jsonResponse(req, { error: resolved.error }, 400);
+      if (scheduleMetaTemplate.lang !== resolved.lang) {
+        await supabase.from('broadcasts')
+          .update({ meta_template: { ...scheduleMetaTemplate, lang: resolved.lang } })
+          .eq('id', id);
+      }
     }
     if (b.channel === 'email' && !b.subject) {
       return jsonResponse(req, { error: 'תפוצת מייל דורשת שורת נושא' }, 400);
