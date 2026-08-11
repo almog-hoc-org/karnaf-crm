@@ -1,6 +1,6 @@
-# TEMPORARY read-only diagnostic — why did the after_webinar template
-# broadcast fail? Pulls the live Meta sync state of the template plus the
-# actual send errors from the last 3 days. Remove after the incident.
+# TEMPORARY read-only diagnostic — after_webinar incident, round 2:
+# WABA config value, template sync history, and whether any customer
+# actually received the broadcast. Remove after the incident.
 name: Ops - Skipped Leads
 
 on:
@@ -13,13 +13,13 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Diagnose after_webinar broadcast failure
+      - name: after_webinar incident round 2
         env:
           SUPABASE_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
           PROJECT_REF: svkzkpgccahwmyflobvn
         run: |
           python3 - <<'EOF'
-          import json, os, time, urllib.request
+          import json, os, urllib.request
 
           token = os.environ['SUPABASE_TOKEN']
           ref = os.environ['PROJECT_REF']
@@ -43,42 +43,35 @@ jobs:
               print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
               print()
 
-          q('fire template sync', 'select public.run_template_sync()')
-          time.sleep(10)
-          q('sync response from meta-template-status', """
-              select status_code, left(content, 1200) as content, created
+          q('whatsapp_waba_id config', """
+              select config_key, config_value, updated_at
+              from crm_config where config_key = 'whatsapp_waba_id'""")
+          q('whatsapp templates - meta sync state', """
+              select key, status,
+                     metadata->'meta'->>'status' as meta_status,
+                     metadata->'meta'->>'language' as meta_lang,
+                     metadata->'meta'->>'synced_at' as synced_at
+              from message_templates where channel = 'whatsapp'
+              order by key""")
+          q('meta-template-status responses last 7 days', """
+              select status_code, left(content, 200) as content, created
               from net._http_response
-              order by created desc limit 2""")
-          q('after_webinar local row post-sync', """
-              select key, status, variables_used, metadata->'meta' as meta
-              from message_templates where key = 'after_webinar'""")
-          q('broadcasts last 3 days', """
-              select left(id::text, 8) as id, name, channel, template_key,
-                     meta_template, status, recipients_count, sent_count,
-                     failed_count, skipped_count, scheduled_at, created_at
-              from broadcasts
-              where created_at > now() - interval '3 days'
-              order by created_at desc limit 10""")
-          q('recipient error breakdown (last 3 days broadcasts)', """
-              select left(r.broadcast_id::text, 8) as broadcast, r.status,
-                     left(coalesce(r.error, ''), 300) as error, count(*)
+              where content like '%stage%'
+              order by created desc limit 10""")
+          q('messages actually created for failed broadcast', """
+              select count(*)
+              from messages
+              where raw_payload->>'broadcast_id' in (
+                select id::text from broadcasts where template_key = 'after_webinar')""")
+          q('after_webinar dispatch status counts', """
+              select status, count(*)
+              from outbound_dispatch
+              where payload->'meta_template'->>'name' = 'after_webinar'
+              group by 1""")
+          q('after_webinar broadcast recipient status counts', """
+              select r.status, count(*)
               from broadcast_recipients r
-              where r.broadcast_id in (
-                select id from broadcasts where created_at > now() - interval '3 days')
-              group by 1, 2, 3 order by 1, 4 desc""")
-          q('dispatch rows for after_webinar sends (last 3 days)', """
-              select left(id::text, 8) as id, status, attempts,
-                     next_attempt_at, failed_at,
-                     left(coalesce(last_error, ''), 400) as last_error
-              from outbound_dispatch
-              where created_at > now() - interval '3 days'
-                and (payload->'meta_template'->>'name' = 'after_webinar'
-                     or payload->>'template_key' = 'after_webinar')
-              order by created_at desc limit 20""")
-          q('all dlq/failed dispatches last 3 days grouped', """
-              select left(coalesce(last_error, ''), 300) as err, status, count(*)
-              from outbound_dispatch
-              where created_at > now() - interval '3 days'
-                and status in ('dlq', 'failed')
-              group by 1, 2 order by 3 desc limit 10""")
+              join broadcasts b on b.id = r.broadcast_id
+              where b.template_key = 'after_webinar'
+              group by 1""")
           EOF
