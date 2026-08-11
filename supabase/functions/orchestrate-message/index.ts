@@ -3,6 +3,7 @@ import { sendWhatsAppText, sendWhatsAppTemplate } from '../_shared/whatsapp-prov
 import { sendInstagramText } from '../_shared/instagram-provider.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
+import { maybeAlertHumanInbound } from '../_shared/inbound-alert.ts';
 import { logLeadEvent, transitionLeadStatus, updateLeadFields } from '../_shared/lead-service.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { runAiDecision } from '../_shared/ai-decision-service.ts';
@@ -140,6 +141,22 @@ Deno.serve(async (req) => {
         },
         conversationId,
       );
+      // Real-time operator ping (config-gated + 10-min throttled inside).
+      const { data: lastInbound } = await supabase
+        .from('messages')
+        .select('content_text')
+        .eq('conversation_id', conversationId)
+        .eq('direction', 'inbound')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      await maybeAlertHumanInbound(supabase, {
+        leadId,
+        leadName: lead.full_name,
+        phone: lead.phone,
+        snippet: lastInbound?.content_text ?? null,
+        correlationId,
+      });
       log.info('orchestrate_ai_suppressed_by_owner', {
         fn: 'orchestrate',
         correlationId,

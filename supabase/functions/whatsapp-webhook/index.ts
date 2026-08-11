@@ -9,6 +9,7 @@ import { env, optional, safeEqual } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
+import { maybeAlertHumanInbound } from '../_shared/inbound-alert.ts';
 import { archiveWhatsAppMedia } from '../_shared/media-fetch.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { buildHumanHandoffSchedule } from '../_shared/handoff-schedule.ts';
@@ -168,6 +169,14 @@ Deno.serve(async (req) => {
         correlation_id: correlationId,
         flushed: flushedManualReplies,
       }, conversation.id);
+      // Real-time operator ping (config-gated + 10-min throttled inside).
+      await maybeAlertHumanInbound(supabase, {
+        leadId: lead.id,
+        leadName: (lead.full_name as string | null) ?? normalized.senderName ?? null,
+        phone,
+        snippet: normalized.text,
+        correlationId,
+      });
     } catch (flagErr) {
       log.error('inbound_after_flush_flag_failed', {
         fn: 'whatsapp-webhook', correlationId, leadId: lead.id, err: String(flagErr),

@@ -64,6 +64,8 @@ export function InboxPage() {
     queryKey: ['attention-inbox'],
     queryFn: () => fetchAttentionInbox(),
     refetchInterval: 30_000,
+    // Coming back to the tab is exactly when stale rows mislead.
+    refetchOnWindowFocus: true,
   });
 
   const allRows = useMemo(() => sortRows(q.data ?? []), [q.data]);
