@@ -60,6 +60,15 @@ export interface LeadRow {
   tags?: string[] | null;
   consent_whatsapp?: boolean | null;
   consent_email?: boolean | null;
+  // Triage primitives (migration 115).
+  outcome?: 'program' | 'investor_mentorship' | 'consultation' | 'other' | null;
+  outcome_note?: string | null;
+  outcome_at?: string | null;
+  snoozed_until?: string | null;
+  snoozed_at?: string | null;
+  snooze_note?: string | null;
+  no_proactive_contact?: boolean | null;
+  triage_cleared_at?: string | null;
   // Flattened from the program_members join in leads-list.
   is_program_member?: boolean;
   // Computed in leads-list: the customer wrote and got no reply yet.
@@ -704,6 +713,7 @@ export type AttentionKind =
   | 'mia_reply'
   | 'awaiting_reply'
   | 'overdue_action'
+  | 'snooze_due'
   | 'deal_stalled'
   | 'meeting_outcome_pending'
   | 'phone_overdue'

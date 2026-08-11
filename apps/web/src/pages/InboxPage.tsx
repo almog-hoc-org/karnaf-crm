@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
-import { fetchAttentionInbox, postAdminAction, postQueueResolve } from '@/lib/api';
+import { fetchAttentionInbox, postAdminAction, postQueueResolve, type LeadOutcome } from '@/lib/api';
+import { SnoozePopover } from '@/components/SnoozePopover';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -32,12 +33,27 @@ const CLOSE_NOTE_TEMPLATES = [
   'לא רלוונטי / ביקש לא לפנות — לסמן כאבוד או DNC בכרטיס הליד.',
 ];
 
+// Kinds whose ref_id is a real work_queue row — closable from here.
+const QUEUE_BACKED_KINDS = new Set([
+  'queue', 'ai_stuck', 'phone_overdue', 'phone_escalation', 'deal_stalled', 'meeting_outcome_pending',
+]);
+
+const OUTCOME_OPTIONS: Array<{ value: LeadOutcome; label: string }> = [
+  { value: 'investor_mentorship', label: 'ליווי משקיעים' },
+  { value: 'program', label: 'קורס הנדל"ן המקיף' },
+  { value: 'consultation', label: 'פגישת ייעוץ' },
+  { value: 'other', label: 'אחר (תיאור חופשי)' },
+];
+
 export function InboxPage() {
   useDocumentTitle('היום שלי');
   const [searchParams, setSearchParams] = useSearchParams();
   const initialLane = parseLane(searchParams.get('lane'));
   const [lane, setLane] = useState<WorkLane>(initialLane);
   const [pendingClose, setPendingClose] = useState<AttentionRow | null>(null);
+  const [pendingOutcome, setPendingOutcome] = useState<AttentionRow | null>(null);
+  const [outcomeChoice, setOutcomeChoice] = useState<LeadOutcome>('investor_mentorship');
+  const [outcomeNote, setOutcomeNote] = useState('');
   const [pendingNoAnswer, setPendingNoAnswer] = useState<AttentionRow | null>(null);
   const [closeNote, setCloseNote] = useState('');
   const [copiedTalkTrackId, setCopiedTalkTrackId] = useState<string | null>(null);
@@ -86,6 +102,48 @@ export function InboxPage() {
       toast.success('נרשם ניסיון שיחה ללא מענה');
     },
     onError: (err) => toast.error((err as Error).message),
+  });
+
+  // Optimistic removal: acting on a card makes it vanish immediately; the
+  // refetch after the mutation settles is the safety net.
+  const removeLeadRows = (leadId: string) => {
+    qc.setQueryData<AttentionRow[]>(['attention-inbox'], (old) => (old ?? []).filter((r) => r.lead_id !== leadId));
+  };
+  const refetchInbox = () => qc.invalidateQueries({ queryKey: ['attention-inbox'] });
+
+  const markReviewed = useMutation({
+    mutationFn: (row: AttentionRow) =>
+      postAdminAction({ action: 'mark_reviewed', leadId: row.lead_id, note: 'טופל מתוך היום שלי' }),
+    onMutate: (row) => removeLeadRows(row.lead_id),
+    onSuccess: () => { void refetchInbox(); toast.success('סומן כטופל — ירד מהתור'); },
+    onError: (err) => { void refetchInbox(); toast.error((err as Error).message); },
+  });
+
+  const snoozeLead = useMutation({
+    mutationFn: (input: { row: AttentionRow; until: string; note: string | null }) =>
+      postAdminAction({ action: 'snooze_lead', leadId: input.row.lead_id, snoozeUntil: input.until, note: input.note }),
+    onMutate: (input) => removeLeadRows(input.row.lead_id),
+    onSuccess: (_res, input) => {
+      void refetchInbox();
+      toast.success(`הושהה עד ${new Date(input.until).toLocaleDateString('he-IL')} — יקפוץ חזרה בתאריך היעד`);
+    },
+    onError: (err) => { void refetchInbox(); toast.error((err as Error).message); },
+  });
+
+  const setOutcomeMut = useMutation({
+    mutationFn: (input: { row: AttentionRow; outcome: LeadOutcome; note: string | null }) =>
+      postAdminAction({ action: 'set_outcome', leadId: input.row.lead_id, outcome: input.outcome, outcomeNote: input.note }),
+    onMutate: (input) => removeLeadRows(input.row.lead_id),
+    onSuccess: () => { void refetchInbox(); toast.success('נרשמה תוצאה — הליד יצא מהתור הפעיל'); },
+    onError: (err) => { void refetchInbox(); toast.error((err as Error).message); },
+  });
+
+  const noFollowup = useMutation({
+    mutationFn: (row: AttentionRow) =>
+      postAdminAction({ action: 'set_no_followup', leadId: row.lead_id, enabled: true }),
+    onMutate: (row) => removeLeadRows(row.lead_id),
+    onSuccess: () => { void refetchInbox(); toast.success('סומן: ללא פנייה יזומה בשלב הזה'); },
+    onError: (err) => { void refetchInbox(); toast.error((err as Error).message); },
   });
 
   const urgent = allRows.filter((row) => classifyRow(row).urgency === 'critical').length;
@@ -292,7 +350,7 @@ export function InboxPage() {
                         פתיחת WhatsApp
                       </a>
                     ) : null}
-                    {row.kind === 'queue' ? (
+                    {QUEUE_BACKED_KINDS.has(row.kind) ? (
                       <button
                         type="button"
                         className="kf-btn kf-btn-ghost justify-center"
@@ -305,6 +363,38 @@ export function InboxPage() {
                         סגירת משימה
                       </button>
                     ) : null}
+                    <button
+                      type="button"
+                      className="kf-btn justify-center bg-emerald-600 text-white hover:bg-emerald-700"
+                      disabled={markReviewed.isPending}
+                      onClick={() => markReviewed.mutate(row)}
+                    >
+                      טופל ✓
+                    </button>
+                    <SnoozePopover
+                      buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
+                      busy={snoozeLead.isPending}
+                      onSnooze={(until, note) => snoozeLead.mutate({ row, until, note })}
+                    />
+                    <button
+                      type="button"
+                      className="kf-btn kf-btn-ghost justify-center"
+                      onClick={() => {
+                        setPendingOutcome(row);
+                        setOutcomeChoice('investor_mentorship');
+                        setOutcomeNote('');
+                      }}
+                    >
+                      נסגר לתהליך 🏷
+                    </button>
+                    <button
+                      type="button"
+                      className="kf-btn kf-btn-ghost justify-center text-slate-500"
+                      disabled={noFollowup.isPending}
+                      onClick={() => noFollowup.mutate(row)}
+                    >
+                      ללא פנייה יזומה
+                    </button>
                   </div>
                 </div>
               </article>
@@ -361,6 +451,47 @@ export function InboxPage() {
             value={closeNote}
             onChange={(e) => setCloseNote(e.target.value.slice(0, 500))}
             maxLength={500}
+          />
+        </label>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={!!pendingOutcome}
+        title={`נסגר לתהליך — ${pendingOutcome?.lead_name ?? ''}`}
+        description="הליד יסומן בתוצאה, יירד מהתור הפעיל ויישאר ברשימת הלידים עם תג מסונן. סגירה לקורס/ליווי משקיעים גם מריצה את שרשרת הזכייה (עסקה, מסע, עמלות)."
+        confirmLabel="שמירת תוצאה"
+        busy={setOutcomeMut.isPending}
+        onCancel={() => setPendingOutcome(null)}
+        onConfirm={() => {
+          if (!pendingOutcome) return;
+          const note = outcomeNote.trim();
+          if (outcomeChoice === 'other' && !note) return;
+          setOutcomeMut.mutate({ row: pendingOutcome, outcome: outcomeChoice, note: note || null });
+          setPendingOutcome(null);
+        }}
+      >
+        <label className="block text-sm">
+          <span className="text-slate-600">לאיזה תהליך נסגר?</span>
+          <select
+            className="kf-input mt-1 w-full"
+            value={outcomeChoice}
+            onChange={(e) => setOutcomeChoice(e.target.value as LeadOutcome)}
+          >
+            {OUTCOME_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="mt-3 block text-sm">
+          <span className="text-slate-600">
+            {outcomeChoice === 'other' ? 'תיאור (חובה)' : 'הערה (אופציונלי)'}
+          </span>
+          <textarea
+            className="kf-input mt-1 min-h-[64px] w-full"
+            maxLength={600}
+            value={outcomeNote}
+            onChange={(e) => setOutcomeNote(e.target.value)}
+            placeholder={outcomeChoice === 'other' ? 'למשל: הופנה לשותף חיצוני' : ''}
           />
         </label>
       </ConfirmDialog>
@@ -631,6 +762,12 @@ function classifyRow(row: AttentionRow): {
 
   // Tier 0.C kinds — explicit dispatch BEFORE keyword fallbacks so the
   // sla-worker watchers route to the right lane regardless of free-text.
+  if (row.kind === 'snooze_due') {
+    return {
+      lane: 'risk', actionLabel: 'חזר מהשהיה', urgency: 'normal',
+      pillClass: 'bg-brand-100 text-brand-800', borderClass: 'border-s-brand-500',
+    };
+  }
   if (row.kind === 'phone_overdue' || row.kind === 'phone_escalation') {
     return {
       lane: 'call', actionLabel: 'להתקשר עכשיו', urgency: 'critical',
@@ -695,6 +832,7 @@ function humanReason(row: AttentionRow): string {
   if (row.kind === 'mia_reply') return 'הלקוח השיב ומחכה למענה אנושי';
   if (row.kind === 'awaiting_reply') return 'הלקוח כתב וטרם קיבל תשובה';
   if (row.kind === 'overdue_action') return 'הפעולה הבאה באיחור';
+  if (row.kind === 'snooze_due') return 'חזר מהשהיה — הגיע מועד הבדיקה החוזרת';
   if (row.kind === 'deal_stalled') return 'עסקה פתוחה ללא פעילות זמן רב';
   if (row.kind === 'meeting_outcome_pending') return 'פגישה עברה ללא תיעוד תוצאה';
   if (row.kind === 'phone_overdue') return 'שיחת טלפון באיחור — עברו 24 שעות';

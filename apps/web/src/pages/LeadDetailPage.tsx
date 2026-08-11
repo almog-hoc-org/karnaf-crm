@@ -339,6 +339,8 @@ export function LeadDetailPage() {
           ) : null}
         </div>
 
+        <TriageStateBanner lead={lead} />
+
         {/* Long-tail metadata collapses behind a disclosure. AI playbook
             stage is mostly debug info; created / last-in / last-out are
             interesting once a week, not every conversation. */}
@@ -1643,6 +1645,81 @@ function ActionGroup({ label, children }: { label: string; children: React.React
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/50 p-1.5">
       <span className="w-full px-2 text-xs text-slate-500 sm:w-auto">{label}</span>
       {children}
+    </div>
+  );
+}
+
+// Phase B — triage state surfaced on the card: snooze / outcome /
+// no-proactive-contact, with inline undo. Full card redesign lands in
+// phase C; this keeps the state visible (and reversible) from day one.
+function TriageStateBanner({ lead }: { lead: LeadDetailType }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const auth = useAuth();
+  const act = useMutation({
+    mutationFn: (payload: Parameters<typeof postAdminAction>[0]) => postAdminAction(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lead-detail', lead.id] });
+      toast.success('עודכן');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
+  const snoozeActive = lead.snoozed_until && Date.parse(lead.snoozed_until) > Date.now();
+  const outcomeLabels: Record<string, string> = {
+    program: 'קורס הנדל"ן המקיף',
+    investor_mentorship: 'ליווי משקיעים',
+    consultation: 'פגישת ייעוץ',
+    other: lead.outcome_note ? `אחר — ${lead.outcome_note}` : 'אחר',
+  };
+  const isManager = auth.role === 'owner' || auth.role === 'admin';
+
+  if (!snoozeActive && !lead.outcome && !lead.no_proactive_contact) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-2.5 text-sm ring-1 ring-slate-200">
+      {lead.outcome ? (
+        <span className="inline-flex items-center gap-2 rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
+          🏷 נסגר ל: {outcomeLabels[lead.outcome] ?? lead.outcome}
+          {isManager ? (
+            <button
+              type="button"
+              className="text-violet-600 underline hover:text-violet-900"
+              disabled={act.isPending}
+              onClick={() => act.mutate({ action: 'set_outcome', leadId: lead.id, outcome: null })}
+            >
+              ביטול
+            </button>
+          ) : null}
+        </span>
+      ) : null}
+      {snoozeActive ? (
+        <span className="inline-flex items-center gap-2 rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
+          ⏰ בהשהיה עד {new Date(lead.snoozed_until as string).toLocaleDateString('he-IL')}
+          {lead.snooze_note ? ` · ${lead.snooze_note}` : ''}
+          <button
+            type="button"
+            className="text-slate-500 underline hover:text-slate-900"
+            disabled={act.isPending}
+            onClick={() => act.mutate({ action: 'unsnooze_lead', leadId: lead.id })}
+          >
+            ביטול
+          </button>
+        </span>
+      ) : null}
+      {lead.no_proactive_contact ? (
+        <span className="inline-flex items-center gap-2 rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700 ring-1 ring-orange-200">
+          ללא פנייה יזומה בשלב הזה
+          <button
+            type="button"
+            className="text-orange-500 underline hover:text-orange-800"
+            disabled={act.isPending}
+            onClick={() => act.mutate({ action: 'set_no_followup', leadId: lead.id, enabled: false })}
+          >
+            ביטול
+          </button>
+        </span>
+      ) : null}
     </div>
   );
 }

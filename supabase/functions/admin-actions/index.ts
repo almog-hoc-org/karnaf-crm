@@ -24,7 +24,12 @@ type ActionName =
   | 'advance_deal_stage'
   | 'update_lead_meta'
   | 'merge_lead_duplicate'
-  | 'mark_program_member';
+  | 'mark_program_member'
+  | 'mark_reviewed'
+  | 'snooze_lead'
+  | 'unsnooze_lead'
+  | 'set_outcome'
+  | 'set_no_followup';
 
 const REOPEN_TARGETS = new Set(['responded', 'qualified', 'nurture', 'human_handoff']);
 
@@ -52,6 +57,13 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   // role gate lets the request through to that check.
   merge_lead_duplicate: ['owner', 'admin'],
   mark_program_member: ['owner', 'admin', 'mia'],
+  // Triage actions (phase B): "טופל" is open to every handling role;
+  // snooze/outcome/no-followup shape the pipeline → manager tier.
+  mark_reviewed: ['owner', 'admin', 'mia', 'sales_rep'],
+  snooze_lead: ['owner', 'admin', 'mia'],
+  unsnooze_lead: ['owner', 'admin', 'mia'],
+  set_outcome: ['owner', 'admin', 'mia'],
+  set_no_followup: ['owner', 'admin', 'mia'],
 };
 
 interface ActionPayload {
@@ -73,6 +85,10 @@ interface ActionPayload {
   meetingId?: string;
   meetingStatus?: 'scheduled' | 'held' | 'cancelled' | 'no_show';
   duplicateLeadId?: string;
+  snoozeUntil?: string;
+  outcome?: 'program' | 'investor_mentorship' | 'consultation' | 'other' | null;
+  outcomeNote?: string | null;
+  enabled?: boolean;
   metaUpdates?: {
     goal_summary?: string | null;
     pain_point_summary?: string | null;
@@ -199,6 +215,10 @@ Deno.serve(async (req) => {
     targetStatus,
     callOutcome,
     callDurationMinutes,
+    snoozeUntil,
+    outcome,
+    outcomeNote,
+    enabled,
   } = body;
 
   if (!action) return jsonResponse(req, { error: 'Missing action' }, 400);
@@ -434,63 +454,18 @@ Deno.serve(async (req) => {
           code: 'no_open_deal',
         }, 400);
       }
-      // The deal needs to be marked won *first* so the downstream
-      // engine context picks it up via the .eq('status','won') filter.
-      await supabase.from('deals').update({
-        status: 'won',
-        won_at: ts,
-      }).eq('id', openDeal.id);
-      await updateLeadFields(supabase, leadId, { won_at: ts });
-      await transitionLeadStatus(supabase, leadId, 'won', staff.role, 'manual_mark_won');
-      await logLeadEvent(
-        supabase,
+      await completeWonFlow(supabase, {
+        dealId: openDeal.id,
         leadId,
-        'manual_mark_won',
-        staff.role,
+        staffRole: staff.role,
+        staffUserId: staff.userId,
+        eventType: 'manual_mark_won',
+        transitionReason: 'manual_mark_won',
         meta,
-        conversationId ?? undefined,
-        staff.userId,
-      );
-      // Tier 4.C — emit deal.won so engine rules + journey starters
-      // listening on that trigger can act (e.g. start program_14d for
-      // a won program deal). Pull the deal so the rule's condition
-      // can gate on track/value. Errors here don't block the won
-      // marking — automations are best-effort.
-      const { data: wonDeal } = await supabase
-        .from('deals')
-        .select('id, track, value, currency, partner_id, project_id')
-        .eq('lead_id', leadId)
-        .eq('status', 'won')
-        .order('won_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      // Tier 7.B.1 — canonical context shape via builder; same shape
-      // as deal.lost and lead.created. Tier 7.A.1 depends on this: the
-      // investor_mentorship journey's new step-0 (assign_partner) needs
-      // primary_track in the lead context to gate correctly.
-      const leadCtxWon = await buildLeadContext(supabase, leadId);
-      if (leadCtxWon) {
-        await runMatchingRules(supabase, {
-          triggerEvent: 'deal.won',
-          context: {
-            lead: leadCtxWon,
-            deal: wonDeal ?? null,
-          },
-          contactId: leadId,
-          correlationId,
-        });
-      }
-      // A won program deal makes the lead a member — same record the
-      // payment webhook creates, so both paths land in one place.
-      if (wonDeal?.track === 'program') {
-        await ensureProgramMember(supabase, {
-          leadId,
-          joinedVia: 'won',
-          actorType: staff.role,
-          actorId: staff.userId,
-          correlationId,
-        });
-      }
+        conversationId: conversationId ?? undefined,
+        correlationId,
+        ts,
+      });
       break;
     }
     case 'mark_program_member': {
@@ -783,6 +758,136 @@ Deno.serve(async (req) => {
       );
       break;
     }
+    case 'mark_reviewed': {
+      // "טופל" — clears the lead from the attention inbox until the next
+      // fresh signal (a new customer message un-clears via the 115
+      // trigger). Also drops an expired snooze so the snooze_due row
+      // doesn't linger.
+      await updateLeadFields(supabase, leadId, { triage_cleared_at: ts });
+      await supabase
+        .from('leads')
+        .update({ snoozed_until: null, snoozed_at: null, snooze_note: null })
+        .eq('id', leadId)
+        .lte('snoozed_until', ts);
+      await resolveLeadQueueRows(supabase, leadId, note ? `טופל: ${note}` : 'טופל מהתיבה');
+      await logLeadEvent(supabase, leadId, 'lead_marked_reviewed', staff.role, meta, conversationId ?? undefined, staff.userId);
+      break;
+    }
+    case 'snooze_lead': {
+      const untilMs = Date.parse(snoozeUntil ?? '');
+      if (!Number.isFinite(untilMs) || untilMs <= Date.now()) {
+        return jsonResponse(req, { error: 'snoozeUntil חייב להיות תאריך עתידי' }, 400);
+      }
+      if (untilMs > Date.now() + 180 * 24 * 3600 * 1000) {
+        return jsonResponse(req, { error: 'השהיה מוגבלת ל-180 יום' }, 400);
+      }
+      await updateLeadFields(supabase, leadId, {
+        snoozed_until: new Date(untilMs).toISOString(),
+        snoozed_at: ts,
+        snooze_note: note ? String(note).trim().slice(0, 280) || null : null,
+        triage_cleared_at: ts,
+      });
+      await resolveLeadQueueRows(supabase, leadId, 'הושהה לבדיקה חוזרת');
+      await logLeadEvent(supabase, leadId, 'lead_snoozed', staff.role, {
+        ...meta,
+        snoozed_until: new Date(untilMs).toISOString(),
+      }, conversationId ?? undefined, staff.userId);
+      break;
+    }
+    case 'unsnooze_lead': {
+      await updateLeadFields(supabase, leadId, {
+        snoozed_until: null,
+        snoozed_at: null,
+        snooze_note: null,
+      });
+      await logLeadEvent(supabase, leadId, 'lead_unsnoozed', staff.role, meta, conversationId ?? undefined, staff.userId);
+      break;
+    }
+    case 'set_outcome': {
+      if (outcome === null) {
+        // Clearing a recorded outcome is an audited override.
+        if (staff.role !== 'owner' && staff.role !== 'admin') {
+          return jsonResponse(req, { error: 'ביטול תוצאה מותר למנהל בלבד' }, 403);
+        }
+        await updateLeadFields(supabase, leadId, { outcome: null, outcome_note: null, outcome_at: null });
+        await logLeadEvent(supabase, leadId, 'lead_outcome_cleared', staff.role, meta, conversationId ?? undefined, staff.userId);
+        break;
+      }
+      const OUTCOMES = new Set(['program', 'investor_mentorship', 'consultation', 'other']);
+      if (!outcome || !OUTCOMES.has(outcome)) {
+        return jsonResponse(req, { error: 'outcome לא חוקי' }, 400);
+      }
+      const cleanOutcomeNote = outcomeNote ? String(outcomeNote).trim().slice(0, 600) || null : null;
+      if (outcome === 'other' && !cleanOutcomeNote) {
+        return jsonResponse(req, { error: 'תוצאה "אחר" דורשת תיאור' }, 400);
+      }
+      await updateLeadFields(supabase, leadId, {
+        outcome,
+        outcome_note: cleanOutcomeNote,
+        outcome_at: ts,
+        triage_cleared_at: ts,
+      });
+      await resolveLeadQueueRows(supabase, leadId, `נסגר לתהליך: ${outcome}`);
+      await logLeadEvent(supabase, leadId, 'lead_outcome_set', staff.role, {
+        ...meta,
+        outcome,
+        outcome_note: cleanOutcomeNote,
+      }, conversationId ?? undefined, staff.userId);
+      // program / investor closes are real sales — run the full won
+      // chain (deal, status, journeys, commissions, membership). A deal
+      // is auto-created when none is open, so the operator isn't blocked
+      // on plumbing.
+      if (outcome === 'program' || outcome === 'investor_mentorship') {
+        const { data: openDeal } = await supabase
+          .from('deals')
+          .select('id')
+          .eq('lead_id', leadId)
+          .eq('track', outcome)
+          .eq('status', 'open')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        let dealId = openDeal?.id as string | undefined;
+        if (!dealId) {
+          const { data: createdDeal } = await supabase
+            .from('deals')
+            .insert({
+              lead_id: leadId,
+              track: outcome,
+              status: 'open',
+              stage: 'new',
+              source: 'manual_outcome',
+              metadata: { correlationId, outcome_note: cleanOutcomeNote },
+            })
+            .select('id')
+            .maybeSingle();
+          dealId = createdDeal?.id as string | undefined;
+        }
+        if (dealId) {
+          await completeWonFlow(supabase, {
+            dealId,
+            leadId,
+            staffRole: staff.role,
+            staffUserId: staff.userId,
+            eventType: 'manual_mark_won',
+            transitionReason: 'outcome_set',
+            meta: { ...meta, outcome },
+            conversationId: conversationId ?? undefined,
+            correlationId,
+            ts,
+          });
+        }
+      }
+      break;
+    }
+    case 'set_no_followup': {
+      await updateLeadFields(supabase, leadId, { no_proactive_contact: enabled === true });
+      await logLeadEvent(supabase, leadId, 'lead_no_followup_set', staff.role, {
+        ...meta,
+        enabled: enabled === true,
+      }, conversationId ?? undefined, staff.userId);
+      break;
+    }
     default:
       return jsonResponse(req, { error: 'Unsupported action' }, 400);
   }
@@ -790,3 +895,76 @@ Deno.serve(async (req) => {
   log.info('admin_action', { fn: 'admin-actions', correlationId, userId: staff.userId, action, leadId });
   return jsonResponse(req, { ok: true, action });
 });
+
+// Shared "the deal is won" sequence — used by mark_won and by
+// set_outcome (program / investor_mentorship), so both paths fire the
+// same journeys/commissions/membership side effects.
+async function completeWonFlow(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  input: {
+    dealId: string;
+    leadId: string;
+    staffRole: StaffRole;
+    staffUserId: string;
+    eventType: string;
+    transitionReason: string;
+    meta: Record<string, unknown>;
+    conversationId?: string;
+    correlationId: string;
+    ts: string;
+  },
+) {
+  const { dealId, leadId, staffRole, staffUserId, eventType, transitionReason, meta, conversationId, correlationId, ts } = input;
+  // The deal needs to be marked won *first* so the downstream
+  // engine context picks it up via the .eq('status','won') filter.
+  await supabase.from('deals').update({ status: 'won', won_at: ts }).eq('id', dealId);
+  await updateLeadFields(supabase, leadId, { won_at: ts });
+  await transitionLeadStatus(supabase, leadId, 'won', staffRole, transitionReason);
+  await logLeadEvent(supabase, leadId, eventType, staffRole, meta, conversationId, staffUserId);
+  // Emit deal.won so engine rules + journey starters listening on that
+  // trigger can act. Errors here don't block the won marking.
+  const { data: wonDeal } = await supabase
+    .from('deals')
+    .select('id, track, value, currency, partner_id, project_id')
+    .eq('lead_id', leadId)
+    .eq('status', 'won')
+    .order('won_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const leadCtxWon = await buildLeadContext(supabase, leadId);
+  if (leadCtxWon) {
+    await runMatchingRules(supabase, {
+      triggerEvent: 'deal.won',
+      context: { lead: leadCtxWon, deal: wonDeal ?? null },
+      contactId: leadId,
+      correlationId,
+    });
+  }
+  // A won program deal makes the lead a member — same record the
+  // payment webhook creates, so both paths land in one place.
+  if (wonDeal?.track === 'program') {
+    await ensureProgramMember(supabase, {
+      leadId,
+      joinedVia: 'won',
+      actorType: staffRole,
+      actorId: staffUserId,
+      correlationId,
+    });
+  }
+}
+
+// "טופל" semantics: resolve every actionable queue row for the lead —
+// except payment_pending, which represents money in flight and must be
+// closed by the payment webhook or an explicit decision.
+async function resolveLeadQueueRows(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  leadId: string,
+  resolutionNote: string,
+) {
+  await supabase
+    .from('work_queue')
+    .update({ status: 'resolved', resolved_at: new Date().toISOString(), resolution_note: resolutionNote })
+    .eq('lead_id', leadId)
+    .in('status', ['pending', 'claimed'])
+    .neq('queue_type', 'payment_pending');
+}

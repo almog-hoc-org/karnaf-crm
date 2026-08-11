@@ -20,6 +20,14 @@ describe('canTransition', () => {
     expect(canTransition('human_handoff', 'won')).toBe(true);
   });
 
+  it('allows parking mid-funnel leads in nurture (migration 115)', () => {
+    expect(canTransition('qualified', 'nurture')).toBe(true);
+    expect(canTransition('human_handoff', 'nurture')).toBe(true);
+    // Still not reachable from terminal or pre-contact states.
+    expect(canTransition('new', 'nurture')).toBe(false);
+    expect(canTransition('won', 'nurture')).toBe(false);
+  });
+
   it('terminal states reject further transitions', () => {
     expect(canTransition('do_not_contact', 'responded')).toBe(false);
     expect(canTransition('removed_by_request', 'responded')).toBe(false);

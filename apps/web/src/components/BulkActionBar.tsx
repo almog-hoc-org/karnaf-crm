@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import type { LeadHeat } from '@/lib/types';
 import { HEAT_LABELS } from '@/lib/format';
 import type { ProfileRow } from '@/lib/api';
+import { SnoozePopover } from '@/components/SnoozePopover';
 
 export interface BulkActionBarProps {
   selectedCount: number;
@@ -12,13 +13,14 @@ export interface BulkActionBarProps {
   onClear: () => void;
   onAssignOwner: (userId: string) => void;
   onChangeHeat: (heat: LeadHeat) => void;
+  onSnooze?: (snoozeUntilIso: string, note: string | null) => void;
 }
 
 const HEATS: LeadHeat[] = ['hot', 'warm', 'cool', 'cold'];
 
 export function BulkActionBar({
   selectedCount, totalCount, assignableUsers, busy,
-  onClear, onAssignOwner, onChangeHeat,
+  onClear, onAssignOwner, onChangeHeat, onSnooze,
 }: BulkActionBarProps) {
   const [mode, setMode] = useState<'idle' | 'assign' | 'heat'>('idle');
   const [assignee, setAssignee] = useState<string>('');
@@ -57,6 +59,13 @@ export function BulkActionBar({
           >
             שינוי דרגת חום
           </button>
+          {onSnooze ? (
+            <SnoozePopover
+              buttonClassName="rounded-md bg-white/10 px-3 py-1.5 hover:bg-white/20 text-white"
+              busy={busy}
+              onSnooze={onSnooze}
+            />
+          ) : null}
         </>
       ) : null}
 
