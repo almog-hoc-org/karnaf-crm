@@ -93,7 +93,7 @@ function WelcomeStep({ to, title, description }: { to: string; title: string; de
   return (
     <Link
       to={to}
-      className="block rounded-lg border border-slate-200 bg-white p-3 transition hover:border-brand-300 hover:shadow-sm"
+      className="kf-pressable kf-pressable-subtle block rounded-lg border border-slate-200 bg-white p-3 transition hover:border-brand-300 hover:shadow-sm"
     >
       <div className="font-medium text-slate-800">{title}</div>
       <div className="mt-1 text-xs text-slate-500">{description}</div>

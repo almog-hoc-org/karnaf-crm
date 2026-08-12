@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { usePresence } from '@/lib/usePresence';
 
 // Hand-rolled emoji grid (house style: zero UI dependencies). Popover
 // shell mirrors RoleHelp/SnoozePopover: outside-click + Escape close.
@@ -13,6 +14,7 @@ const EMOJI_GROUPS: Array<{ label: string; emojis: string[] }> = [
 export function EmojiPicker({ onPick, disabled }: { onPick: (emoji: string) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const { mounted, state } = usePresence(open);
 
   useEffect(() => {
     if (!open) return;
@@ -42,11 +44,14 @@ export function EmojiPicker({ onPick, disabled }: { onPick: (emoji: string) => v
       >
         😀
       </button>
-      {open ? (
+      {mounted ? (
         <div
           role="dialog"
           aria-label="בחירת אימוג'י"
-          className="absolute bottom-10 end-0 z-40 w-64 rounded-lg border border-slate-200 bg-white p-2.5 shadow-xl"
+          data-state={state}
+          // Panel sits above the button, so it grows from its bottom edge.
+          style={{ transformOrigin: 'bottom left' }}
+          className="kf-layer kf-layer-popover absolute bottom-10 end-0 z-40 w-64 rounded-lg border border-slate-200 bg-white p-2.5 shadow-xl"
         >
           {EMOJI_GROUPS.map((group) => (
             <div key={group.label} className="mb-1.5 last:mb-0">
@@ -56,7 +61,7 @@ export function EmojiPicker({ onPick, disabled }: { onPick: (emoji: string) => v
                   <button
                     key={emoji}
                     type="button"
-                    className="grid h-7 w-7 place-items-center rounded text-base transition hover:bg-brand-50"
+                    className="kf-pressable grid h-7 w-7 place-items-center rounded text-base transition hover:bg-brand-50"
                     onClick={() => onPick(emoji)}
                   >
                     {emoji}

@@ -8,6 +8,7 @@ import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { PageIntro } from '@/components/PageIntro';
 import { JOURNEY_RUN_STATUS_LABELS, formatRelative } from '@/lib/format';
 import { t } from '@/lib/i18n';
+import { Modal } from '@/components/Modal';
 
 // Tier 7.C.1 — central labels.
 const STATUS_LABELS = JOURNEY_RUN_STATUS_LABELS as Record<JourneyRunStatus, string>;
@@ -247,8 +248,9 @@ function EditJourneyDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <form className="kf-card max-h-[92vh] w-full max-w-3xl space-y-3 overflow-auto p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onCancel}>
+      {(state) => (
+      <form data-state={state} className="kf-layer kf-layer-dialog kf-card max-h-[92vh] w-full max-w-3xl space-y-3 overflow-auto p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
         <header>
           <h2 className="text-lg font-semibold">עריכת מסע — {def.name_he}</h2>
           <code className="text-xs text-slate-500">{def.code} · {def.trigger_event}</code>
@@ -293,6 +295,7 @@ function EditJourneyDialog({
           <button type="submit" className="kf-btn kf-btn-primary" disabled={busy}>{busy ? 'שומר...' : 'שמירה'}</button>
         </div>
       </form>
-    </div>
+      )}
+    </Modal>
   );
 }

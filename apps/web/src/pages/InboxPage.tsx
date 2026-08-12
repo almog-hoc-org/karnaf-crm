@@ -48,6 +48,14 @@ function isImmediateRow(row: AttentionRow): boolean {
   return IMMEDIATE_KINDS.has(row.kind);
 }
 
+// Matches the exit half of --duration-exit on .kf-collapse / .kf-layer.
+const CARD_EXIT_MS = 180;
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true;
+  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return true; }
+}
+
 const OUTCOME_OPTIONS: Array<{ value: LeadOutcome; label: string }> = [
   { value: 'investor_mentorship', label: 'ליווי משקיעים' },
   { value: 'program', label: 'קורס הנדל"ן המקיף' },
@@ -67,6 +75,7 @@ export function InboxPage() {
   const [pendingNoAnswer, setPendingNoAnswer] = useState<AttentionRow | null>(null);
   const [closeNote, setCloseNote] = useState('');
   const [copiedTalkTrackId, setCopiedTalkTrackId] = useState<string | null>(null);
+  const [leavingLeadIds, setLeavingLeadIds] = useState<string[]>([]);
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -126,10 +135,22 @@ export function InboxPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
-  // Optimistic removal: acting on a card makes it vanish immediately; the
-  // refetch after the mutation settles is the safety net.
+  // Optimistic removal: acting on a card takes it off the list right
+  // away; the refetch after the mutation settles is the safety net.
+  // Clearing a lead is the action this screen exists for, so the card
+  // fades and collapses on its way out and the ones below flow up —
+  // without it the list snaps and you lose track of where you were.
   const removeLeadRows = (leadId: string) => {
-    qc.setQueryData<AttentionRow[]>(['attention-inbox'], (old) => (old ?? []).filter((r) => r.lead_id !== leadId));
+    const drop = () => qc.setQueryData<AttentionRow[]>(
+      ['attention-inbox'],
+      (old) => (old ?? []).filter((r) => r.lead_id !== leadId),
+    );
+    if (prefersReducedMotion()) { drop(); return; }
+    setLeavingLeadIds((prev) => (prev.includes(leadId) ? prev : [...prev, leadId]));
+    window.setTimeout(() => {
+      drop();
+      setLeavingLeadIds((prev) => prev.filter((id) => id !== leadId));
+    }, CARD_EXIT_MS);
   };
   const refetchInbox = () => qc.invalidateQueries({ queryKey: ['attention-inbox'] });
 
@@ -228,7 +249,7 @@ export function InboxPage() {
               }}
               aria-pressed={active}
               className={clsx(
-                'rounded-2xl border p-4 text-start shadow-sm transition',
+                'kf-pressable kf-pressable-subtle rounded-2xl border p-4 text-start shadow-sm transition',
                 active
                   ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-100'
                   : 'border-slate-200 bg-white hover:border-brand-200 hover:bg-slate-50',
@@ -302,11 +323,14 @@ export function InboxPage() {
             const whatsappWindow = whatsappWindowStatus(row);
             const whatsappUrl = whatsappConversationUrl(row);
             const origin = describeLeadOrigin(row);
+            const leaving = leavingLeadIds.includes(row.lead_id);
             return (
+              <div key={`${row.kind}:${row.ref_id}`} className="kf-collapse" data-state={leaving ? 'closed' : 'open'}>
+              <div>
               <article
-                key={`${row.kind}:${row.ref_id}`}
+                data-state={leaving ? 'closed' : 'open'}
                 className={clsx(
-                  'kf-card overflow-hidden border-s-4 p-4 transition hover:shadow-md sm:p-5',
+                  'kf-layer kf-layer-fade kf-card overflow-hidden border-s-4 p-4 transition hover:shadow-md sm:p-5',
                   meta.borderClass,
                 )}
               >
@@ -388,7 +412,7 @@ export function InboxPage() {
                         <div className="text-xs font-semibold text-brand-700">מה להגיד עכשיו</div>
                         <button
                           type="button"
-                          className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-100 transition hover:bg-brand-50"
+                          className="kf-pressable rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-100 transition hover:bg-brand-50"
                           onClick={() => {
                             void copyTalkTrack(talkTrack).then(() => {
                               setCopiedTalkTrackId(row.ref_id);
@@ -493,6 +517,8 @@ export function InboxPage() {
                   </div>
                 </div>
               </article>
+              </div>
+              </div>
             );
           })}
             </div>
@@ -533,7 +559,7 @@ export function InboxPage() {
             <button
               key={template}
               type="button"
-              className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 transition hover:bg-brand-50 hover:text-brand-700"
+              className="kf-pressable rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 transition hover:bg-brand-50 hover:text-brand-700"
               onClick={() => setCloseNote(template)}
             >
               {template}

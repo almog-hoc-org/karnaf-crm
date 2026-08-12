@@ -575,7 +575,7 @@ export function LeadDetailPage() {
               aria-selected={conversationTab === 'chat'}
               onClick={() => setConversationTab('chat')}
               className={clsx(
-                'rounded-t-lg px-4 py-1.5 text-sm',
+                'kf-pressable rounded-t-lg px-4 py-1.5 text-sm transition',
                 conversationTab === 'chat'
                   ? 'border border-b-0 border-slate-200 bg-white font-semibold text-slate-900'
                   : 'text-slate-500 hover:text-slate-700',
@@ -589,7 +589,7 @@ export function LeadDetailPage() {
               aria-selected={conversationTab === 'activity'}
               onClick={() => setConversationTab('activity')}
               className={clsx(
-                'inline-flex items-center gap-1.5 rounded-t-lg px-4 py-1.5 text-sm',
+                'kf-pressable inline-flex items-center gap-1.5 rounded-t-lg px-4 py-1.5 text-sm transition',
                 conversationTab === 'activity'
                   ? 'border border-b-0 border-slate-200 bg-white font-semibold text-slate-900'
                   : 'text-slate-500 hover:text-slate-700',

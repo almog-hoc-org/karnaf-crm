@@ -5,6 +5,7 @@ import type { LandingPageRow } from '@/lib/types';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { PageIntro } from '@/components/PageIntro';
+import { Modal } from '@/components/Modal';
 
 // דפי נחיתה פנימיים: כל שורה כאן היא דף ציבורי חי ב-/api/lp/{slug}.
 // הרשמות מהדף נכנסות ישר ללידים עם source_campaign = הקמפיין של הדף,
@@ -131,9 +132,11 @@ function LandingPageDialog({
   const canSave = slugValid && title.trim() && headline.trim() && campaign.trim();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
+    <Modal onClose={onCancel}>
+      {(state) => (
       <div
-        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+        data-state={state}
+        className="kf-layer kf-layer-dialog max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="text-lg font-semibold">{page ? 'עריכת דף נחיתה' : 'דף נחיתה חדש'}</h2>
@@ -194,6 +197,7 @@ function LandingPageDialog({
           </button>
         </div>
       </div>
-    </div>
+      )}
+    </Modal>
   );
 }

@@ -53,7 +53,7 @@ export function ReportsPage() {
             aria-selected={tab === id}
             onClick={() => selectTab(id)}
             className={clsx(
-              'border-b-2 px-4 py-2 text-sm font-medium transition',
+              'kf-pressable border-b-2 px-4 py-2 text-sm font-medium transition',
               tab === id ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800',
             )}
           >

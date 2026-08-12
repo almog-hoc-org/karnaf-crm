@@ -73,7 +73,7 @@ export function RoleHelp({ role }: { role: Role }) {
     <div className="relative" ref={containerRef}>
       <button
         type="button"
-        className="grid h-5 w-5 place-items-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-600 hover:bg-slate-300"
+        className="kf-pressable grid h-5 w-5 place-items-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-600 transition hover:bg-slate-300"
         aria-label="הצגת הרשאות התפקיד"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}

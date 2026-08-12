@@ -23,6 +23,7 @@ import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { PageIntro } from '@/components/PageIntro';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { SOURCE_LABELS, formatRelative } from '@/lib/format';
+import { Modal } from '@/components/Modal';
 
 const STATUS_LABELS: Record<BroadcastStatus, string> = {
   draft: 'טיוטה',
@@ -306,7 +307,7 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
       : !!subject.trim() && !!(bodyHtml.trim() || selectedTemplateHtml || selectedTemplate?.body));
 
   return (
-    <Modal title="תפוצה חדשה" onClose={onClose}>
+    <Modal title="תפוצה חדשה" onClose={onClose} scrollPage>
       <div className="space-y-3">
         <Field label="שם התפוצה (פנימי)">
           <input className="kf-input w-full" value={name} onChange={(e) => setName(e.target.value)} placeholder="למשל: תזכורת וובינר השקה" />
@@ -528,7 +529,7 @@ function DetailDialog({ id, onClose }: { id: string; onClose: () => void }) {
   }
 
   return (
-    <Modal title={b?.name ?? 'תפוצה'} onClose={onClose}>
+    <Modal title={b?.name ?? 'תפוצה'} onClose={onClose} scrollPage>
       {q.isLoading || !b || !s ? (
         <p className="text-slate-500">טוען…</p>
       ) : (
@@ -610,16 +611,3 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4" onClick={onClose}>
-      <div className="my-8 w-full max-w-2xl rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-4 flex items-baseline justify-between">
-          <h2 className="text-xl font-semibold">{title}</h2>
-          <button className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}

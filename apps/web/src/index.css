@@ -27,6 +27,16 @@
      heading at once. */
   --tracking-tight: -0.01em;
   --tracking-wide: 0.02em;
+
+  /* Motion. Layers animate with transitions rather than keyframes so a
+     half-open panel that gets closed again retargets from where it
+     actually is on screen instead of restarting. Exits are shorter than
+     entries and use the mirrored curve, so a surface leaves along the
+     path it arrived on. */
+  --ease-out-soft: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-soft: cubic-bezier(0.5, 0, 0.75, 0);
+  --duration-enter: 200ms;
+  --duration-exit: 150ms;
 }
 
 html { direction: rtl; font-family: var(--font-sans); }
@@ -38,10 +48,68 @@ body {
   background-attachment: fixed;
 }
 :focus-visible { @apply outline-2 outline-offset-2 outline-brand-500; }
+/* The bulk-select checkboxes are native and unstyled; at minimum they
+   should be the product's colour rather than the browser's blue. */
+input[type='checkbox'], input[type='radio'] { accent-color: var(--color-brand-600); }
+
+/* Motion primitives
+   ------------------
+   .kf-layer drives every overlay (modal panel, scrim, popover, drawer,
+   action dock). The markup sets data-state via usePresence; the closed
+   state per surface is declared alongside it with kf-layer-*, so enter
+   and exit share one path in both directions. */
+.kf-layer {
+  transition-property: opacity, transform;
+  transition-duration: var(--duration-enter);
+  transition-timing-function: var(--ease-out-soft);
+}
+.kf-layer[data-state='closed'] {
+  transition-duration: var(--duration-exit);
+  transition-timing-function: var(--ease-in-soft);
+}
+.kf-layer-fade[data-state='closed'] { opacity: 0; }
+/* A dialog settles in place rather than flying in — it is a new context,
+   not an object arriving from somewhere. */
+.kf-layer-dialog[data-state='closed'] { opacity: 0; transform: scale(0.96); }
+/* Popovers grow from the control that opened them; the caller sets
+   transform-origin to the trigger's corner. */
+.kf-layer-popover[data-state='closed'] { opacity: 0; transform: scale(0.95); }
+.kf-layer-drawer[data-state='closed'] { opacity: 0; transform: translateY(-0.5rem); }
+.kf-layer-dock[data-state='closed'] { opacity: 0; transform: translateY(0.75rem); }
+
+/* Press feedback. The dip is instant on pointer-down — waiting even
+   150ms to acknowledge a press is what makes a control feel dead — and
+   only the release is eased. */
+.kf-pressable {
+  transition: transform 150ms var(--ease-out-soft);
+  touch-action: manipulation;
+}
+.kf-pressable:active { transform: scale(0.98); transition-duration: 0ms; }
+.kf-pressable-subtle:active { transform: scale(0.995); }
+
+/* Count badges pop when the number changes (keyed remount) — a change
+   that arrived on its own deserves the eye, so this one may overshoot. */
+@keyframes kf-badge-pop {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+.kf-badge-pop { animation: kf-badge-pop 250ms var(--ease-out-soft); }
+
+/* Height collapse for list items leaving (toasts, resolved inbox
+   cards): the row shrinks so its neighbours flow up instead of jumping. */
+.kf-collapse { display: grid; grid-template-rows: 1fr; transition: grid-template-rows var(--duration-exit) var(--ease-in-soft); }
+.kf-collapse[data-state='closed'] { grid-template-rows: 0fr; }
+.kf-collapse > * { overflow: hidden; }
 
 /* Component primitives */
 .kf-card { @apply rounded-xl border border-slate-200 bg-white shadow-sm; }
 .kf-btn { @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-5 font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100; }
+/* Same instant-dip / eased-release asymmetry as .kf-pressable: the
+   inherited `transition` above would otherwise take 150ms just to
+   acknowledge the press. */
+.kf-btn { touch-action: manipulation; }
+.kf-btn:active:not(:disabled) { transition-duration: 0ms; }
 .kf-btn-primary { @apply border-transparent bg-brand-600 text-white shadow hover:bg-brand-700; }
 .kf-btn-danger { @apply border-transparent bg-rose-600 text-white shadow hover:bg-rose-700; }
 .kf-btn-ghost { @apply border-transparent bg-transparent text-slate-600 shadow-none hover:bg-slate-100; }
@@ -149,16 +217,49 @@ body {
 .kf-skeleton { @apply animate-pulse rounded bg-slate-200/70; }
 .kf-dot { @apply inline-block h-2 w-2 rounded-full; }
 
-/* Toasts */
+/* Toasts. Enter and exit are transitions (not the old keyframe) so a
+   toast dismissed mid-entry reverses from where it is, and the stack
+   collapses the vacated height instead of snapping the siblings up. */
 .kf-toast {
   @apply pointer-events-auto flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm shadow-lg;
-  animation: kf-toast-in 180ms ease-out;
+  transition-property: opacity, transform;
+  transition-duration: var(--duration-enter);
+  transition-timing-function: var(--ease-out-soft);
+}
+.kf-toast[data-state='closed'] {
+  opacity: 0;
+  transform: translateY(-0.375rem);
+  transition-duration: var(--duration-exit);
+  transition-timing-function: var(--ease-in-soft);
 }
 .kf-toast-success { @apply border-emerald-200 bg-emerald-50/90 text-emerald-900; }
 .kf-toast-error { @apply border-rose-200 bg-rose-50/90 text-rose-900; }
 .kf-toast-info { @apply border-sky-200 bg-sky-50/90 text-sky-900; }
 
-@keyframes kf-toast-in {
-  from { opacity: 0; transform: translateY(-6px); }
-  to   { opacity: 1; transform: translateY(0); }
+/* Reduced motion: keep meaning, drop travel. Surfaces still fade so an
+   appearance is still noticed, but nothing slides, scales, or pulses.
+   Spinners are exempt — their rotation reports progress, it isn't
+   decoration. */
+@media (prefers-reduced-motion: reduce) {
+  .kf-layer,
+  .kf-layer[data-state='closed'],
+  .kf-toast,
+  .kf-toast[data-state='closed'] {
+    transition-property: opacity;
+    transition-duration: 120ms;
+    transition-timing-function: linear;
+    transform: none !important;
+  }
+  .kf-collapse, .kf-collapse[data-state='closed'] {
+    transition: none;
+    grid-template-rows: 1fr;
+  }
+  .kf-pressable, .kf-pressable:active,
+  .kf-pressable-subtle:active,
+  .kf-btn:active:not(:disabled) {
+    transform: none !important;
+    transition: none;
+  }
+  .kf-badge-pop { animation: none; }
+  .kf-skeleton, .animate-pulse { animation: none; opacity: 0.7; }
 }

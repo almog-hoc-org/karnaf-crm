@@ -104,7 +104,7 @@ export function DashboardPage() {
           {Object.entries(s.queueCounts).map(([key, count]) => (
             <Link
               key={key} to={`/queue?type=${encodeURIComponent(key)}`}
-              className="group rounded-lg bg-slate-50 p-3 ring-1 ring-transparent transition hover:bg-white hover:ring-slate-200"
+              className="kf-pressable kf-pressable-subtle group rounded-lg bg-slate-50 p-3 ring-1 ring-transparent transition hover:bg-white hover:ring-slate-200"
             >
               <div className="text-xs text-slate-500 group-hover:text-slate-600">{QUEUE_LABELS[key] ?? key}</div>
               <div className="mt-1 text-2xl font-semibold tabular-nums">{count}</div>
@@ -151,7 +151,7 @@ function TodayCommandCenter({
             <ol className="mt-3 space-y-2">
               {topQueues.map((q, i) => (
                 <li key={q.id}>
-                  <Link to={`/leads/${q.lead_id}`} className="flex items-center gap-3 rounded-xl bg-white p-3 text-sm shadow-sm ring-1 ring-slate-100 transition hover:ring-brand-200">
+                  <Link to={`/leads/${q.lead_id}`} className="kf-pressable kf-pressable-subtle flex items-center gap-3 rounded-xl bg-white p-3 text-sm shadow-sm ring-1 ring-slate-100 transition hover:ring-brand-200">
                     <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-50 text-xs font-semibold text-brand-700">{i + 1}</span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium text-slate-800">{q.leads?.full_name ?? 'ליד ללא שם'}</span>
@@ -239,7 +239,7 @@ function SourceHealthSection({
             <Link
               key={source}
               to={`/leads?source=${encodeURIComponent(source)}`}
-              className="group flex items-baseline justify-between rounded-lg bg-slate-50 p-3 ring-1 ring-transparent transition hover:bg-white hover:ring-slate-200"
+              className="kf-pressable kf-pressable-subtle group flex items-baseline justify-between rounded-lg bg-slate-50 p-3 ring-1 ring-transparent transition hover:bg-white hover:ring-slate-200"
               title={source}
             >
               <div className="min-w-0">

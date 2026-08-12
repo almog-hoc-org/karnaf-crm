@@ -9,6 +9,7 @@ import { PageIntro } from '@/components/PageIntro';
 
 // Tier 7.C.1 — central labels.
 import { PARTNER_DOMAIN_LABELS, PARTNER_STATUS_LABELS } from '@/lib/format';
+import { Modal } from '@/components/Modal';
 const DOMAIN_LABELS = PARTNER_DOMAIN_LABELS as Record<PartnerDomain, string>;
 const STATUS_LABELS = PARTNER_STATUS_LABELS as Record<PartnerStatus, string>;
 
@@ -203,8 +204,9 @@ function EditDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <form className="kf-card w-full max-w-lg space-y-3 p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onCancel}>
+      {(state) => (
+      <form data-state={state} className="kf-layer kf-layer-dialog kf-card w-full max-w-lg space-y-3 p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-semibold">עריכת שותף</h2>
         <label className="block text-sm">
           <span className="text-slate-600">שם מלא</span>
@@ -242,6 +244,7 @@ function EditDialog({
           <button type="submit" className="kf-btn kf-btn-primary" disabled={busy}>{busy ? 'שומר...' : 'שמירה'}</button>
         </div>
       </form>
-    </div>
+      )}
+    </Modal>
   );
 }
