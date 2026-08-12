@@ -146,7 +146,7 @@ function LeadWorkCard({
             <Link to={`/leads/${lead.id}`} className="text-lg font-semibold text-brand-700 hover:underline">
               {lead.full_name || 'ליד ללא שם'}
             </Link>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${guidance.tone}`}>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${guidance.tone}`}>
               {guidance.label}
             </span>
             <span className="text-xs text-slate-500" title={lead.updated_at}>
@@ -154,7 +154,7 @@ function LeadWorkCard({
             </span>
             {lead.awaiting_reply ? (
               <span
-                className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-300"
+                className="kf-chip kf-tone-warning rounded-full px-2.5"
                 title={lead.last_inbound_at ? `ההודעה האחרונה מהלקוח: ${formatRelative(lead.last_inbound_at)}` : undefined}
               >
                 ⏳ ממתין לתשובה
@@ -162,19 +162,19 @@ function LeadWorkCard({
             ) : null}
             {lead.outcome ? (
               <span
-                className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-800 ring-1 ring-violet-300"
+                className="kf-chip kf-tone-accent rounded-full px-2.5"
                 title={lead.outcome_note ?? undefined}
               >
                 🏷 נסגר ל: {OUTCOME_LABELS[lead.outcome] ?? lead.outcome}
               </span>
             ) : null}
             {lead.snoozed_until && Date.parse(lead.snoozed_until) > Date.now() ? (
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
+              <span className="kf-chip kf-tone-neutral rounded-full px-2.5">
                 ⏰ בהשהיה עד {new Date(lead.snoozed_until).toLocaleDateString('he-IL')}
               </span>
             ) : null}
             {lead.no_proactive_contact ? (
-              <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700 ring-1 ring-orange-200">
+              <span className="kf-chip kf-tone-warning rounded-full px-2.5">
                 ללא פנייה יזומה
               </span>
             ) : null}
@@ -221,11 +221,11 @@ function LeadWorkCard({
             <HeatBadge heat={lead.lead_heat} />
             <OwnershipBadge ownership={lead.ownership_mode} />
             {lead.intake_segment ? (
-              <span className="kf-badge bg-violet-100 text-violet-800">
+              <span className="kf-badge kf-tone-accent">
                 {INTAKE_SEGMENT_LABELS[lead.intake_segment] ?? lead.intake_segment}
               </span>
             ) : null}
-            <span className="kf-badge bg-slate-100 text-slate-700">ציון {lead.lead_score}</span>
+            <span className="kf-badge kf-tone-neutral">ציון {lead.lead_score}</span>
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1">
@@ -258,21 +258,21 @@ function leadListGuidance(lead: LeadRow) {
     return {
       label: 'תמיכה/לקוח קיים',
       detail: 'לעצור מכירה אוטומטית ולבדוק אם זה תלמיד או לקוח קיים שצריך תמיכה.',
-      tone: 'bg-purple-100 text-purple-800',
+      tone: 'kf-tone-warning',
     };
   }
   if (lead.intake_segment === 'hot_sales') {
     return {
       label: 'מכירה חמה',
       detail: 'לענות על חסם אחרון ולהתקדם להרשמה, תשלום או שיחת סגירה קצרה.',
-      tone: 'bg-emerald-100 text-emerald-800',
+      tone: 'kf-tone-success',
     };
   }
   if (lead.intake_segment === 'needs_human') {
     return {
       label: 'מבקש נציג',
       detail: 'הליד ביקש שיחה או אדם אנושי. לפתוח, לקרוא סיכום ולהעביר לנציג.',
-      tone: 'bg-indigo-100 text-indigo-800',
+      tone: 'kf-tone-accent',
     };
   }
   if (
@@ -284,48 +284,48 @@ function leadListGuidance(lead: LeadRow) {
     return {
       label: 'לא ליצור קשר',
       detail: 'הליד מסומן כהסרה/לא ליצור קשר. להשאיר לתיעוד בלבד.',
-      tone: 'bg-rose-100 text-rose-800',
+      tone: 'kf-tone-danger',
     };
   }
   if (lead.ownership_mode === 'phone_sales_pending') {
     return {
       label: 'להתקשר',
       detail: 'השלב הבא הוא שיחת טלפון יזומה. אחרי השיחה כדאי לעדכן סיכום וסטטוס.',
-      tone: 'bg-indigo-100 text-indigo-800',
+      tone: 'kf-tone-accent',
     };
   }
   if (lead.lead_status === 'human_handoff' || lead.ownership_mode === 'mia_active') {
     return {
       label: 'בטיפול אנושי',
       detail: 'ה-AI מושעה כרגע. צריך לוודא שיש מענה אנושי או להחזיר ל-AI אחרי סיום טיפול.',
-      tone: 'bg-amber-100 text-amber-800',
+      tone: 'kf-tone-warning',
     };
   }
   if (lead.lead_status === 'payment_pending') {
     return {
       label: 'קרוב לסגירה',
       detail: 'הליד ממתין לתשלום. לבדוק אם צריך קישור, תזכורת או שיחת סגירה קצרה.',
-      tone: 'bg-emerald-100 text-emerald-800',
+      tone: 'kf-tone-success',
     };
   }
   if (lead.lead_heat === 'hot') {
     return {
       label: 'ליד חם',
       detail: 'כדאי לעקוב מקרוב. אם השיחה רגישה או נתקעת, לקחת לטיפול ידני.',
-      tone: 'bg-rose-100 text-rose-800',
+      tone: 'kf-tone-danger',
     };
   }
   if (lead.ownership_mode === 'ai_active') {
     return {
       label: 'AI מטפל',
       detail: 'אין צורך להתערב כרגע. המערכת ממשיכה את השיחה לפי ה-playbook הפעיל.',
-      tone: 'bg-sky-100 text-sky-800',
+      tone: 'kf-tone-info',
     };
   }
   return {
     label: 'מעקב',
     detail: 'אין פעולה דחופה מזוהה. לפתוח אם צריך להבין הקשר או לעדכן פרטים.',
-    tone: 'bg-slate-100 text-slate-700',
+    tone: 'kf-tone-neutral',
   };
 }
 
@@ -643,7 +643,7 @@ export function LeadsPage() {
               {importMarkMember ? ' וסומנו כחברי תוכנית' : ''}.
             </p>
             {importResult.failCount > 0 ? (
-              <div className="max-h-40 overflow-y-auto rounded border border-red-100 bg-red-50 p-2 text-red-700">
+              <div className="kf-tone-danger max-h-40 overflow-y-auto rounded-lg p-2 ring-1 ring-inset">
                 {importResult.results.filter((r) => r.error).map((r, i) => (
                   <div key={i} className="tabular-nums">{r.phone || '—'} — {r.error}</div>
                 ))}
@@ -662,7 +662,7 @@ export function LeadsPage() {
             <div className="flex items-center justify-between text-sm text-slate-600">
               <span>{importParsed.rows.length} שורות תקינות</span>
               {importParsed.invalid.length > 0 ? (
-                <span className="text-red-600">{importParsed.invalid.length} שורות בלי טלפון תקין ידולגו</span>
+                <span className="text-rose-700">{importParsed.invalid.length} שורות בלי טלפון תקין ידולגו</span>
               ) : null}
             </div>
             <label className="flex items-center gap-2 text-sm">

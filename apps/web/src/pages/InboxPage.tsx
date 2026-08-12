@@ -210,8 +210,8 @@ export function InboxPage() {
   ].filter((group) => group.rows.length > 0);
 
   return (
-    <div className="space-y-5">
-      <header className="overflow-hidden rounded-3xl bg-gradient-to-l from-brand-700 via-brand-600 to-slate-900 p-5 text-white shadow-sm sm:p-6">
+    <div className="space-y-4">
+      <header className="overflow-hidden rounded-2xl bg-gradient-to-l from-brand-700 via-brand-600 to-slate-900 p-5 text-white shadow-sm sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
             <p className="text-sm font-medium text-brand-100">עמדת עבודה יומית</p>
@@ -231,8 +231,6 @@ export function InboxPage() {
 
       <InboxTrainingGuide />
 
-      <DailyFocusPanel rows={allRows} />
-
       <section className="grid gap-3 md:grid-cols-5" aria-label="סינון משימות">
         {LANE_FILTERS.map((item) => {
           const active = lane === item.key;
@@ -249,7 +247,7 @@ export function InboxPage() {
               }}
               aria-pressed={active}
               className={clsx(
-                'kf-pressable kf-pressable-subtle rounded-2xl border p-4 text-start shadow-sm transition',
+                'kf-pressable kf-pressable-subtle rounded-xl border p-4 text-start shadow-sm transition',
                 active
                   ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-100'
                   : 'border-slate-200 bg-white hover:border-brand-200 hover:bg-slate-50',
@@ -307,20 +305,17 @@ export function InboxPage() {
           displayGroups.map((group) => (
             <div key={group.key} className="space-y-3">
               <div className={clsx(
-                'flex flex-wrap items-baseline justify-between gap-2 rounded-2xl px-4 py-2',
-                group.tone === 'hot' ? 'bg-rose-50 ring-1 ring-rose-100' : 'bg-slate-100',
+                'flex flex-wrap items-baseline justify-between gap-2 rounded-lg px-4 py-2 ring-1 ring-inset',
+                group.tone === 'hot' ? 'kf-tone-danger' : 'kf-tone-neutral',
               )}>
-                <h2 className={clsx('text-sm font-semibold', group.tone === 'hot' ? 'text-rose-800' : 'text-slate-700')}>
-                  {group.title}
-                </h2>
-                <span className="text-xs text-slate-500">{group.hint}</span>
+                <h2 className="text-sm font-semibold">{group.title}</h2>
+                <span className="text-xs opacity-80">{group.hint}</span>
               </div>
               {group.rows.map((row) => {
             const meta = classifyRow(row);
             const plan = operatingPlan(row, meta);
-            const chips = reasonChips(row, meta);
+            const chips = reasonChips(row);
             const talkTrack = repTalkTrack(row, meta);
-            const whatsappWindow = whatsappWindowStatus(row);
             const whatsappUrl = whatsappConversationUrl(row);
             const origin = describeLeadOrigin(row);
             const leaving = leavingLeadIds.includes(row.lead_id);
@@ -337,10 +332,10 @@ export function InboxPage() {
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                   <div className="min-w-0 flex-1 space-y-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={clsx('rounded-full px-2.5 py-1 text-xs font-semibold', meta.pillClass)}>{meta.actionLabel}</span>
+                      <span className={clsx('rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset', meta.pillClass)}>{meta.actionLabel}</span>
                       <span className="text-xs text-slate-500">{formatRelative(row.due_at ?? row.created_at)}</span>
                       {meta.urgency === 'critical' ? (
-                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">דחוף</span>
+                        <span className="kf-tone-danger rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset">דחוף</span>
                       ) : null}
                     </div>
 
@@ -351,32 +346,40 @@ export function InboxPage() {
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
                         {row.lead_phone ? <a href={`tel:${row.lead_phone}`} className="tabular-nums hover:text-brand-700">{row.lead_phone}</a> : null}
                         <span>{humanReason(row)}</span>
-                        <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700 ring-1 ring-teal-100">
+                        <span className="kf-chip kf-tone-neutral rounded-full">
                           מקור: {origin.label}{origin.detail ? ` · ${origin.detail}` : ''}
                         </span>
                         {row.product_interest ? (
-                          <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+                          <span className="kf-chip kf-tone-accent rounded-full">
                             {PRODUCT_LABELS[row.product_interest] ?? row.product_interest}
                           </span>
                         ) : null}
                       </div>
                     </div>
 
+                    {/* The one coloured box left on the card. Everything
+                        else that used to be boxed here — the plan, the
+                        WhatsApp banner, the talk track — was competing
+                        with the actual reason the card exists: what the
+                        customer said. */}
                     {row.last_inbound_text ? (
-                      <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-3">
+                      <div className="kf-callout kf-tone-info">
                         <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs font-semibold text-sky-700">ההודעה האחרונה של הלקוח</div>
+                          <div className="text-xs font-semibold">ההודעה האחרונה של הלקוח</div>
                           {row.last_inbound_at ? (
-                            <span className="text-xs text-slate-400">{formatRelative(row.last_inbound_at)}</span>
+                            <span className="text-xs opacity-75">{formatRelative(row.last_inbound_at)}</span>
                           ) : null}
                         </div>
-                        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-800">
+                        <p className="mt-1 whitespace-pre-wrap leading-6 text-slate-800">
                           ״{row.last_inbound_text}״
                         </p>
                       </div>
                     ) : null}
 
-                    <div className="grid gap-2 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+                    {/* Plain text, no frame: this is the card's primary
+                        content, and primary content doesn't need a box to
+                        prove it. */}
+                    <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
                       <div>
                         <div className="text-xs font-semibold text-slate-500">פעולה הבאה</div>
                         <div className="mt-1 font-semibold text-slate-900">{plan.nextAction}</div>
@@ -393,26 +396,26 @@ export function InboxPage() {
                     {chips.length ? (
                       <div className="flex flex-wrap gap-2" aria-label="סימני סיבה">
                         {chips.map((chip) => (
-                          <span key={`${chip.label}:${chip.tone}`} className={clsx('rounded-full px-2.5 py-1 text-xs font-medium', chipClass(chip.tone))}>
+                          <span key={`${chip.label}:${chip.tone}`} className={clsx('kf-chip', toneClass(chip.tone))}>
                             {chip.label}
                           </span>
                         ))}
                       </div>
                     ) : null}
 
-                    {whatsappWindow ? (
-                      <div className={clsx('rounded-2xl border p-3 text-sm leading-6', whatsappWindow.className)}>
-                        <div className="font-semibold">{whatsappWindow.title}</div>
-                        <div className="mt-1">{whatsappWindow.hint}</div>
-                      </div>
-                    ) : null}
-
-                    <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs font-semibold text-brand-700">מה להגיד עכשיו</div>
+                    {/* Collapsed by default. A suggested opening line is
+                        useful on the card you are working, not on all
+                        eleven of them at once. */}
+                    <details className="group/talk">
+                      <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-xs font-semibold text-brand-700 hover:underline">
+                        <span aria-hidden="true" className="transition group-open/talk:rotate-90">›</span>
+                        <span>מה להגיד עכשיו</span>
+                      </summary>
+                      <div className="mt-2 flex items-start justify-between gap-3">
+                        <p className="text-sm leading-6 text-slate-800">{talkTrack}</p>
                         <button
                           type="button"
-                          className="kf-pressable rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-100 transition hover:bg-brand-50"
+                          className="kf-pressable shrink-0 rounded-md bg-white px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-inset ring-brand-200 transition hover:bg-brand-50"
                           onClick={() => {
                             void copyTalkTrack(talkTrack).then(() => {
                               setCopiedTalkTrackId(row.ref_id);
@@ -423,15 +426,14 @@ export function InboxPage() {
                           {copiedTalkTrackId === row.ref_id ? 'הועתק' : 'העתקת נוסח'}
                         </button>
                       </div>
-                      <p className="mt-1 text-sm leading-6 text-slate-800">{talkTrack}</p>
-                    </div>
+                    </details>
 
                     <div className="flex flex-wrap items-center gap-2">
                       <MemberBadge isMember={row.is_program_member} />
                       <StatusBadge status={row.lead_status} />
                       <HeatBadge heat={row.lead_heat} />
                       <OwnershipBadge ownership={row.ownership_mode} />
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">עדיפות {row.priority_level}</span>
+                      <span className="kf-chip kf-tone-neutral">עדיפות {row.priority_level}</span>
                     </div>
                   </div>
 
@@ -672,65 +674,47 @@ function InboxTrainingGuide() {
   );
 }
 
-// Tier 6.C — DailyFocusPanel slimmed. Before: 1 hero card ("הדבר
-// הראשון לפתוח") + 3 metric tiles (דחוף/לענות/להתקשר). The 3 metrics
-// already appear as count pills inside LANE_FILTERS below — two rows
-// teaching the same numbers. Now: just the hero, full width.
-function DailyFocusPanel({ rows }: { rows: AttentionRow[] }) {
-  const firstRow = rows[0] ?? null;
-  const firstMeta = firstRow ? classifyRow(firstRow) : null;
-  const first = firstRow && firstMeta ? operatingPlan(firstRow, firstMeta) : null;
+// The six tones from index.css. A chip states a fact about the row; the
+// tone says what kind of fact it is, and it means the same thing here as
+// it does on a badge, a callout or a toast.
+type Tone = 'danger' | 'warning' | 'info' | 'success' | 'accent' | 'neutral';
 
-  return (
-    <section className="kf-card border-s-4 border-s-brand-500 p-4" aria-label="מיקוד יומי">
-      <p className="text-xs font-semibold text-brand-700">הדבר הראשון לפתוח</p>
-      {first ? (
-        <>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-semibold text-slate-900">{first.nextAction}</h2>
-            {firstMeta ? <span className={clsx('rounded-full px-2 py-0.5 text-xs font-semibold', firstMeta.pillClass)}>{firstMeta.actionLabel}</span> : null}
-          </div>
-          {firstRow ? (
-            <Link to={`/leads/${firstRow.lead_id}`} className="mt-1 inline-flex text-sm font-semibold text-brand-700 hover:underline">
-              לפתוח ראשון: {firstRow.lead_name || `ליד ${firstRow.lead_id.slice(0, 8)}`}
-            </Link>
-          ) : null}
-          <p className="mt-1 text-sm leading-6 text-slate-500">{first.why}</p>
-        </>
-      ) : (
-        <>
-          <h2 className="mt-1 text-lg font-semibold text-slate-900">אין כרגע טיפול דחוף</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-500">אפשר לעבור ללידים חדשים, פולואפים או שיפור נתונים.</p>
-        </>
-      )}
-    </section>
-  );
+function toneClass(tone: Tone) {
+  return `kf-tone-${tone}`;
 }
 
-type ReasonChip = { label: string; tone: 'danger' | 'warning' | 'info' | 'success' | 'neutral' };
-
-function reasonChips(row: AttentionRow, meta = classifyRow(row)): ReasonChip[] {
+// Chips are capped at three. The old cap of six guaranteed a second row
+// of pills under every card, and the first three were the ones anybody
+// read — so the tail was pure noise. Ordered by what actually changes
+// the operator's next move: lateness, then the WhatsApp window, then the
+// queue reason.
+//
+// Dropped entirely: "מחכה למענה אנושי" / "צריך שיחה" / "סיכון נפילה",
+// which restate the action pill at the top of the same card, and
+// "עדיפות גבוהה", which restates the priority badge at the bottom of it.
+function reasonChips(row: AttentionRow): ReasonChip[] {
   const chips: ReasonChip[] = [];
   const dueMs = row.due_at ? Date.parse(row.due_at) : NaN;
   if (Number.isFinite(dueMs)) {
     const deltaMinutes = Math.round((Date.now() - dueMs) / 60_000);
+    // Only real lateness earns a chip. "לטיפול בקרוב" fired for anything
+    // due within two hours, which is most of the board, and the due time
+    // is already spelled out next to the action pill.
     if (deltaMinutes > 0) chips.push({ label: `באיחור ${formatDuration(deltaMinutes)}`, tone: 'danger' });
-    else if (deltaMinutes > -120) chips.push({ label: `לטיפול בקרוב`, tone: 'warning' });
   }
-  if (row.priority_level <= 1) chips.push({ label: 'עדיפות גבוהה', tone: 'danger' });
-  if (row.lead_heat === 'hot') chips.push({ label: 'ליד חם', tone: 'success' });
-  if (row.intake_segment === 'hot_sales') chips.push({ label: 'מכירה חמה', tone: 'success' });
-  if (row.intake_segment === 'support_or_existing') chips.push({ label: 'לקוח/תמיכה', tone: 'warning' });
   const whatsappWindow = whatsappWindowStatus(row);
   if (whatsappWindow?.state === 'open') chips.push({ label: 'WhatsApp פתוח', tone: 'success' });
   if (whatsappWindow?.state === 'closed') chips.push({ label: 'WhatsApp מחוץ ל-24ש׳', tone: 'warning' });
   if (row.queue_type) chips.push({ label: queueTypeLabel(row.queue_type), tone: queueTypeTone(row.queue_type) });
-  if (meta.lane === 'reply') chips.push({ label: 'מחכה למענה אנושי', tone: 'warning' });
-  if (meta.lane === 'call') chips.push({ label: 'צריך שיחה', tone: 'info' });
-  if (meta.lane === 'risk') chips.push({ label: 'סיכון נפילה', tone: 'danger' });
-  if (row.product_interest) chips.push({ label: PRODUCT_LABELS[row.product_interest] ?? row.product_interest, tone: 'neutral' });
-  return dedupeChips(chips).slice(0, 6);
+  // "ליד חם" and "מכירה חמה" are the same news from two fields; a hot
+  // lead in the hot_sales segment used to get both chips.
+  if (row.lead_heat === 'hot') chips.push({ label: 'ליד חם', tone: 'success' });
+  else if (row.intake_segment === 'hot_sales') chips.push({ label: 'מכירה חמה', tone: 'success' });
+  if (row.intake_segment === 'support_or_existing') chips.push({ label: 'לקוח/תמיכה', tone: 'warning' });
+  return dedupeChips(chips).slice(0, 3);
 }
+
+type ReasonChip = { label: string; tone: Tone };
 
 function dedupeChips(chips: ReasonChip[]): ReasonChip[] {
   const seen = new Set<string>();
@@ -739,16 +723,6 @@ function dedupeChips(chips: ReasonChip[]): ReasonChip[] {
     seen.add(chip.label);
     return true;
   });
-}
-
-function chipClass(tone: ReasonChip['tone']) {
-  switch (tone) {
-    case 'danger': return 'bg-rose-50 text-rose-700 ring-1 ring-rose-100';
-    case 'warning': return 'bg-amber-50 text-amber-700 ring-1 ring-amber-100';
-    case 'info': return 'bg-sky-50 text-sky-700 ring-1 ring-sky-100';
-    case 'success': return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100';
-    default: return 'bg-slate-100 text-slate-700';
-  }
 }
 
 function queueTypeLabel(queueType: string) {
@@ -764,45 +738,23 @@ function queueTypeLabel(queueType: string) {
   return labels[queueType] ?? queueType.replace(/_/g, ' ');
 }
 
-function queueTypeTone(queueType: string): ReasonChip['tone'] {
+function queueTypeTone(queueType: string): Tone {
   if (queueType.includes('failed') || queueType.includes('stuck')) return 'danger';
   if (queueType.includes('handoff') || queueType.includes('manual')) return 'warning';
   if (queueType.includes('call')) return 'info';
   return 'neutral';
 }
 
-function whatsappWindowStatus(row: AttentionRow): null | {
-  state: 'open' | 'closed' | 'unknown';
-  title: string;
-  hint: string;
-  className: string;
-} {
+// Was a full titled banner on every card, carrying its own colour
+// vocabulary; it now feeds a single chip, because the chip row was
+// already saying the same thing one line above it.
+function whatsappWindowStatus(row: AttentionRow): null | { state: 'open' | 'closed' | 'unknown' } {
   if (!isWhatsAppRelevant(row)) return null;
-  if (!row.last_inbound_at) {
-    return {
-      state: 'unknown',
-      title: 'סטטוס WhatsApp לא ידוע',
-      hint: 'אין הודעת לקוח אחרונה במערכת. לפתוח את הליד ולבדוק את השיחה לפני שליחה.',
-      className: 'border-slate-200 bg-slate-50 text-slate-700',
-    };
-  }
+  if (!row.last_inbound_at) return { state: 'unknown' };
   const lastInboundMs = Date.parse(row.last_inbound_at);
   if (!Number.isFinite(lastInboundMs)) return null;
   const ageMs = Date.now() - lastInboundMs;
-  if (ageMs <= WHATSAPP_FREEFORM_WINDOW_MS) {
-    return {
-      state: 'open',
-      title: 'WhatsApp פתוח למענה חופשי',
-      hint: `הלקוח כתב ב-${WHATSAPP_FREEFORM_WINDOW_HOURS} השעות האחרונות. אפשר לענות חופשי מתוך הכרטיס.`,
-      className: 'border-emerald-100 bg-emerald-50 text-emerald-800',
-    };
-  }
-  return {
-    state: 'closed',
-    title: 'WhatsApp מחוץ לחלון 24 שעות',
-    hint: 'אפשר לכתוב ב-CRM, אבל ההודעה תישמר ותישלח רק כשהלקוח יענה שוב או אחרי אישור תבנית Meta בעברית.',
-    className: 'border-amber-100 bg-amber-50 text-amber-800',
-  };
+  return { state: ageMs <= WHATSAPP_FREEFORM_WINDOW_MS ? 'open' : 'closed' };
 }
 
 function isWhatsAppRelevant(row: AttentionRow) {
@@ -847,7 +799,7 @@ function formatDuration(minutes: number) {
 
 function TrainingStep({ number, title, text }: { number: string; title: string; text: string }) {
   return (
-    <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100">
+    <div className="rounded-lg bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
       <div className="flex items-center gap-2">
         <span className="grid h-6 w-6 place-items-center rounded-full bg-brand-600 text-xs font-semibold text-white">{number}</span>
         <span className="font-semibold text-slate-800">{title}</span>
@@ -863,7 +815,7 @@ function parseLane(value: string | null): WorkLane {
 
 function Metric({ label, value, tone }: { label: string; value: number | string; tone?: 'danger' | 'ok' }) {
   return (
-    <div className="rounded-2xl bg-white/12 p-3 ring-1 ring-white/20 backdrop-blur">
+    <div className="rounded-xl bg-white/12 p-3 ring-1 ring-inset ring-white/20 backdrop-blur">
       <div className="text-xs text-white/75">{label}</div>
       <div className={clsx('mt-1 text-2xl font-semibold tabular-nums', tone === 'danger' && 'text-rose-100', tone === 'ok' && 'text-emerald-100')}>
         {value}
@@ -872,13 +824,26 @@ function Metric({ label, value, tone }: { label: string; value: number | string;
   );
 }
 
-function classifyRow(row: AttentionRow): {
+// The left stripe answers "how urgent", not "what kind" — so it has
+// three states, not the twelve colour/weight combinations it used to
+// carry. Kind is already said by the action pill next to it, in words.
+function classifyRow(row: AttentionRow): ClassifiedRow & { pillClass: string; borderClass: string } {
+  const base = classifyRowBase(row);
+  const borderClass =
+    base.urgency === 'critical' ? 'border-s-rose-500' :
+    base.lane === 'reply' ? 'border-s-amber-400' :
+    'border-s-brand-400';
+  return { ...base, pillClass: toneClass(base.tone), borderClass };
+}
+
+type ClassifiedRow = {
   lane: WorkLane;
   actionLabel: string;
   urgency: 'critical' | 'normal';
-  pillClass: string;
-  borderClass: string;
-} {
+  tone: Tone;
+};
+
+function classifyRowBase(row: AttentionRow): ClassifiedRow {
   const reason = `${row.reason ?? ''} ${row.queue_type ?? ''} ${row.queue_summary ?? ''} ${row.lead_status} ${row.ownership_mode}`.toLowerCase();
   const dueMs = row.due_at ? Date.parse(row.due_at) : NaN;
   const overdue = row.kind === 'overdue_action' || (Number.isFinite(dueMs) && dueMs < Date.now());
@@ -887,32 +852,27 @@ function classifyRow(row: AttentionRow): {
   // sla-worker watchers route to the right lane regardless of free-text.
   if (row.kind === 'snooze_due') {
     return {
-      lane: 'risk', actionLabel: 'חזר מהשהיה', urgency: 'normal',
-      pillClass: 'bg-brand-100 text-brand-800', borderClass: 'border-s-brand-500',
+      lane: 'risk', actionLabel: 'חזר מהשהיה', urgency: 'normal', tone: 'accent',
     };
   }
   if (row.kind === 'phone_overdue' || row.kind === 'phone_escalation') {
     return {
-      lane: 'call', actionLabel: 'להתקשר עכשיו', urgency: 'critical',
-      pillClass: 'bg-indigo-100 text-indigo-800', borderClass: 'border-s-indigo-500',
+      lane: 'call', actionLabel: 'להתקשר עכשיו', urgency: 'critical', tone: 'accent',
     };
   }
   if (row.kind === 'ai_stuck') {
     return {
-      lane: 'risk', actionLabel: 'בדיקת תקלת AI', urgency: 'critical',
-      pillClass: 'bg-rose-100 text-rose-800', borderClass: 'border-s-rose-500',
+      lane: 'risk', actionLabel: 'בדיקת תקלת AI', urgency: 'critical', tone: 'danger',
     };
   }
   if (row.kind === 'deal_stalled') {
     return {
-      lane: 'risk', actionLabel: 'להזיז עסקה', urgency: row.priority_level <= 1 ? 'critical' : 'normal',
-      pillClass: 'bg-amber-100 text-amber-800', borderClass: 'border-s-amber-500',
+      lane: 'risk', actionLabel: 'להזיז עסקה', urgency: row.priority_level <= 1 ? 'critical' : 'normal', tone: 'warning',
     };
   }
   if (row.kind === 'meeting_outcome_pending') {
     return {
-      lane: 'ops', actionLabel: 'לסכם פגישה', urgency: 'normal',
-      pillClass: 'bg-violet-100 text-violet-800', borderClass: 'border-s-violet-400',
+      lane: 'ops', actionLabel: 'לסכם פגישה', urgency: 'normal', tone: 'accent',
     };
   }
 
@@ -927,25 +887,21 @@ function classifyRow(row: AttentionRow): {
     // once the customer has waited more than 2 hours.
     const waitedOverTwoHours = Number.isFinite(dueMs) && Date.now() - dueMs > 2 * 60 * 60 * 1000;
     return {
-      lane: 'reply', actionLabel: 'לענות עכשיו', urgency: waitedOverTwoHours ? 'critical' : 'normal',
-      pillClass: 'bg-amber-100 text-amber-800', borderClass: 'border-s-amber-400',
+      lane: 'reply', actionLabel: 'לענות עכשיו', urgency: waitedOverTwoHours ? 'critical' : 'normal', tone: 'warning',
     };
   }
   if (row.ownership_mode === 'phone_sales_pending' || reason.includes('phone') || reason.includes('call') || reason.includes('שיחה') || reason.includes('טלפון')) {
     return {
-      lane: 'call', actionLabel: 'להתקשר', urgency: row.priority_level <= 1 ? 'critical' : 'normal',
-      pillClass: 'bg-indigo-100 text-indigo-800', borderClass: 'border-s-indigo-400',
+      lane: 'call', actionLabel: 'להתקשר', urgency: row.priority_level <= 1 ? 'critical' : 'normal', tone: 'accent',
     };
   }
   if (overdue || reason.includes('sla') || reason.includes('failed') || reason.includes('תקלה') || reason.includes('כשל')) {
     return {
-      lane: 'risk', actionLabel: 'לטפל בסיכון', urgency: 'critical',
-      pillClass: 'bg-rose-100 text-rose-800', borderClass: 'border-s-rose-500',
+      lane: 'risk', actionLabel: 'לטפל בסיכון', urgency: 'critical', tone: 'danger',
     };
   }
   return {
-    lane: 'ops', actionLabel: 'בדיקה / מעקב', urgency: 'normal',
-    pillClass: 'bg-sky-100 text-sky-800', borderClass: 'border-s-sky-400',
+    lane: 'ops', actionLabel: 'בדיקה / מעקב', urgency: 'normal', tone: 'info',
   };
 }
 

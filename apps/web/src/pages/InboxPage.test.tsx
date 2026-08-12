@@ -44,7 +44,6 @@ describe('InboxPage', () => {
     renderInbox();
 
     expect(screen.getByRole('heading', { name: 'היום שלי' })).toBeInTheDocument();
-    expect(screen.getByText('הדבר הראשון לפתוח')).toBeInTheDocument();
     expect(screen.getByText('הדרך הקצרה לעבודה נכונה')).toBeInTheDocument();
     expect(screen.getByText('פותחים כרטיס, מטפלים, וסוגרים — בלי לחפש ידנית.')).toBeInTheDocument();
     expect(screen.getByText('לטפל לפי דחיפות')).toBeInTheDocument();
@@ -86,12 +85,16 @@ describe('InboxPage', () => {
     renderInbox();
 
     expect(await screen.findByText('דנה כהן')).toBeInTheDocument();
-    expect(screen.getByText('לפתוח ראשון: דנה כהן')).toBeInTheDocument();
     expect(screen.getByText('ליווי משקיעים')).toBeInTheDocument();
     expect(screen.getByText('ליד חם')).toBeInTheDocument();
-    expect(screen.getByText('מכירה חמה')).toBeInTheDocument();
-    expect(screen.getByText('צריך שיחה')).toBeInTheDocument();
     expect(screen.getByText('שיחת מכירה')).toBeInTheDocument();
+    // heat=hot and intake_segment=hot_sales are the same fact; the card
+    // says it once.
+    expect(screen.queryByText('מכירה חמה')).not.toBeInTheDocument();
+    // The lane is stated once, by the action pill — the old "צריך שיחה"
+    // chip repeated it a few pixels lower on the same card.
+    expect(screen.getAllByText('להתקשר').length).toBeGreaterThan(0);
+    expect(screen.queryByText('צריך שיחה')).not.toBeInTheDocument();
     expect(screen.getByText('ביקשה לדבר עם נציג על התאמת ליווי משקיעים')).toBeInTheDocument();
     expect(screen.getByText('מה להגיד עכשיו')).toBeInTheDocument();
     expect(screen.getByText(/דנה, ראיתי שפנית לגבי ליווי משקיעים/)).toBeInTheDocument();
@@ -162,11 +165,11 @@ describe('InboxPage', () => {
 
     renderInbox('/inbox?lane=reply');
 
-    expect(await screen.findByText('WhatsApp פתוח למענה חופשי')).toBeInTheDocument();
-    expect(screen.getByText(/אפשר לענות חופשי מתוך הכרטיס/)).toBeInTheDocument();
-    expect(screen.getByText('WhatsApp מחוץ לחלון 24 שעות')).toBeInTheDocument();
-    expect(screen.getByText(/ההודעה תישמר ותישלח רק כשהלקוח יענה שוב/)).toBeInTheDocument();
-    expect(screen.getByText('WhatsApp פתוח')).toBeInTheDocument();
+    // The window is reported once per card, by a chip. It used to also
+    // get a full titled banner directly underneath the chip saying the
+    // same thing at four times the size.
+    expect(await screen.findByText('WhatsApp פתוח')).toBeInTheDocument();
+    expect(screen.queryByText('WhatsApp פתוח למענה חופשי')).not.toBeInTheDocument();
     expect(screen.getByText('WhatsApp מחוץ ל-24ש׳')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'פתיחת WhatsApp עבור רוני לוי' })).toHaveAttribute('href', 'https://wa.me/972500000001');
     expect(screen.getByRole('link', { name: 'פתיחת WhatsApp עבור איתי כהן' })).toHaveAttribute('href', 'https://wa.me/972500000002');

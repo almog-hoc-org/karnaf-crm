@@ -36,7 +36,7 @@ export function DashboardPage() {
   return (
     <div className="space-y-4 sm:space-y-6">
       {heartbeatStale ? (
-        <section className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-4 text-sm text-rose-900" role="alert">
+        <section className="kf-tone-danger rounded-xl p-4 text-sm ring-1 ring-inset" role="alert">
           <div className="flex items-baseline justify-between gap-3">
             <div>
               <strong className="block text-base">⚠️ האוטומציות לא רצות</strong>
@@ -128,7 +128,7 @@ function TodayCommandCenter({
   const priority = todayPriority(summary, queues);
   const topQueues = queues.slice(0, 3);
   return (
-    <section className="overflow-hidden rounded-3xl border border-brand-100 bg-gradient-to-l from-brand-50 via-white to-white shadow-sm">
+    <section className="overflow-hidden rounded-2xl border border-brand-200 bg-gradient-to-l from-brand-50 via-white to-white shadow-sm">
       <div className="grid gap-0 lg:grid-cols-[1.3fr_0.9fr]">
         <div className="p-4 sm:p-6">
           <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-100">

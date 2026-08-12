@@ -92,7 +92,7 @@ export function Layout() {
                     <span aria-hidden="true" className="text-current opacity-80">{item.icon}</span>
                     <span aria-current={isActive ? 'page' : undefined}>{t(item.labelKey)}</span>
                     {item.to === '/inbox' && attentionCount > 0 ? (
-                      <span key={attentionCount} className="kf-badge-pop ms-0.5 grid min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[11px] font-bold leading-5 text-white" aria-label={`${attentionCount} ממתינים למענה`}>
+                      <span key={attentionCount} className="kf-badge-pop ms-0.5 grid min-w-5 place-items-center rounded-full bg-rose-600 px-1 text-[11px] font-bold leading-5 text-white" aria-label={`${attentionCount} ממתינים למענה`}>
                         {attentionCount > 99 ? '99+' : attentionCount}
                       </span>
                     ) : null}
@@ -167,7 +167,7 @@ export function Layout() {
                       <span aria-hidden="true">{item.icon}</span>
                       <span aria-current={isActive ? 'page' : undefined}>{t(item.labelKey)}</span>
                       {item.to === '/inbox' && attentionCount > 0 ? (
-                        <span key={attentionCount} className="kf-badge-pop ms-auto grid min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[11px] font-bold leading-5 text-white" aria-label={`${attentionCount} ממתינים למענה`}>
+                        <span key={attentionCount} className="kf-badge-pop ms-auto grid min-w-5 place-items-center rounded-full bg-rose-600 px-1 text-[11px] font-bold leading-5 text-white" aria-label={`${attentionCount} ממתינים למענה`}>
                           {attentionCount > 99 ? '99+' : attentionCount}
                         </span>
                       ) : null}

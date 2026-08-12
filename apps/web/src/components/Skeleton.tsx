@@ -49,7 +49,7 @@ export function LeadDetailSkeleton() {
         <div className="kf-card p-4 space-y-3 lg:col-span-2">
           <SkeletonLine width="w-32" className="h-4" />
           {Array.from({ length: 5 }).map((_, i) => (
-            <SkeletonLine key={i} className="h-12 rounded-2xl" />
+            <SkeletonLine key={i} className="h-12 rounded-xl" />
           ))}
         </div>
         <div className="kf-card p-4 space-y-3">

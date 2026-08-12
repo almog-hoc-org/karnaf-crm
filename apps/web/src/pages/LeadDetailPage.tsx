@@ -545,7 +545,7 @@ export function LeadDetailPage() {
             <h2 className="text-lg font-semibold">
               שיחה
               {detailQ.data?.conversations[0]?.channel === 'instagram' ? (
-                <span className="ms-2 inline-flex items-center rounded-full bg-fuchsia-100 px-2 py-0.5 text-xs font-medium text-fuchsia-700">אינסטגרם</span>
+                <span className="kf-chip kf-tone-neutral ms-2 rounded-full">אינסטגרם</span>
               ) : null}
             </h2>
             {lead.phone ? (
@@ -1105,7 +1105,7 @@ function OperatorGuidanceCard({
 
   return (
     <section
-      className={clsx('rounded-2xl border p-4 shadow-sm sm:p-5', insight.tone)}
+      className={clsx('rounded-xl p-4 shadow-sm ring-1 ring-inset sm:p-5', insight.tone)}
       aria-label="המלצת פעולה למפעילה"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -1398,7 +1398,7 @@ function ScheduleMeetingForm({
   }
 
   return (
-    <form onSubmit={submit} className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 text-sm">
+    <form onSubmit={submit} className="mt-3 rounded-lg bg-slate-50 p-3 text-sm ring-1 ring-inset ring-slate-200">
       <div className="mb-2 font-semibold text-slate-800">תיאום פגישה</div>
       <div className="grid gap-2 sm:grid-cols-2">
         <label className="block">
@@ -1450,7 +1450,7 @@ function MeetingsList({
   onUpdate: (input: { meetingId: string; status: MeetingRow['status']; note: string | null }) => void;
 }) {
   return (
-    <div className="mt-3 rounded-2xl border border-slate-100 bg-white p-3">
+    <div className="mt-3 rounded-lg bg-white p-3 ring-1 ring-inset ring-slate-200">
       <div className="text-sm font-semibold text-slate-800">פגישות</div>
       <ul className="mt-2 space-y-2 text-sm">
         {[...meetings]
@@ -1645,7 +1645,7 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
       script: 'לא לשלוח הודעה חדשה אלא אם הליד נפתח מחדש במודע.',
       ownerLine: 'מצב סגור',
       primaryAction: null,
-      tone: 'border-slate-200 bg-slate-50 text-slate-800',
+      tone: 'kf-tone-neutral',
     };
   }
   if (failed) {
@@ -1656,7 +1656,7 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
       script: lastText ? `להתייחס להודעה האחרונה: “${lastText.slice(0, 120)}”` : humanScript,
       ownerLine: 'דורש בדיקה ידנית',
       primaryAction: 'takeover' as const,
-      tone: 'border-rose-200 bg-rose-50 text-rose-950',
+      tone: 'kf-tone-danger',
     };
   }
   if (phone) {
@@ -1667,7 +1667,7 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
       script: 'להתקשר, לפתוח בשאלה קצרה על הצורך שלו, ואז לתעד תוצאה: ענה / לא ענה / נקבע המשך.',
       ownerLine: 'ממתין לשיחה',
       primaryAction: 'phone' as const,
-      tone: 'border-indigo-200 bg-indigo-50 text-indigo-950',
+      tone: 'kf-tone-accent',
     };
   }
   if (human && lastFromLead) {
@@ -1678,7 +1678,7 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
       script: humanScript,
       ownerLine: 'בטיפול אנושי',
       primaryAction: 'return_ai' as const,
-      tone: 'border-amber-200 bg-amber-50 text-amber-950',
+      tone: 'kf-tone-warning',
     };
   }
   if (human) {
@@ -1689,7 +1689,7 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
       script: 'אם אין צורך בטיפול אישי נוסף — להחזיר למענה אוטומטי. אם יש צורך — לענות ידנית ולתעד.',
       ownerLine: 'בטיפול אנושי',
       primaryAction: 'return_ai' as const,
-      tone: 'border-amber-200 bg-amber-50 text-amber-950',
+      tone: 'kf-tone-warning',
     };
   }
   if (ai) {
@@ -1851,12 +1851,12 @@ function TriageStateBanner({ lead }: { lead: LeadDetailType }) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-2.5 text-sm ring-1 ring-slate-200">
       {lead.outcome ? (
-        <span className="inline-flex items-center gap-2 rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
+        <span className="kf-chip kf-tone-accent gap-2 rounded-full px-3">
           🏷 נסגר ל: {outcomeLabels[lead.outcome] ?? lead.outcome}
           {isManager ? (
             <button
               type="button"
-              className="text-violet-600 underline hover:text-violet-900"
+              className="underline opacity-80 hover:opacity-100"
               disabled={act.isPending}
               onClick={() => act.mutate({ action: 'set_outcome', leadId: lead.id, outcome: null })}
             >
@@ -1866,12 +1866,12 @@ function TriageStateBanner({ lead }: { lead: LeadDetailType }) {
         </span>
       ) : null}
       {snoozeActive ? (
-        <span className="inline-flex items-center gap-2 rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
+        <span className="kf-chip kf-tone-neutral gap-2 rounded-full px-3">
           ⏰ בהשהיה עד {new Date(lead.snoozed_until as string).toLocaleDateString('he-IL')}
           {lead.snooze_note ? ` · ${lead.snooze_note}` : ''}
           <button
             type="button"
-            className="text-slate-500 underline hover:text-slate-900"
+            className="underline opacity-80 hover:opacity-100"
             disabled={act.isPending}
             onClick={() => act.mutate({ action: 'unsnooze_lead', leadId: lead.id })}
           >
@@ -1880,11 +1880,11 @@ function TriageStateBanner({ lead }: { lead: LeadDetailType }) {
         </span>
       ) : null}
       {lead.no_proactive_contact ? (
-        <span className="inline-flex items-center gap-2 rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700 ring-1 ring-orange-200">
+        <span className="kf-chip kf-tone-warning gap-2 rounded-full px-3">
           ללא פנייה יזומה בשלב הזה
           <button
             type="button"
-            className="text-orange-500 underline hover:text-orange-800"
+            className="underline opacity-80 hover:opacity-100"
             disabled={act.isPending}
             onClick={() => act.mutate({ action: 'set_no_followup', leadId: lead.id, enabled: false })}
           >
@@ -1928,14 +1928,14 @@ function HandlerBanner({
     switch (ownership) {
       case 'ai_active':
         return {
-          tone: 'bg-violet-50 text-violet-800 ring-violet-200',
+          tone: 'kf-tone-accent',
           icon: '🤖',
           label: 'AI מטפל בליד',
           detail: 'הבוט עונה אוטומטית להודעות נכנסות.',
         };
       case 'mia_active':
         return {
-          tone: 'bg-amber-50 text-amber-800 ring-amber-200',
+          tone: 'kf-tone-warning',
           icon: '👤',
           label: 'נציג מטפל',
           detail: lastHumanTouchAt
@@ -1944,28 +1944,28 @@ function HandlerBanner({
         };
       case 'phone_sales_pending':
         return {
-          tone: 'bg-orange-50 text-orange-800 ring-orange-200',
+          tone: 'kf-tone-warning',
           icon: '📞',
           label: 'ממתין לשיחת טלפון',
           detail: 'הליד סומן להתקשרות יזומה.',
         };
       case 'shared_watch':
         return {
-          tone: 'bg-slate-100 text-slate-700 ring-slate-200',
+          tone: 'kf-tone-neutral',
           icon: '👁️',
           label: 'במעקב משותף',
           detail: 'אין מטפל פעיל; הצוות עוקב.',
         };
       case 'suppressed':
         return {
-          tone: 'bg-rose-50 text-rose-800 ring-rose-200',
+          tone: 'kf-tone-danger',
           icon: '🚫',
           label: 'ליד מנותק',
           detail: 'לא נשלחות הודעות אוטומטיות.',
         };
       default:
         return {
-          tone: 'bg-slate-100 text-slate-700 ring-slate-200',
+          tone: 'kf-tone-neutral',
           icon: '•',
           label: ownership,
           detail: '',

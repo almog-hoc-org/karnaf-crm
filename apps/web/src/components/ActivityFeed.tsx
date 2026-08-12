@@ -190,22 +190,22 @@ function ActionCard({ activity }: { activity: ActivityRow }) {
   const isOpen = activity.status === 'open' || activity.status === 'pending' || activity.status === 'claimed';
   const isDone = activity.status === 'done' || activity.status === 'resolved';
   const icon = activity.activity_type === 'queue_item' ? '⚡' : '✅';
-  const tone = isOpen ? 'border-amber-300 bg-amber-50' : isDone ? 'border-emerald-200 bg-emerald-50/60' : 'border-slate-200 bg-white';
+  // Colour reports state (open / done); the icon and title report what
+  // kind of thing it is. Meetings, calls and notes no longer each get a
+  // hue of their own.
+  const tone = isOpen ? 'kf-tone-warning' : isDone ? 'kf-tone-success' : 'kf-tone-neutral';
   const overdueMs = activity.due_at ? Date.parse(activity.due_at) : NaN;
   const overdue = isOpen && Number.isFinite(overdueMs) && overdueMs < Date.now();
 
   return (
-    <li className={clsx('rounded-2xl border p-3 shadow-sm', tone)}>
+    <li className={clsx('rounded-lg p-3 ring-1 ring-inset', tone)}>
       <div className="flex items-center gap-2 text-xs text-slate-500">
         <span aria-hidden="true">{icon}</span>
         <span className="font-semibold text-slate-700">{activity.title || activity.activity_type}</span>
+        {/* The card's own tint already says open/done — the pill repeats
+            the word, not the colour. */}
         {activity.status ? (
-          <span className={clsx(
-            'rounded-full px-2 py-0.5 text-[10px] font-medium',
-            isOpen && 'bg-amber-100 text-amber-800',
-            isDone && 'bg-emerald-100 text-emerald-800',
-            !isOpen && !isDone && 'bg-slate-100 text-slate-600',
-          )}>{activity.status}</span>
+          <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium">{activity.status}</span>
         ) : null}
         <span className="ms-auto" title={activity.occurred_at}>{formatRelative(activity.occurred_at)}</span>
       </div>
@@ -223,11 +223,11 @@ function ActionCard({ activity }: { activity: ActivityRow }) {
 function MeetingCard({ activity }: { activity: ActivityRow }) {
   const startsAt = (activity.payload as { starts_at?: string } | null)?.starts_at ?? activity.occurred_at;
   return (
-    <li className="rounded-2xl border border-violet-200 bg-violet-50/60 p-3 shadow-sm">
+    <li className="kf-tone-accent rounded-lg p-3 ring-1 ring-inset">
       <div className="flex items-center gap-2 text-xs text-slate-500">
         <span aria-hidden="true">📅</span>
         <span className="font-semibold text-slate-700">{activity.title || 'פגישה'}</span>
-        {activity.status ? <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] text-violet-800">{activity.status}</span> : null}
+        {activity.status ? <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px]">{activity.status}</span> : null}
         <span className="ms-auto" title={startsAt}>{formatRelative(startsAt)}</span>
       </div>
       {activity.body ? <div className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{activity.body}</div> : null}
@@ -237,7 +237,7 @@ function MeetingCard({ activity }: { activity: ActivityRow }) {
 
 function CallCard({ activity }: { activity: ActivityRow }) {
   return (
-    <li className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-3 shadow-sm">
+    <li className="kf-tone-accent rounded-lg p-3 ring-1 ring-inset">
       <div className="flex items-center gap-2 text-xs text-slate-500">
         <span aria-hidden="true">📞</span>
         <span className="font-semibold text-slate-700">{activity.title || 'שיחת טלפון'}</span>
@@ -250,7 +250,7 @@ function CallCard({ activity }: { activity: ActivityRow }) {
 
 function NoteCard({ activity }: { activity: ActivityRow }) {
   return (
-    <li className="rounded-2xl border border-slate-200 bg-yellow-50/40 p-3 shadow-sm">
+    <li className="kf-tone-neutral rounded-lg p-3 ring-1 ring-inset">
       <div className="flex items-center gap-2 text-xs text-slate-500">
         <span aria-hidden="true">📝</span>
         <span className="font-semibold text-slate-700">{activity.title || 'הערה'}</span>

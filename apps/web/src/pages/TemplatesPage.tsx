@@ -231,7 +231,7 @@ export function TemplatesPage() {
                   {tpl.variables_used.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-1 text-xs">
                       {tpl.variables_used.map((v) => (
-                        <code key={v} className="rounded bg-violet-50 px-1.5 py-0.5 font-mono text-violet-700">
+                        <code key={v} className="kf-tone-accent rounded px-1.5 py-0.5 font-mono">
                           {`{{${v}}}`}
                         </code>
                       ))}

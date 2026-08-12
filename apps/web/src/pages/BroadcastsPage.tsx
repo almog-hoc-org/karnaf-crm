@@ -549,7 +549,7 @@ function DetailDialog({ id, onClose }: { id: string; onClose: () => void }) {
             <StatTile label="בתור" value={s.pending + s.enqueued} tone="text-amber-700" />
             <StatTile label="נשלחו" value={s.sent} tone="text-emerald-700" />
             <StatTile label="נמסרו" value={s.delivered} tone="text-sky-700" />
-            <StatTile label="נקראו" value={s.read} tone="text-indigo-700" />
+            <StatTile label="נקראו" value={s.read} tone="text-brand-700" />
             <StatTile label="נכשלו" value={s.failed} tone="text-rose-700" />
             <StatTile label="דולגו" value={s.skipped} tone="text-slate-500" />
           </section>

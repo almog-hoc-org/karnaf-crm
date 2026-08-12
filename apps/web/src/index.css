@@ -2,12 +2,19 @@
 
 @theme {
   --font-sans: 'Heebo', 'Assistant', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Full brand ramp. 200/300/400/800/900 were referenced across eight
+     places (text-brand-800, border-brand-300, …) without ever being
+     defined, so those utilities rendered nothing at all. */
   --color-brand-50: oklch(0.97 0.01 270);
   --color-brand-100: oklch(0.93 0.04 270);
+  --color-brand-200: oklch(0.88 0.07 270);
+  --color-brand-300: oklch(0.8 0.1 270);
+  --color-brand-400: oklch(0.67 0.13 270);
   --color-brand-500: oklch(0.55 0.15 270);
   --color-brand-600: oklch(0.48 0.16 270);
   --color-brand-700: oklch(0.4 0.17 270);
-  --radius-card: 0.75rem;
+  --color-brand-800: oklch(0.33 0.14 270);
+  --color-brand-900: oklch(0.27 0.11 270);
 
   /* Typography scale — tuned for Hebrew/Heebo (RTL, no case, tight
      sidebearings). Body sizes get reading leading by default: the ~30
@@ -102,7 +109,25 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--color-brand-60
 .kf-collapse[data-state='closed'] { grid-template-rows: 0fr; }
 .kf-collapse > * { overflow: hidden; }
 
-/* Component primitives */
+/* Component primitives
+   --------------------
+   These live in @layer components on purpose. Unlayered rules beat every
+   layered utility no matter the specificity, so while .kf-card and .kf-btn
+   sat outside the cascade layers they silently swallowed the utilities
+   written next to them in the JSX: `kf-card border-s-rose-500` kept the
+   card's slate border (the lead cards' whole urgency stripe was invisible),
+   and `kf-btn bg-emerald-600` on the "טופל ✓" button rendered white. Inside
+   the layer, a utility next to the class wins — which is what every call
+   site already assumed.
+
+   Elevation has exactly three steps, and each one means something:
+   shadow-sm = a surface at rest (cards, inputs, buttons), shadow-md = it
+   lifted under the pointer, shadow-xl = it is floating above the page
+   (modals, popovers, the action dock, toasts). Nothing in between.
+
+   Motion primitives above stay unlayered deliberately: a stray
+   `transition` utility in the markup must not outrank .kf-layer's timing. */
+@layer components {
 .kf-card { @apply rounded-xl border border-slate-200 bg-white shadow-sm; }
 .kf-btn { @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-5 font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100; }
 /* Same instant-dip / eased-release asymmetry as .kf-pressable: the
@@ -110,23 +135,41 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--color-brand-60
    acknowledge the press. */
 .kf-btn { touch-action: manipulation; }
 .kf-btn:active:not(:disabled) { transition-duration: 0ms; }
-.kf-btn-primary { @apply border-transparent bg-brand-600 text-white shadow hover:bg-brand-700; }
-.kf-btn-danger { @apply border-transparent bg-rose-600 text-white shadow hover:bg-rose-700; }
+.kf-btn-primary { @apply border-transparent bg-brand-600 text-white shadow-sm hover:bg-brand-700; }
+.kf-btn-danger { @apply border-transparent bg-rose-600 text-white shadow-sm hover:bg-rose-700; }
 .kf-btn-ghost { @apply border-transparent bg-transparent text-slate-600 shadow-none hover:bg-slate-100; }
 .kf-input { @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-5 shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500; }
-.kf-badge { @apply inline-flex items-center rounded-md px-2 py-1 text-xs leading-4 font-medium; }
-.kf-badge-hot { @apply bg-rose-50 text-rose-700; }
-.kf-badge-warm { @apply bg-amber-50 text-amber-700; }
-.kf-badge-cool { @apply bg-sky-50 text-sky-700; }
-.kf-badge-cold { @apply bg-slate-100 text-slate-600; }
-.kf-badge-success { @apply bg-emerald-50 text-emerald-700; }
-.kf-badge-mute { @apply bg-slate-100 text-slate-600; }
-/* Ownership palette — distinct from status (cool/warm) so the eye can
-   separate "what stage" from "who is handling" at a glance. */
-.kf-badge-ai { @apply bg-violet-50 text-violet-700; }
-.kf-badge-mia { @apply bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200; }
-.kf-badge-phone { @apply bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200; }
-.kf-badge-watch { @apply bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200; }
+/* Semantic tone system
+   --------------------
+   One meaning, one colour, everywhere. Before this there were nine
+   parallel vocabularies for the same four ideas — chipClass(),
+   classifyRow(), the toast tones, the guidance-card map, plus hand-rolled
+   pills — and five of them could land on a single lead card, so nothing
+   read as urgent because everything was coloured.
+
+   A tone says what something MEANS; a shape (.kf-chip / .kf-callout) says
+   how loudly to say it. Tones carry no ring width of their own — the
+   shape owns that, which is also how the old border-vs-ring coin flip on
+   sibling boxes got settled.
+
+   Legacy badge names are grouped onto the tone they now mean, which is
+   also where the hue count drops from nine to six: -cold/-mute/-watch
+   were three ways to say "neutral", -mia/-warm two ways to say
+   "warning", -phone was orange and -ai violet for no reason either could
+   defend. */
+.kf-tone-danger, .kf-badge-hot { @apply bg-rose-50 text-rose-700 ring-rose-200; }
+.kf-tone-warning, .kf-badge-warm, .kf-badge-mia, .kf-badge-phone { @apply bg-amber-50 text-amber-700 ring-amber-200; }
+.kf-tone-info, .kf-badge-cool { @apply bg-sky-50 text-sky-700 ring-sky-200; }
+.kf-tone-success, .kf-badge-success { @apply bg-emerald-50 text-emerald-700 ring-emerald-200; }
+.kf-tone-accent, .kf-badge-ai { @apply bg-brand-50 text-brand-700 ring-brand-200; }
+.kf-tone-neutral, .kf-badge-cold, .kf-badge-mute, .kf-badge-watch { @apply bg-slate-100 text-slate-600 ring-slate-200; }
+
+/* The small label. .kf-badge is the same shape under its original name
+   (48 call sites) rather than a second one that drifts from it. */
+.kf-chip, .kf-badge { @apply inline-flex items-center rounded-md px-2 py-1 text-xs leading-4 font-medium ring-1 ring-inset; }
+/* The full-width coloured box. Nested inside .kf-card (rounded-xl), so it
+   is one step tighter — a child is never rounder than its parent. */
+.kf-callout { @apply rounded-lg px-3 py-2 text-sm ring-1 ring-inset; }
 
 /* Tables */
 .kf-table { @apply w-full text-sm; }
@@ -138,6 +181,7 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--color-brand-60
 /* SLA risk highlights for queue + tasks rows. */
 .kf-row-overdue { @apply bg-rose-50/70 hover:bg-rose-100/70; }
 .kf-row-warning { @apply bg-amber-50/70 hover:bg-amber-100/70; }
+}
 
 /* Visually-hidden, keyboard-accessible (for screen-reader-only labels). */
 .kf-sr-only {
@@ -221,7 +265,7 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--color-brand-60
    toast dismissed mid-entry reverses from where it is, and the stack
    collapses the vacated height instead of snapping the siblings up. */
 .kf-toast {
-  @apply pointer-events-auto flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm shadow-lg;
+  @apply pointer-events-auto flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm shadow-xl;
   transition-property: opacity, transform;
   transition-duration: var(--duration-enter);
   transition-timing-function: var(--ease-out-soft);
