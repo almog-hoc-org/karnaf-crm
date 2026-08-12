@@ -154,7 +154,7 @@ function LeadWorkCard({
             </span>
             {lead.awaiting_reply ? (
               <span
-                className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800 ring-1 ring-amber-300"
+                className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-300"
                 title={lead.last_inbound_at ? `ההודעה האחרונה מהלקוח: ${formatRelative(lead.last_inbound_at)}` : undefined}
               >
                 ⏳ ממתין לתשובה
@@ -162,7 +162,7 @@ function LeadWorkCard({
             ) : null}
             {lead.outcome ? (
               <span
-                className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-800 ring-1 ring-violet-300"
+                className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-800 ring-1 ring-violet-300"
                 title={lead.outcome_note ?? undefined}
               >
                 🏷 נסגר ל: {OUTCOME_LABELS[lead.outcome] ?? lead.outcome}

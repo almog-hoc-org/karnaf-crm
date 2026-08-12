@@ -345,7 +345,7 @@ function ManagerInsightsPanel({
         </div>
         <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr] lg:items-start">
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">מה כדאי לעשות לפי הנתונים?</h2>
+            <h2 className="text-xl font-semibold tracking-tight text-slate-950">מה כדאי לעשות לפי הנתונים?</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
               הדוח מתרגם מספרים להחלטות: מאיזה מקור להביא עוד לידים, איפה מאבדים מענה, ואיזה ערוץ דורש בדיקה.
             </p>

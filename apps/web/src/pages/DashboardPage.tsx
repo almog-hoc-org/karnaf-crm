@@ -135,7 +135,7 @@ function TodayCommandCenter({
             <span aria-hidden="true">🎯</span>
             ניהול היום
           </div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">{priority.title}</h2>
+          <h2 className="text-xl font-semibold tracking-tight text-slate-950">{priority.title}</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{priority.detail}</p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Link to={priority.href} className="kf-btn kf-btn-primary justify-center">{priority.cta}</Link>

@@ -289,7 +289,7 @@ export function InboxPage() {
                 'flex flex-wrap items-baseline justify-between gap-2 rounded-2xl px-4 py-2',
                 group.tone === 'hot' ? 'bg-rose-50 ring-1 ring-rose-100' : 'bg-slate-100',
               )}>
-                <h2 className={clsx('text-sm font-bold', group.tone === 'hot' ? 'text-rose-800' : 'text-slate-700')}>
+                <h2 className={clsx('text-sm font-semibold', group.tone === 'hot' ? 'text-rose-800' : 'text-slate-700')}>
                   {group.title}
                 </h2>
                 <span className="text-xs text-slate-500">{group.hint}</span>
@@ -630,7 +630,7 @@ function InboxTrainingGuide() {
       </button>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">הדרך הקצרה לעבודה נכונה</p>
+          <p className="text-xs font-semibold text-brand-700">הדרך הקצרה לעבודה נכונה</p>
           <h2 className="mt-1 text-lg font-semibold text-slate-900">פותחים כרטיס, מטפלים, וסוגרים — בלי לחפש ידנית.</h2>
           <p className="mt-1 text-sm leading-6 text-slate-500">
             המסך הזה הוא נקודת ההתחלה של עובד. אם משהו דורש אדם, הוא יופיע כאן עם סיבה ופעולה מומלצת.
@@ -657,7 +657,7 @@ function DailyFocusPanel({ rows }: { rows: AttentionRow[] }) {
 
   return (
     <section className="kf-card border-s-4 border-s-brand-500 p-4" aria-label="מיקוד יומי">
-      <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">הדבר הראשון לפתוח</p>
+      <p className="text-xs font-semibold text-brand-700">הדבר הראשון לפתוח</p>
       {first ? (
         <>
           <div className="mt-1 flex flex-wrap items-center gap-2">

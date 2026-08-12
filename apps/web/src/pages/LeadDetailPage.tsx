@@ -542,7 +542,7 @@ export function LeadDetailPage() {
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="kf-card p-4 lg:col-span-2">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">
+            <h2 className="text-lg font-semibold">
               שיחה
               {detailQ.data?.conversations[0]?.channel === 'instagram' ? (
                 <span className="ms-2 inline-flex items-center rounded-full bg-fuchsia-100 px-2 py-0.5 text-xs font-medium text-fuchsia-700">אינסטגרם</span>
@@ -627,7 +627,7 @@ export function LeadDetailPage() {
               to know the lead and focus the call before diving into the full
               record. Read-only (pulled from AI capture) + manual operator notes. */}
           <div className="kf-card border-brand-300 bg-brand-50/50 p-4">
-            <h2 className="font-semibold">תקציר ליד</h2>
+            <h2 className="text-lg font-semibold">תקציר ליד</h2>
             <p className="mt-0.5 text-xs text-slate-500">מבט מהיר לפני שיחה</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <HeatBadge heat={lead.lead_heat} />
@@ -670,7 +670,7 @@ export function LeadDetailPage() {
               (it's the routing key for inbound webhooks; rewriting it would
               orphan the conversation history). */}
           <div className="kf-card p-4">
-            <h2 className="font-semibold">פרטי קשר</h2>
+            <h2 className="text-lg font-semibold">פרטי קשר</h2>
             <dl className="mt-2 space-y-1 text-sm">
               <EditableRow
                 k="שם מלא"
@@ -701,7 +701,7 @@ export function LeadDetailPage() {
               the long tail collapses into <details> so a beginner sees
               only what changes every conversation. */}
           <div className="kf-card p-4">
-            <h2 className="font-semibold">סיווג ואבחון</h2>
+            <h2 className="text-lg font-semibold">סיווג ואבחון</h2>
             <p className="mt-1 text-xs text-slate-500">
               הסיווג העיקרי תמיד גלוי. השאר נפתח כשצריך.
             </p>
@@ -894,7 +894,7 @@ export function LeadDetailPage() {
               Done items are read in the timeline. */}
           {queueItems.filter((q) => q.status === 'pending' || q.status === 'claimed').length > 0 ? (
             <div className="kf-card p-4">
-              <h2 className="font-semibold">פעולות פתוחות</h2>
+              <h2 className="text-lg font-semibold">פעולות פתוחות</h2>
               <p className="text-xs text-slate-500">פריטים שמחכים לסגירה ידנית. ההיסטוריה המלאה בציר הזמן.</p>
               <ul className="mt-2 space-y-2">
                 {queueItems
@@ -1259,7 +1259,7 @@ function PipelineOverviewCard({
 
   return (
     <div className="kf-card p-4">
-      <h2 className="font-semibold">מסלולים ועסקאות</h2>
+      <h2 className="text-lg font-semibold">מסלולים ועסקאות</h2>
       <p className="mt-1 text-xs text-slate-500">
         שכבת ה־PRD החדשה: איש קשר אחד יכול להחזיק כמה מסלולי מכירה במקביל.
       </p>
@@ -2643,7 +2643,7 @@ function AutomationHistoryCard({ contactId }: { contactId: string }) {
 
   return (
     <div className="kf-card p-4">
-      <h2 className="font-semibold">היסטוריית אוטומציה</h2>
+      <h2 className="text-lg font-semibold">היסטוריית אוטומציה</h2>
       {/* Tier 5 polish — journey rows + automation rows linkable to
           their definitions for one-click drill-down. */}
       {journeys.length > 0 ? (

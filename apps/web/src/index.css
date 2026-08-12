@@ -8,6 +8,25 @@
   --color-brand-600: oklch(0.48 0.16 270);
   --color-brand-700: oklch(0.4 0.17 270);
   --radius-card: 0.75rem;
+
+  /* Typography scale — tuned for Hebrew/Heebo (RTL, no case, tight
+     sidebearings). Body sizes get reading leading by default: the ~30
+     hand-written leading-6/leading-5 overrides scattered in pages were
+     the intent all along — now it's the default for every text-sm/xs.
+     Controls (.kf-btn/.kf-input/.kf-badge) pin their own compact leading
+     below so button/input/badge heights don't change. */
+  --text-xs--line-height: 1.25rem;
+  --text-sm--line-height: 1.5rem;
+  --text-2xl--line-height: 1.3;
+  --text-3xl--line-height: 1.2;
+  --text-4xl--line-height: 1.1;
+
+  /* Hebrew display tracking: the Latin default (-0.025em) is too
+     aggressive for Heebo, and positive tracking breaks Hebrew word
+     cohesion. Recalibrating the tokens fixes every tracking-tight
+     heading at once. */
+  --tracking-tight: -0.01em;
+  --tracking-wide: 0.02em;
 }
 
 html { direction: rtl; font-family: var(--font-sans); }
@@ -22,12 +41,12 @@ body {
 
 /* Component primitives */
 .kf-card { @apply rounded-xl border border-slate-200 bg-white shadow-sm; }
-.kf-btn { @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100; }
+.kf-btn { @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-5 font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100; }
 .kf-btn-primary { @apply border-transparent bg-brand-600 text-white shadow hover:bg-brand-700; }
 .kf-btn-danger { @apply border-transparent bg-rose-600 text-white shadow hover:bg-rose-700; }
 .kf-btn-ghost { @apply border-transparent bg-transparent text-slate-600 shadow-none hover:bg-slate-100; }
-.kf-input { @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500; }
-.kf-badge { @apply inline-flex items-center rounded-md px-2 py-1 text-xs font-medium; }
+.kf-input { @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-5 shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500; }
+.kf-badge { @apply inline-flex items-center rounded-md px-2 py-1 text-xs leading-4 font-medium; }
 .kf-badge-hot { @apply bg-rose-50 text-rose-700; }
 .kf-badge-warm { @apply bg-amber-50 text-amber-700; }
 .kf-badge-cool { @apply bg-sky-50 text-sky-700; }
@@ -44,7 +63,7 @@ body {
 /* Tables */
 .kf-table { @apply w-full text-sm; }
 .kf-table thead { @apply bg-slate-50 text-slate-600; }
-.kf-table th { @apply text-right p-3 font-medium tracking-tight; }
+.kf-table th { @apply text-right p-3 font-medium; }
 .kf-table tbody tr { @apply border-t border-slate-100 transition hover:bg-slate-50/70; }
 .kf-table td { @apply p-3 align-middle; }
 
