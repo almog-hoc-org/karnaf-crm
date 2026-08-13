@@ -751,6 +751,12 @@ export interface AttentionRow {
   utm_campaign?: string | null;
   landing_page?: string | null;
   last_inbound_text?: string | null;
+  // v5 — the conversation behind the latest inbound message, so the inbox
+  // can send a reply in place (send-reply requires a conversation id).
+  // Optional: against a pre-v5 RPC these are undefined and the inline
+  // composer simply doesn't render.
+  last_inbound_conversation_id?: string | null;
+  last_inbound_channel?: string | null;
 }
 
 export interface ApiOk {

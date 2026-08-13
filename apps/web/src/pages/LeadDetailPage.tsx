@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import clsx from 'clsx';
@@ -6,7 +6,6 @@ import {
   fetchAutomationRunsForContact,
   fetchJourneyRunsForContact,
   fetchLeadDetail,
-  fetchMessageTemplates,
   postAdminAction,
   type LeadOutcome,
   postLeadManage,
@@ -17,10 +16,10 @@ import {
   type LeadMetaUpdates,
   type ReopenTarget,
 } from '@/lib/api';
-import { contextFromLead, renderTemplate } from '@/lib/template-render';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { EmojiPicker } from '@/components/EmojiPicker';
+import { ReplyComposer } from '@/components/ReplyComposer';
+import { SEGMENT_QUICK_OPTIONS } from '@/components/QuickClassifyPopover';
 import { SnoozePopover } from '@/components/SnoozePopover';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
 import { ChatTimeline } from '@/components/ChatTimeline';
@@ -42,7 +41,6 @@ import {
   formatDateTime, formatRelative,
 } from '@/lib/format';
 import type {
-  ConversationRow,
   DealRow,
   IntakeSegment,
   InquiryType,
@@ -51,7 +49,6 @@ import type {
   LeadHeat,
   MeetingRow,
   MessageRow,
-  MessageTemplateRow,
   ProductInterest,
   ProgramMemberRow,
   QueueRow,
@@ -211,6 +208,19 @@ export function LeadDetailPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
+  // Duplicate-merge, previously locked inside QueuePage (the only screen
+  // with access to payload_json). lead-detail selects work_queue.* so the
+  // payload is right here; the backend auto-resolves the queue item.
+  const mergeDuplicate = useMutation({
+    mutationFn: (duplicateLeadId: string) =>
+      postAdminAction({ action: 'merge_lead_duplicate', leadId, duplicateLeadId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lead-detail', leadId] });
+      toast.success('הלידים מוזגו');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
   const resolveQueue = useMutation({
     mutationFn: (input: { queueItemId: string; note?: string }) =>
       postQueueResolve({ queueItemId: input.queueItemId, resolutionNote: input.note ?? null }),
@@ -232,6 +242,7 @@ export function LeadDetailPage() {
     destructive: boolean;
   } | null>(null);
   const [pendingQueueClose, setPendingQueueClose] = useState<{ id: string; label: string } | null>(null);
+  const [pendingMergeDuplicateId, setPendingMergeDuplicateId] = useState<string | null>(null);
   const [queueCloseNote, setQueueCloseNote] = useState('');
   const [reopenOpen, setReopenOpen] = useState(false);
   const [conversationTab, setConversationTab] = useState<'chat' | 'activity'>('chat');
@@ -608,7 +619,7 @@ export function LeadDetailPage() {
           ) : (
             <ActivityFeed activities={activities} />
           )}
-          <ReplyBox
+          <ReplyComposer
             disabled={!conversationId || lead.do_not_contact || lead.removed_by_request}
             onSend={(text) => sendReply.mutateAsync(text)}
             sending={sendReply.isPending}
@@ -906,19 +917,39 @@ export function LeadDetailPage() {
                         <span className="text-xs text-slate-500">{q.status}</span>
                       </div>
                       {q.reason ? <div className="text-slate-600">{q.reason}</div> : null}
-                      <button
-                        type="button"
-                        className="kf-btn mt-2 text-xs"
-                        onClick={() => {
-                          setPendingQueueClose({
-                            id: q.id,
-                            label: QUEUE_LABELS[q.queue_type] ?? q.queue_type,
-                          });
-                          setQueueCloseNote('');
-                        }}
-                      >
-                        סגירה
-                      </button>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="kf-btn text-xs"
+                          onClick={() => {
+                            setPendingQueueClose({
+                              id: q.id,
+                              label: QUEUE_LABELS[q.queue_type] ?? q.queue_type,
+                            });
+                            setQueueCloseNote('');
+                          }}
+                        >
+                          סגירה
+                        </button>
+                        {(auth.role === 'owner' || auth.role === 'admin') && mergeDuplicateId(q) ? (
+                          <>
+                            <button
+                              type="button"
+                              className="kf-btn kf-btn-danger text-xs"
+                              disabled={mergeDuplicate.isPending}
+                              onClick={() => setPendingMergeDuplicateId(mergeDuplicateId(q))}
+                            >
+                              מיזוג כפילות
+                            </button>
+                            <Link
+                              to={`/leads/${mergeDuplicateId(q)}`}
+                              className="text-xs text-brand-700 hover:underline"
+                            >
+                              צפייה בליד הכפול
+                            </Link>
+                          </>
+                        ) : null}
+                      </div>
                     </li>
                   ))}
               </ul>
@@ -1022,6 +1053,21 @@ export function LeadDetailPage() {
           />
         </label>
       </ConfirmDialog>
+
+      <ConfirmDialog
+        open={!!pendingMergeDuplicateId}
+        title={`מיזוג לידים — ${lead.full_name ?? ''}`}
+        description="הרשומה הכפולה תמוזג לתוך הליד הזה: שיחות, הודעות, עסקאות והיסטוריה יעברו אליו, והכפילות תסומן ככזו. הפעולה אינה הפיכה."
+        confirmLabel="מיזוג"
+        destructive
+        busy={mergeDuplicate.isPending}
+        onCancel={() => setPendingMergeDuplicateId(null)}
+        onConfirm={() => {
+          if (!pendingMergeDuplicateId) return;
+          mergeDuplicate.mutate(pendingMergeDuplicateId);
+          setPendingMergeDuplicateId(null);
+        }}
+      />
 
       <ConfirmDialog
         open={reopenOpen}
@@ -2332,14 +2378,10 @@ const PRODUCT_OPTIONS: Array<{ value: ProductInterest; label: string }> = [
 
 
 
-const SEGMENT_OPTIONS: Array<{ value: IntakeSegment; label: string }> = [
-  { value: 'hot_sales', label: 'מכירה חמה' },
-  { value: 'needs_human', label: 'נציג אנושי' },
-  { value: 'needs_nurture', label: 'טיפוח/הבשלה' },
-  { value: 'info_seeker', label: 'מחפש מידע' },
-  { value: 'support_or_existing', label: 'תמיכה/קיים' },
-  { value: 'unknown', label: 'לא ידוע' },
-];
+// The segment list lives with the quick-classify popover — one list for
+// the quick path (inbox/leads row) and this full editor, so they can't
+// drift apart.
+const SEGMENT_OPTIONS = SEGMENT_QUICK_OPTIONS;
 
 const CLASSIFICATION_CONFIDENCE_LABELS: Record<'high' | 'medium' | 'low', string> = {
   high: 'גבוה',
@@ -2413,188 +2455,6 @@ function CallLogForm({
         {submitting ? 'שומר...' : 'שמירת שיחה'}
       </button>
       {errorMessage ? <p className="text-rose-600">{errorMessage}</p> : null}
-    </form>
-  );
-}
-
-function ReplyBox({
-  disabled,
-  onSend,
-  sending,
-  errorMessage,
-  lead,
-  channel = 'whatsapp',
-  lastInboundAt,
-  conversations = [],
-  conversationId,
-  onPickConversation,
-}: {
-  disabled: boolean;
-  onSend: (text: string) => Promise<unknown>;
-  sending: boolean;
-  errorMessage: string | null;
-  lead: { full_name: string | null; phone: string | null; email: string | null; city: string | null };
-  channel?: string;
-  lastInboundAt?: string | null;
-  conversations?: ConversationRow[];
-  conversationId?: string;
-  onPickConversation?: (id: string) => void;
-}) {
-  const [text, setText] = useState('');
-  const [missingVars, setMissingVars] = useState<string[]>([]);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const templatesQ = useQuery({
-    queryKey: ['templates', 'whatsapp', 'active'],
-    queryFn: () => fetchMessageTemplates({ channel: 'whatsapp', status: 'active' }),
-    enabled: pickerOpen,
-  });
-
-  // 24h-window awareness: outside the window a WhatsApp reply goes out as
-  // the fallback template, whose single body param holds 600 chars max.
-  const windowOpen = channel !== 'instagram' && !!lastInboundAt &&
-    Date.now() - Date.parse(lastInboundAt) < 24 * 60 * 60 * 1000;
-  const templateMode = channel !== 'instagram' && !windowOpen;
-  const overTemplateLimit = templateMode && text.length > 600;
-
-  // The draft clears ONLY after a successful send — a failed send keeps
-  // the operator's text (the old version wiped it on submit).
-  async function send() {
-    if (!text.trim() || disabled || sending) return;
-    try {
-      await onSend(text.trim());
-      setText('');
-      setMissingVars([]);
-    } catch {
-      // The mutation's onError already toasts; the draft stays put.
-    }
-  }
-
-  function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    void send();
-  }
-
-  // Caret-aware insertion — used by both the emoji picker and the
-  // template picker (which used to WIPE whatever was already typed).
-  function insertAtCaret(insert: string) {
-    const el = textareaRef.current;
-    if (!el) {
-      setText((t) => t + insert);
-      return;
-    }
-    const start = el.selectionStart ?? text.length;
-    const endPos = el.selectionEnd ?? text.length;
-    const next = text.slice(0, start) + insert + text.slice(endPos);
-    setText(next);
-    requestAnimationFrame(() => {
-      el.focus();
-      const caret = start + insert.length;
-      el.setSelectionRange(caret, caret);
-    });
-  }
-
-  function insertTemplate(template: MessageTemplateRow) {
-    const ctx = contextFromLead(lead);
-    const { text: rendered, missing } = renderTemplate(template.body, ctx);
-    setMissingVars(missing);
-    insertAtCaret(text.trim().length ? `\n${rendered}` : rendered);
-    setPickerOpen(false);
-  }
-
-  const showConversationPicker = conversations.length > 1 && onPickConversation;
-
-  return (
-    <form onSubmit={submit} className="mt-3 space-y-2">
-      {showConversationPicker ? (
-        <select
-          className="kf-input w-full text-xs sm:w-auto"
-          value={conversationId ?? ''}
-          onChange={(e) => onPickConversation?.(e.target.value)}
-          aria-label="בחירת שיחה לשליחה"
-        >
-          {conversations.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.channel === 'instagram' ? 'אינסטגרם' : 'וואטסאפ'} · פעילות אחרונה {formatRelative(c.last_activity_at)}
-            </option>
-          ))}
-        </select>
-      ) : null}
-      <textarea
-        ref={textareaRef}
-        className="kf-input min-h-[88px] w-full"
-        placeholder={disabled ? 'לא ניתן לשלוח (ליד מושתק או חסרה שיחה).' : 'הקלד תשובה ידנית... (Enter לשליחה, Shift+Enter לשורה חדשה)'}
-        value={text}
-        maxLength={2000}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            void send();
-          }
-        }}
-        disabled={disabled}
-      />
-      {missingVars.length ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-          שים לב: בתבנית חסרים נתונים לליד הזה — {missingVars.map((m) => `{{${m}}}`).join(', ')} יישלחו כפי שהם.
-          מומלץ להשלים ידנית לפני שליחה.
-        </div>
-      ) : null}
-      {overTemplateLimit ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-          מחוץ לחלון 24 שעות: הלקוח יקבל כעת רק את 600 התווים הראשונים (כתבנית), והנוסח המלא
-          יישלח אוטומטית כשיענה.
-        </div>
-      ) : null}
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <EmojiPicker disabled={disabled} onPick={insertAtCaret} />
-          {channel !== 'instagram' ? (
-            <button type="button" className="kf-btn text-xs" disabled={disabled}
-              onClick={() => setPickerOpen((open) => !open)}>
-              {pickerOpen ? 'סגור תבניות' : '+ הכנס תבנית'}
-            </button>
-          ) : null}
-          <span className="text-slate-500">
-            {channel === 'instagram'
-              ? 'ייצא דרך אינסטגרם. מחוץ לחלון 24 שעות ההודעה תמתין עד שהלקוח יכתוב שוב.'
-              : windowOpen
-                ? 'ייצא דרך WhatsApp — חלון 24 השעות פתוח.'
-                : 'ייצא דרך WhatsApp. מחוץ לחלון 24 שעות תישלח תבנית.'}
-          </span>
-          <span className={clsx('tabular-nums', text.length > 1800 ? 'text-amber-600' : 'text-slate-400')} dir="ltr">
-            {text.length}/2000
-          </span>
-        </div>
-        <button
-          type="submit"
-          className="kf-btn kf-btn-primary w-full sm:w-auto"
-          disabled={disabled || sending || !text.trim()}
-        >
-          {sending ? 'שולח...' : 'שליחה'}
-        </button>
-      </div>
-      {pickerOpen ? (
-        <div className="max-h-64 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2">
-          {templatesQ.isLoading ? <p className="text-xs text-slate-500">טוען תבניות...</p> :
-            templatesQ.data?.templates.length ? (
-              <ul className="space-y-1">
-                {templatesQ.data.templates.map((tpl) => (
-                  <li key={tpl.id}>
-                    <button type="button" className="w-full rounded-md p-2 text-right text-sm hover:bg-white"
-                      onClick={() => insertTemplate(tpl)}>
-                      <div className="font-medium">{tpl.name_he}</div>
-                      <div className="mt-0.5 truncate text-xs text-slate-500">{tpl.body}</div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="text-xs text-slate-500">אין תבניות פעילות. אפשר להוסיף ב-/templates.</p>}
-        </div>
-      ) : null}
-      {errorMessage ? <p className="text-sm text-rose-600">{errorMessage}</p> : null}
     </form>
   );
 }
@@ -2692,4 +2552,12 @@ function AutomationHistoryCard({ contactId }: { contactId: string }) {
       ) : null}
     </div>
   );
+}
+
+// Same contract as QueuePage: phone-collision review items carry the
+// duplicate's id in payload_json.
+function mergeDuplicateId(row: QueueRow): string | null {
+  if (row.queue_type !== 'manual_review_required') return null;
+  const dup = (row.payload_json ?? {}).duplicate_lead_id;
+  return typeof dup === 'string' && dup.length > 0 ? dup : null;
 }

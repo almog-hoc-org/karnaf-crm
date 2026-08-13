@@ -57,6 +57,15 @@ Deno.serve(async (req) => {
   const outcomeParam = url.searchParams.get('outcome');
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 200);
   const offset = Math.max(0, Number(url.searchParams.get('offset') ?? 0));
+  // Whitelisted sort orders — an unknown value falls back to the default,
+  // never into the query string. The awaiting mode below ignores this and
+  // keeps its own oldest-waiting-first order (that IS what the mode means).
+  const SORTS: Record<string, { column: string; ascending: boolean; nullsFirst?: boolean }> = {
+    updated_desc: { column: 'updated_at', ascending: false },
+    inbound_oldest: { column: 'last_inbound_at', ascending: true, nullsFirst: false },
+    score_desc: { column: 'lead_score', ascending: false },
+  };
+  const sort = SORTS[url.searchParams.get('sort') ?? 'updated_desc'] ?? SORTS.updated_desc;
 
   const isValidDate = (s: string | null): boolean => !!s && Number.isFinite(Date.parse(s));
 
@@ -67,8 +76,13 @@ Deno.serve(async (req) => {
       'id, full_name, phone, email, source, source_detail, source_campaign, utm_campaign, utm_source, landing_page, lead_status, lead_heat, ownership_mode, lead_score, payment_status, last_message_at, last_inbound_at, last_outbound_at, do_not_contact, removed_by_request, updated_at, created_at, inquiry_type, product_interest, interest_topic, intake_segment, suggested_next_action, outcome, outcome_note, outcome_at, snoozed_until, no_proactive_contact, program_members(lead_id)',
       { count: 'exact' },
     )
-    .order('updated_at', { ascending: false })
+    .order(sort.column, { ascending: sort.ascending, nullsFirst: sort.nullsFirst })
     .range(offset, offset + limit - 1);
+  // Deterministic tiebreak for non-default sorts (score ties, same-minute
+  // inbound bursts).
+  if (sort.column !== 'updated_at') {
+    query = query.order('updated_at', { ascending: false });
+  }
 
   if (awaitingOnly) {
     // Rebuild ordering/paging for the awaiting mode: oldest waiting

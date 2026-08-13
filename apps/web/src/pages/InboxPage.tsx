@@ -1,16 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
-import { fetchAttentionInbox, postAdminAction, postQueueResolve, type LeadOutcome } from '@/lib/api';
+import { fetchAttentionInbox, postAdminAction, postQueueResolve, postSendReply, type LeadOutcome } from '@/lib/api';
+import { ReplyComposer } from '@/components/ReplyComposer';
+import { QuickClassifyPopover } from '@/components/QuickClassifyPopover';
 import { SnoozePopover } from '@/components/SnoozePopover';
+import { useAuth } from '@/auth/auth-context';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import { describeLeadOrigin, formatRelative, PRODUCT_LABELS } from '@/lib/format';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
-import type { AttentionRow } from '@/lib/types';
+import type { AttentionRow, IntakeSegment, LeadHeat } from '@/lib/types';
 
 type WorkLane = 'all' | 'reply' | 'call' | 'risk' | 'ops';
 
@@ -76,15 +79,28 @@ export function InboxPage() {
   const [closeNote, setCloseNote] = useState('');
   const [copiedTalkTrackId, setCopiedTalkTrackId] = useState<string | null>(null);
   const [leavingLeadIds, setLeavingLeadIds] = useState<string[]>([]);
+  // At most one inline composer open at a time — a dozen open textareas
+  // would bury the card content this screen just fought to surface.
+  const [replyOpenLeadId, setReplyOpenLeadId] = useState<string | null>(null);
   const qc = useQueryClient();
   const toast = useToast();
+  const auth = useAuth();
+  // Mirrors the server-side gate on update_lead_meta (admin-actions).
+  const canClassify = auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia';
+  const navigate = useNavigate();
+  // Keyboard triage: index into the rendered order (immediate then later).
+  const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
+  const cardRefs = useRef(new Map<string, HTMLElement>());
 
   const q = useQuery({
     queryKey: ['attention-inbox'],
     queryFn: () => fetchAttentionInbox(),
-    refetchInterval: 30_000,
+    // Paused while a composer is open: a refetch can drop or reorder the
+    // card mid-typing and take the draft with it. The safety-net refetch
+    // after every mutation still runs.
+    refetchInterval: replyOpenLeadId ? false : 30_000,
     // Coming back to the tab is exactly when stale rows mislead.
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: !replyOpenLeadId,
   });
 
   const [originFilter, setOriginFilter] = useState('');
@@ -107,6 +123,59 @@ export function InboxPage() {
     for (const row of allRows) acc[classifyRow(row).lane] += 1;
     return acc;
   }, [allRows]);
+
+  // The exact order cards appear on screen — immediate section first.
+  const visibleRows = useMemo(() => [...immediateRows, ...laterRows], [immediateRows, laterRows]);
+
+  // Keyboard triage. event.code keeps the keys physical — on the Hebrew
+  // layout the same fingers work without switching languages. Single-key
+  // actions go through data-hotkey + .click() on the card's own buttons,
+  // so every existing handler (dialogs, popovers, links) is reused as-is.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+      if (pendingClose || pendingOutcome || pendingNoAnswer) return;
+      if (!visibleRows.length) return;
+
+      const move = (delta: number) => {
+        e.preventDefault();
+        setFocusedIdx((cur) => {
+          const next = cur === null ? (delta > 0 ? 0 : visibleRows.length - 1)
+            : Math.min(visibleRows.length - 1, Math.max(0, cur + delta));
+          const row = visibleRows[next];
+          const el = row ? cardRefs.current.get(`${row.kind}:${row.ref_id}`) : null;
+          if (el) {
+            el.focus({ preventScroll: true });
+            el.scrollIntoView({ block: 'nearest' });
+          }
+          return next;
+        });
+      };
+
+      if (e.code === 'KeyJ' || e.code === 'ArrowDown') { move(1); return; }
+      if (e.code === 'KeyK' || e.code === 'ArrowUp') { move(-1); return; }
+
+      const row = focusedIdx === null ? null : visibleRows[focusedIdx];
+      if (!row) return;
+      const card = cardRefs.current.get(`${row.kind}:${row.ref_id}`);
+      const clickHotkey = (name: string) => {
+        const el = card?.querySelector<HTMLElement>(`[data-hotkey="${name}"]`);
+        if (!el) return;
+        (el.matches('button, a') ? el : el.querySelector<HTMLElement>('button'))?.click();
+      };
+
+      if (e.code === 'Enter') { e.preventDefault(); navigate(`/leads/${row.lead_id}`); return; }
+      if (e.code === 'KeyD') { e.preventDefault(); clickHotkey('done'); return; }
+      if (e.code === 'KeyR') { e.preventDefault(); clickHotkey('reply'); return; }
+      if (e.code === 'KeyS') { e.preventDefault(); clickHotkey('snooze'); return; }
+      if (e.code === 'KeyW') { e.preventDefault(); clickHotkey('whatsapp'); return; }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [visibleRows, focusedIdx, pendingClose, pendingOutcome, pendingNoAnswer, navigate]);
 
   const resolve = useMutation({
     mutationFn: (input: { queueItemId: string; note?: string | null }) =>
@@ -135,6 +204,18 @@ export function InboxPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
+  // Quick-classify from the card. Classification does NOT remove the
+  // card — the refreshed row updates the badges and chips in place.
+  const classify = useMutation({
+    mutationFn: (input: { leadId: string; metaUpdates: { lead_heat?: LeadHeat; intake_segment?: IntakeSegment } }) =>
+      postAdminAction({ action: 'update_lead_meta', leadId: input.leadId, metaUpdates: input.metaUpdates }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['attention-inbox'] });
+      toast.success('הסיווג עודכן');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
   // Optimistic removal: acting on a card takes it off the list right
   // away; the refetch after the mutation settles is the safety net.
   // Clearing a lead is the action this screen exists for, so the card
@@ -153,6 +234,33 @@ export function InboxPage() {
     }, CARD_EXIT_MS);
   };
   const refetchInbox = () => qc.invalidateQueries({ queryKey: ['attention-inbox'] });
+
+  // Inline reply — the whole reason the reply lane exists. Unlike the
+  // triage mutations below, the card is removed only on SUCCESS: a failed
+  // send must keep the card on screen and the draft in the composer.
+  const sendInline = useMutation({
+    mutationFn: (input: { row: AttentionRow; text: string }) =>
+      postSendReply({
+        leadId: input.row.lead_id,
+        conversationId: input.row.last_inbound_conversation_id as string,
+        text: input.text,
+      }),
+    onSuccess: (result, input) => {
+      setReplyOpenLeadId(null);
+      removeLeadRows(input.row.lead_id);
+      void refetchInbox();
+      if (result.warning) toast.info(result.warning);
+      if (result.mode === 'sent_as_template') {
+        toast.success('נשלח ללקוח כתבנית (מחוץ לחלון 24 שעות)');
+      } else if (result.queued) {
+        toast.success('ההודעה נשמרה ותישלח אוטומטית כשהלקוח יענה');
+      } else {
+        toast.success('הודעה נשלחה');
+      }
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
 
   const markReviewed = useMutation({
     mutationFn: (row: AttentionRow) =>
@@ -266,6 +374,10 @@ export function InboxPage() {
         })}
       </section>
 
+      <p className="hidden text-xs text-slate-400 md:block" title="המקשים לפי מיקום פיזי במקלדת — עובדים גם בפריסת עברית">
+        קיצורים: <kbd>J</kbd>/<kbd>K</kbd> ניווט בין כרטיסים · <kbd>Enter</kbd> פתיחת ליד · <kbd>D</kbd> טופל · <kbd>R</kbd> תשובה · <kbd>S</kbd> השהיה · <kbd>W</kbd> וואטסאפ
+      </p>
+
       {originOptions.length > 1 ? (
         <section className="flex flex-wrap items-center gap-2" aria-label="סינון לפי מקור הגעה">
           <label htmlFor="inbox-origin-filter" className="text-sm font-medium text-slate-600">מקור הגעה:</label>
@@ -319,13 +431,27 @@ export function InboxPage() {
             const whatsappUrl = whatsappConversationUrl(row);
             const origin = describeLeadOrigin(row);
             const leaving = leavingLeadIds.includes(row.lead_id);
+            // Inline reply: only where a human answer is what's due, and
+            // only when the RPC gave us a real conversation to send into
+            // (a pre-v5 backend or a text-less inbound degrades to the
+            // wa.me link, which stays regardless).
+            const canReplyInline =
+              (row.kind === 'mia_reply' || row.kind === 'awaiting_reply') &&
+              !!row.last_inbound_conversation_id;
+            const replyOpen = canReplyInline && replyOpenLeadId === row.lead_id;
             return (
               <div key={`${row.kind}:${row.ref_id}`} className="kf-collapse" data-state={leaving ? 'closed' : 'open'}>
               <div>
               <article
                 data-state={leaving ? 'closed' : 'open'}
+                tabIndex={-1}
+                ref={(el) => {
+                  const key = `${row.kind}:${row.ref_id}`;
+                  if (el) cardRefs.current.set(key, el);
+                  else cardRefs.current.delete(key);
+                }}
                 className={clsx(
-                  'kf-layer kf-layer-fade kf-card overflow-hidden border-s-4 p-4 transition hover:shadow-md sm:p-5',
+                  'kf-layer kf-layer-fade kf-card overflow-hidden border-s-4 p-4 transition hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 sm:p-5',
                   meta.borderClass,
                 )}
               >
@@ -374,6 +500,42 @@ export function InboxPage() {
                           ״{row.last_inbound_text}״
                         </p>
                       </div>
+                    ) : null}
+
+                    {canReplyInline ? (
+                      replyOpen ? (
+                        <div>
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="text-xs font-semibold text-brand-700">תשובה ללקוח</span>
+                            <button
+                              type="button"
+                              className="text-xs text-slate-400 hover:text-slate-700"
+                              onClick={() => setReplyOpenLeadId(null)}
+                            >
+                              סגירה
+                            </button>
+                          </div>
+                          <ReplyComposer
+                            compact
+                            autoFocus
+                            disabled={false}
+                            channel={row.last_inbound_channel ?? 'whatsapp'}
+                            lastInboundAt={row.last_inbound_at}
+                            onSend={(text) => sendInline.mutateAsync({ row, text })}
+                            sending={sendInline.isPending && sendInline.variables?.row.lead_id === row.lead_id}
+                            errorMessage={null}
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          data-hotkey="reply"
+                          className="kf-btn kf-btn-primary w-full justify-center sm:w-auto"
+                          onClick={() => setReplyOpenLeadId(row.lead_id)}
+                        >
+                          השב כאן 💬
+                        </button>
+                      )
                     ) : null}
 
                     {/* Plain text, no frame: this is the card's primary
@@ -465,6 +627,7 @@ export function InboxPage() {
                         href={whatsappUrl}
                         target="_blank"
                         rel="noreferrer"
+                        data-hotkey="whatsapp"
                         className="kf-btn kf-btn-ghost justify-center"
                         aria-label={`פתיחת WhatsApp עבור ${row.lead_name || row.lead_phone || 'הליד'}`}
                       >
@@ -486,17 +649,32 @@ export function InboxPage() {
                     ) : null}
                     <button
                       type="button"
+                      data-hotkey="done"
                       className="kf-btn justify-center bg-emerald-600 text-white hover:bg-emerald-700"
                       disabled={markReviewed.isPending}
                       onClick={() => markReviewed.mutate(row)}
                     >
                       טופל ✓
                     </button>
-                    <SnoozePopover
-                      buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
-                      busy={snoozeLead.isPending}
-                      onSnooze={(until, note) => snoozeLead.mutate({ row, until, note })}
-                    />
+                    {/* The wrapper carries the hotkey target; the popover
+                        owns its own button. */}
+                    <span data-hotkey="snooze" className="contents">
+                      <SnoozePopover
+                        buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
+                        busy={snoozeLead.isPending}
+                        onSnooze={(until, note) => snoozeLead.mutate({ row, until, note })}
+                      />
+                    </span>
+                    {canClassify ? (
+                      <QuickClassifyPopover
+                        heat={row.lead_heat}
+                        segment={row.intake_segment}
+                        busy={classify.isPending}
+                        buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
+                        onSetHeat={(heat) => classify.mutate({ leadId: row.lead_id, metaUpdates: { lead_heat: heat } })}
+                        onSetSegment={(segment) => classify.mutate({ leadId: row.lead_id, metaUpdates: { intake_segment: segment } })}
+                      />
+                    ) : null}
                     <button
                       type="button"
                       className="kf-btn kf-btn-ghost justify-center"

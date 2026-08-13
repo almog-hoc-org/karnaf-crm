@@ -10,9 +10,10 @@ vi.mock('@/lib/api', () => ({
   fetchLeadsList: vi.fn(),
   fetchUsersList: vi.fn(),
   postBulkLeadAction: vi.fn(),
+  postAdminAction: vi.fn(async () => ({ ok: true, action: 'update_lead_meta' })),
 }));
 
-import { fetchLeadsList, fetchUsersList, postBulkLeadAction, type LeadsListParams } from '@/lib/api';
+import { fetchLeadsList, fetchUsersList, postAdminAction, postBulkLeadAction, type LeadsListParams } from '@/lib/api';
 
 function makeAuth(role: Role | null): AuthState {
   return {
@@ -181,6 +182,60 @@ describe('LeadsPage', () => {
     expect(vi.mocked(postBulkLeadAction).mock.calls[0]?.[0]).toMatchObject({
       action: 'assign_owner', leadIds: ['lead-1'], assigneeUserId: 'user-1',
     });
+  });
+
+  it('forwards the chosen sort to fetchLeadsList and persists it in the URL', async () => {
+    renderLeads();
+    await screen.findByRole('link', { name: 'דנה כהן' });
+
+    fireEvent.change(screen.getByLabelText('מיון הרשימה'), { target: { value: 'score_desc' } });
+
+    await waitFor(() => {
+      const lastCall = vi.mocked(fetchLeadsList).mock.calls.at(-1)?.[0] as LeadsListParams | undefined;
+      expect(lastCall?.sort).toBe('score_desc');
+      expect(lastCall?.offset).toBe(0);
+    });
+  });
+
+  it('initializes the free-text search from the URL', async () => {
+    renderLeads('admin', '/leads?search=דנה');
+    expect(await screen.findByDisplayValue('דנה')).toBeInTheDocument();
+    await waitFor(() => {
+      const lastCall = vi.mocked(fetchLeadsList).mock.calls.at(-1)?.[0] as LeadsListParams | undefined;
+      expect(lastCall?.search).toBe('דנה');
+    });
+  });
+
+  it('clear-filters resets the product tab too', async () => {
+    renderLeads('admin', '/leads?productGroup=program');
+    await screen.findByRole('link', { name: 'דנה כהן' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'ניקוי סינונים' }));
+
+    await waitFor(() => {
+      const lastCall = vi.mocked(fetchLeadsList).mock.calls.at(-1)?.[0] as LeadsListParams | undefined;
+      expect(lastCall?.productGroup).toBeUndefined();
+    });
+  });
+
+  it('quick-classifies a lead from the row for editing roles', async () => {
+    renderLeads();
+    await screen.findByRole('link', { name: 'דנה כהן' });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'סיווג ⚡' })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'קר' }));
+
+    await waitFor(() => expect(vi.mocked(postAdminAction)).toHaveBeenCalledWith({
+      action: 'update_lead_meta',
+      leadId: 'lead-1',
+      metaUpdates: { lead_heat: 'cold' },
+    }));
+  });
+
+  it('hides quick-classify for viewer role', async () => {
+    renderLeads('viewer');
+    await screen.findByRole('link', { name: 'דנה כהן' });
+    expect(screen.queryByRole('button', { name: 'סיווג ⚡' })).not.toBeInTheDocument();
   });
 
   it('hides bulk actions for viewer role', async () => {

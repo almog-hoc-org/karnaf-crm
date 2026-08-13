@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { fetchLeadsList, fetchUsersList, postBulkLeadAction, postImportLeads, postLeadManage, postPurgeLead, type ImportLeadsResult, type ProductGroup } from '@/lib/api';
+import { fetchLeadsList, fetchUsersList, postAdminAction, postBulkLeadAction, postImportLeads, postLeadManage, postPurgeLead, type ImportLeadsResult, type ProductGroup } from '@/lib/api';
 import { parseImportRows } from '@/lib/importParse';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { BulkActionBar } from '@/components/BulkActionBar';
+import { QuickClassifyPopover } from '@/components/QuickClassifyPopover';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LeadsTableSkeleton } from '@/components/Skeleton';
 import { useToast } from '@/components/Toast';
@@ -119,6 +120,10 @@ function LeadWorkCard({
   canPurge,
   onToggle,
   onPurge,
+  canClassify,
+  classifyBusy,
+  onSetHeat,
+  onSetSegment,
 }: {
   lead: LeadRow;
   selected: boolean;
@@ -126,6 +131,10 @@ function LeadWorkCard({
   canPurge: boolean;
   onToggle: (checked: boolean) => void;
   onPurge: () => void;
+  canClassify: boolean;
+  classifyBusy: boolean;
+  onSetHeat: (heat: LeadHeat) => void;
+  onSetSegment: (segment: IntakeSegment) => void;
 }) {
   const guidance = leadListGuidance(lead);
   return (
@@ -247,6 +256,16 @@ function LeadWorkCard({
               WhatsApp
             </a>
           ) : null}
+          {canClassify ? (
+            <QuickClassifyPopover
+              heat={lead.lead_heat}
+              segment={lead.intake_segment}
+              busy={classifyBusy}
+              buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
+              onSetHeat={onSetHeat}
+              onSetSegment={onSetSegment}
+            />
+          ) : null}
         </div>
       </div>
     </article>
@@ -348,9 +367,14 @@ function persistSavedViews(views: SavedView[]) {
   }
 }
 
+const VALID_SORTS = ['updated_desc', 'inbound_oldest', 'score_desc'] as const;
+type LeadsSort = (typeof VALID_SORTS)[number];
+
 export function LeadsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [search, setSearch] = useState('');
+  // Free-text search is URL-persisted too (debounced below) — losing the
+  // query on every navigation was the list's most-felt annoyance.
+  const [search, setSearch] = useState(searchParams.get('search') ?? '');
   const [status, setStatus] = useState(searchParams.get('status') ?? '');
   const [heat, setHeat] = useState(searchParams.get('heat') ?? '');
   const [ownership, setOwnership] = useState(searchParams.get('ownership') ?? '');
@@ -367,7 +391,13 @@ export function LeadsPage() {
   const [inboundFrom, setInboundFrom] = useState(searchParams.get('inboundFrom') ?? '');
   const [offset, setOffset] = useState(0);
   const [savedViews, setSavedViews] = useState<SavedView[]>(() => loadSavedViews());
-  const [searchIn, setSearchIn] = useState<'lead' | 'messages'>('lead');
+  const [searchIn, setSearchIn] = useState<'lead' | 'messages'>(
+    searchParams.get('searchIn') === 'messages' ? 'messages' : 'lead',
+  );
+  const [sort, setSort] = useState<LeadsSort>(() => {
+    const fromUrl = searchParams.get('sort');
+    return (VALID_SORTS as readonly string[]).includes(fromUrl ?? '') ? (fromUrl as LeadsSort) : 'updated_desc';
+  });
   useDocumentTitle(t('leads_title'));
 
   const debouncedSearch = useDebouncedValue(search, 200);
@@ -387,8 +417,13 @@ export function LeadsPage() {
     if (createdFrom) next.set('createdFrom', createdFrom);
     if (createdTo) next.set('createdTo', createdTo);
     if (inboundFrom) next.set('inboundFrom', inboundFrom);
+    // Debounced value, not raw keystrokes — the URL updates when typing
+    // settles, not per character.
+    if (debouncedSearch.trim()) next.set('search', debouncedSearch.trim());
+    if (searchIn === 'messages') next.set('searchIn', 'messages');
+    if (sort !== 'updated_desc') next.set('sort', sort);
     setSearchParams(next, { replace: true });
-  }, [status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, campaign, outcomeFilter, createdFrom, createdTo, inboundFrom, setSearchParams]);
+  }, [status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, campaign, outcomeFilter, createdFrom, createdTo, inboundFrom, debouncedSearch, searchIn, sort, setSearchParams]);
 
   // dates from UI come as yyyy-mm-dd; expand to UTC range so we match the
   // entire day for createdTo, and start-of-day for createdFrom / inboundFrom.
@@ -410,6 +445,7 @@ export function LeadsPage() {
     createdFrom: expandStart(createdFrom),
     createdTo: expandEnd(createdTo),
     inboundFrom: expandStart(inboundFrom),
+    sort: sort !== 'updated_desc' ? sort : undefined,
     limit: PAGE_SIZE,
     offset,
   };
@@ -497,7 +533,18 @@ export function LeadsPage() {
   // never references rows the manager can't currently see.
   useEffect(() => {
     setSelected(new Set());
-  }, [debouncedSearch, status, heat, ownership, source, campaign, outcomeFilter, createdFrom, createdTo, inboundFrom, offset]);
+  }, [debouncedSearch, searchIn, status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, campaign, outcomeFilter, createdFrom, createdTo, inboundFrom, sort, offset]);
+
+  // Quick-classify from the row — one click, no lead page.
+  const classifyMut = useMutation({
+    mutationFn: (input: { leadId: string; metaUpdates: { lead_heat?: LeadHeat; intake_segment?: IntakeSegment } }) =>
+      postAdminAction({ action: 'update_lead_meta', leadId: input.leadId, metaUpdates: input.metaUpdates }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      toast.success('הסיווג עודכן');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
 
   const bulkMut = useMutation({
     mutationFn: postBulkLeadAction,
@@ -578,10 +625,14 @@ export function LeadsPage() {
   const total = q.data?.total ?? null;
   const start = total != null ? offset + 1 : null;
   const end = total != null ? Math.min(offset + (q.data?.leads.length ?? 0), total) : null;
-  const hasFilters = !!(search || status || heat || ownership || source || campaign || outcomeFilter || createdFrom || createdTo || inboundFrom);
+  // Product tab / members / awaiting are filters too — without them here
+  // the "save view" and "clear" buttons vanished exactly when only a tab
+  // was active.
+  const hasFilters = !!(search || status || heat || ownership || source || campaign || outcomeFilter || createdFrom || createdTo || inboundFrom || productGroup || memberOnly || awaitingOnly);
 
   function clearFilters() {
     setSearch('');
+    setSearchIn('lead');
     setStatus('');
     setHeat('');
     setOwnership('');
@@ -591,6 +642,10 @@ export function LeadsPage() {
     setCreatedFrom('');
     setCreatedTo('');
     setInboundFrom('');
+    setProductGroup('');
+    setMemberOnly(false);
+    setAwaitingOnly(false);
+    setSort('updated_desc');
     setOffset(0);
   }
 
@@ -940,6 +995,21 @@ export function LeadsPage() {
           <option value="consultation">נסגר: פגישת ייעוץ</option>
           <option value="other">נסגר: אחר</option>
         </select>
+        <select
+          className="kf-input"
+          value={awaitingOnly ? 'inbound_oldest' : sort}
+          disabled={awaitingOnly}
+          title={awaitingOnly ? 'במצב "ממתינים לתשובה" הרשימה תמיד ממוינת מהממתין הוותיק ביותר' : undefined}
+          onChange={(e) => {
+            setSort(e.target.value as LeadsSort);
+            setOffset(0);
+          }}
+          aria-label="מיון הרשימה"
+        >
+          <option value="updated_desc">מיון: עודכן לאחרונה</option>
+          <option value="inbound_oldest">מיון: ממתין הכי הרבה זמן</option>
+          <option value="score_desc">מיון: ציון גבוה</option>
+        </select>
 
         <div className="sm:col-span-2 md:col-span-6">
           <details className="rounded-lg border border-slate-200 bg-slate-50/40 p-2 text-sm">
@@ -1087,6 +1157,10 @@ export function LeadsPage() {
                   else next.delete(lead.id);
                   setSelected(next);
                 }}
+                canClassify={canBulkEdit}
+                classifyBusy={classifyMut.isPending}
+                onSetHeat={(heat) => classifyMut.mutate({ leadId: lead.id, metaUpdates: { lead_heat: heat } })}
+                onSetSegment={(segment) => classifyMut.mutate({ leadId: lead.id, metaUpdates: { intake_segment: segment } })}
               />
             ))}
           </div>

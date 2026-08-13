@@ -126,6 +126,11 @@ export interface LeadsListParams {
   campaign?: string;
   // awaiting=true → only leads whose customer wrote and got no reply yet.
   awaiting?: boolean;
+  // Outcome filter: a specific outcome, 'any', or 'none'. (Was always
+  // sent by LeadsPage; typed now instead of riding on structural typing.)
+  outcome?: string;
+  // Whitelisted server-side sort; omit for the default (updated_desc).
+  sort?: 'updated_desc' | 'inbound_oldest' | 'score_desc';
   limit?: number;
   offset?: number;
 }
