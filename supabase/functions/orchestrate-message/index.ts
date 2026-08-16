@@ -97,6 +97,24 @@ Deno.serve(async (req) => {
       return jsonResponse(req, { ok: true, skipped: 'unsupported_channel', channel });
     }
 
+    // Emergency kill switch (crm_config.ai_enabled_channels). Set it to []
+    // to silence the bot instantly — during a provider outage, a quota
+    // exhaustion, or a bad prompt deploy — while humans keep answering
+    // from the inbox. The runbook has always documented this key; nothing
+    // read it until now, so the documented mitigation did nothing.
+    if (!config.aiEnabledChannels.includes(channel)) {
+      await ensurePendingQueueItem(supabase, {
+        leadId,
+        queueType: 'human_handoff',
+        priorityLevel: 1,
+        reason: 'ה-AI מושבת בערוץ הזה — נדרש מענה אנושי',
+        payloadJson: { channel, correlationId, reason: 'ai_disabled_channel' },
+        refresh: true,
+      });
+      log.warn('orchestrate_ai_disabled_channel', { fn: 'orchestrate', correlationId, leadId, channel });
+      return jsonResponse(req, { ok: true, skipped: 'ai_disabled_channel', channel });
+    }
+
     // Identity guard is channel-specific: WhatsApp needs a phone,
     // Instagram needs an IGSID.
     const missingIdentity = channel === 'whatsapp' ? !lead.phone : !lead.ig_user_id;
@@ -587,6 +605,7 @@ Deno.serve(async (req) => {
         await maybeSendSafetyNetAck({
           supabase, lead, leadId, conversationId, channel, config, correlationId,
           executionStatus: 'provider_send_error',
+          handoff: true,
         });
       }
       await ensurePendingQueueItem(supabase, {
@@ -613,11 +632,21 @@ Deno.serve(async (req) => {
         error_message: decision.executionStatus,
       });
       // Safety net: the customer must not sit in silence while operators
-      // fix the AI. Send the configurable generic ack (once per window)
-      // and hand the lead to Mia so the bot doesn't loop on the failure.
+      // fix the AI. Send the configurable generic ack (once per window).
+      //
+      // Whether the lead ALSO leaves AI ownership depends on why we got
+      // here. A model/provider failure means the bot is down for this
+      // customer — hand over. A content-validation block means the bot
+      // produced something we refused to send; that is a single bad turn,
+      // not an outage, so the lead stays with the AI unless it keeps
+      // happening (three consecutive blocks = something is genuinely
+      // wrong with this conversation, hand it over).
+      const providerFailed = isModelExecutionFailure(decision.executionStatus);
+      const handoff = providerFailed || await validationBlockStreak(supabase, leadId);
       const ackSent = await maybeSendSafetyNetAck({
         supabase, lead, leadId, conversationId, channel, config, correlationId,
         executionStatus: decision.executionStatus,
+        handoff,
       });
       await ensurePendingQueueItem(supabase, {
         leadId,
@@ -627,7 +656,7 @@ Deno.serve(async (req) => {
         queueSummary: ackSent
           ? 'ה־AI לא ייצר תשובה — נשלחה הודעת אישור גנרית ללקוח; נדרש מענה אנושי.'
           : 'ה־AI לא ייצר תשובה — הלקוח לא קיבל מענה; נדרש טיפול ידני מיידי.',
-        payloadJson: { executionStatus: decision.executionStatus, correlationId, ackSent },
+        payloadJson: { executionStatus: decision.executionStatus, correlationId, ackSent, handoff },
       });
     }
 
@@ -717,8 +746,10 @@ async function maybeSendSafetyNetAck(input: {
   config: Awaited<ReturnType<typeof getRuntimeConfig>>;
   correlationId: string;
   executionStatus: string;
+  // Only real outages evict the lead from AI ownership; see below.
+  handoff: boolean;
 }): Promise<boolean> {
-  const { supabase, lead, leadId, conversationId, channel, config, correlationId, executionStatus } = input;
+  const { supabase, lead, leadId, conversationId, channel, config, correlationId, executionStatus, handoff } = input;
   try {
     const cfg = config.safetyNet;
     const { data: lastAck } = await supabase
@@ -771,8 +802,16 @@ async function maybeSendSafetyNetAck(input: {
       execution_status: executionStatus,
       correlation_id: correlationId,
     }, conversationId);
-    await updateLeadFields(supabase, leadId, { ownership_mode: 'mia_active' });
-    await transitionLeadStatus(supabase, leadId, 'human_handoff', 'ai', 'safety_net_ack');
+    // Handing the lead to a human permanently is the right response to a
+    // real outage (provider down, circuit open) — the bot cannot serve
+    // this customer right now. It is the WRONG response to a single
+    // content-validation block: a 0.7 question-similarity false positive
+    // or an over-eager forbidden-phrase substring used to evict the lead
+    // from AI ownership forever, one silent lead at a time.
+    if (handoff) {
+      await updateLeadFields(supabase, leadId, { ownership_mode: 'mia_active' });
+      await transitionLeadStatus(supabase, leadId, 'human_handoff', 'ai', 'safety_net_ack');
+    }
 
     log.info('safety_net_ack_sent', { fn: 'orchestrate', correlationId, leadId, executionStatus });
     return true;
@@ -782,4 +821,24 @@ async function maybeSendSafetyNetAck(input: {
     });
     return false;
   }
+}
+
+// Three consecutive validation blocks for the same lead means the problem
+// is not a one-off false positive — the conversation itself is tripping
+// the guards every turn, and a human should take it. The current decision
+// is already persisted by the time this runs, so it counts as one of the
+// three.
+async function validationBlockStreak(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  leadId: string,
+  streak = 3,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('ai_decisions')
+    .select('execution_status')
+    .eq('lead_id', leadId)
+    .order('created_at', { ascending: false })
+    .limit(streak);
+  if (error || !data || data.length < streak) return false;
+  return data.every((row) => row.execution_status === 'validation_blocked');
 }

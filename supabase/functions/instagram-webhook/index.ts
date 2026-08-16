@@ -23,6 +23,7 @@ import { messageAlreadyLogged } from '../_shared/idempotency.ts';
 import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
 import { optional, safeEqual } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
+import { pendingReplyDecision } from '../_shared/pending-reply-policy.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 
@@ -202,7 +203,7 @@ async function flushPendingManualReplies(
 ): Promise<number> {
   const { data: pending, error } = await supabase
     .from('pending_manual_replies')
-    .select('id, text, sender_type, sender_name')
+    .select('id, text, sender_type, sender_name, attempts, queued_at')
     .eq('lead_id', input.leadId)
     .eq('conversation_id', input.conversationId)
     .in('status', ['queued', 'reopen_sent', 'failed'])
@@ -212,11 +213,22 @@ async function flushPendingManualReplies(
   if (error || !pending?.length) return 0;
 
   let sent = 0;
-  for (const row of pending as Array<{ id: string; text: string; sender_type: string; sender_name: string | null }>) {
+  for (const row of pending as Array<{ id: string; text: string; sender_type: string; sender_name: string | null; attempts: number | null; queued_at: string | null }>) {
+    // A parked reply that keeps failing, or that has gone stale, is
+    // retired instead of being retried on every future inbound.
+    const decision = pendingReplyDecision(row);
+    if (!decision.send) {
+      await supabase.from('pending_manual_replies').update({
+        status: 'expired',
+        last_error: `Expired: ${decision.reason}`,
+      }).eq('id', row.id);
+      continue;
+    }
     const result = await sendInstagramText(input.igsid, row.text);
     if (!result.ok) {
       await supabase.from('pending_manual_replies').update({
         status: 'failed',
+        attempts: (row.attempts ?? 0) + 1,
         last_error: result.error ?? 'Send failed after inbound reopened window',
         failed_at: new Date().toISOString(),
       }).eq('id', row.id);

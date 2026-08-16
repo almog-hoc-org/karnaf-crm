@@ -17,6 +17,7 @@ import { ensureConversation, logLeadEvent } from '../_shared/lead-service.ts';
 import { isFreeformAllowed } from '../_shared/conversation-window.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { fallbackTemplateParams } from '../_shared/provider-errors.ts';
+import { canContactLead, type ContactChannel } from '../_shared/contact-guard.ts';
 
 interface DispatchRow {
   id: string;
@@ -72,16 +73,28 @@ async function deliverTemplateRow(
 
   const { data: lead, error: leadErr } = await supabase
     .from('leads')
-    .select('id, phone, do_not_contact, removed_by_request, last_inbound_at')
+    .select('id, phone, email, ig_user_id, consent_email, do_not_contact, removed_by_request, snoozed_until, no_proactive_contact, last_inbound_at')
     .eq('id', row.lead_id)
     .maybeSingle();
   if (leadErr) throw leadErr;
-  if (!lead || lead.do_not_contact || lead.removed_by_request) {
-    const reason = !lead ? 'lead_missing' : 'do_not_contact';
+  if (!lead) {
     log.info('template_dispatch_suppressed', {
-      fn: 'dispatch-outbound', correlationId, dispatchId: row.id, leadId: row.lead_id, reason,
+      fn: 'dispatch-outbound', correlationId, dispatchId: row.id, leadId: row.lead_id, reason: 'lead_missing',
     });
-    await markRecipientSkipped(reason);
+    await markRecipientSkipped('lead_missing');
+    return 'skipped';
+  }
+  // Last line of defence before the message leaves the building. Every
+  // template send — broadcast, automation rule, journey step — funnels
+  // through here, so the guard runs against the lead's state NOW, not at
+  // the state it had when the row was enqueued (a lead snoozed mid-campaign
+  // must stop receiving it).
+  const guard = canContactLead(lead, { channel: channel as ContactChannel, kind: 'proactive' });
+  if (!guard.ok) {
+    log.info('template_dispatch_suppressed', {
+      fn: 'dispatch-outbound', correlationId, dispatchId: row.id, leadId: row.lead_id, reason: guard.reason,
+    });
+    await markRecipientSkipped(guard.reason);
     return 'skipped';
   }
 

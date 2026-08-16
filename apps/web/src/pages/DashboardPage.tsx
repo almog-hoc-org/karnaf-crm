@@ -27,11 +27,28 @@ export function DashboardPage() {
 
   const s = summaryQ.data!;
 
-  // Tier 7.B.3 — banner shown when no automation_tick heartbeat in 15 min.
-  const tickHeartbeat = heartbeatsQ.data?.find((h) => h.name === 'automation_tick');
-  const heartbeatStale = tickHeartbeat
-    ? Date.now() - Date.parse(tickHeartbeat.last_ok_at) > 15 * 60_000
-    : false;
+  // Heartbeat health. Every scheduled worker that can silently stop is
+  // watched, with a threshold matched to its cron cadence — the banner
+  // used to watch automation_tick alone, so a dead SLA worker or a
+  // nightly job that stopped running was invisible.
+  //
+  // A MISSING row counts as stale: a worker that has never once succeeded
+  // is the most broken state there is, and it used to read as healthy.
+  const WATCHED_WORKERS: Array<{ name: string; label: string; maxAgeMs: number }> = [
+    { name: 'automation_tick', label: 'מנוע אוטומציות', maxAgeMs: 15 * 60_000 },
+    { name: 'sla_worker', label: 'ניטור SLA', maxAgeMs: 30 * 60_000 },
+    { name: 'ai_watchdog', label: 'שומר AI', maxAgeMs: 20 * 60_000 },
+    { name: 'nightly_jobs', label: 'עבודות לילה', maxAgeMs: 26 * 60 * 60_000 },
+  ];
+  const staleWorkers = heartbeatsQ.data
+    ? WATCHED_WORKERS.filter((w) => {
+      const hb = heartbeatsQ.data!.find((h) => h.name === w.name);
+      if (!hb) return true;
+      return Date.now() - Date.parse(hb.last_ok_at) > w.maxAgeMs;
+    })
+    : [];
+  const heartbeatStale = staleWorkers.length > 0;
+  const lastOkFor = (name: string) => heartbeatsQ.data?.find((h) => h.name === name)?.last_ok_at ?? null;
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -39,10 +56,22 @@ export function DashboardPage() {
         <section className="kf-tone-danger rounded-xl p-4 text-sm ring-1 ring-inset" role="alert">
           <div className="flex items-baseline justify-between gap-3">
             <div>
-              <strong className="block text-base">⚠️ האוטומציות לא רצות</strong>
+              <strong className="block text-base">⚠️ תהליכים מתוזמנים לא רצים</strong>
+              <ul className="mt-1 space-y-0.5 text-sm">
+                {staleWorkers.map((w) => {
+                  const lastOk = lastOkFor(w.name);
+                  return (
+                    <li key={w.name}>
+                      {w.label} — ריצה אחרונה:{' '}
+                      <span className="tabular-nums">
+                        {lastOk ? new Date(lastOk).toLocaleString('he-IL') : 'אף פעם'}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
               <p className="mt-1 text-sm">
-                tick אחרון: <span className="tabular-nums">{tickHeartbeat ? new Date(tickHeartbeat.last_ok_at).toLocaleString('he-IL') : 'אף פעם'}</span>.
-                המנוע אמור לרוץ כל 10 דק׳ — אם הסטטוס לא חוזר, בדוק את ה-cron job ואת secrets האדג׳ פאנקשן.
+                אם הסטטוס לא חוזר, בדוק את ה-cron job ואת secrets האדג׳ פאנקשן.
               </p>
             </div>
           </div>

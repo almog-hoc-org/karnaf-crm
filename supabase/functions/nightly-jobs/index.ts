@@ -96,5 +96,13 @@ Deno.serve(async (req) => {
   // Surface a non-2xx if any guarded job errored after claiming. Skipped
   // (already-ran-today) is NOT an error — that's the idempotency working.
   const anyErrored = [decay, purge, compact, reengage].some((r) => r.error);
+  if (!anyErrored) {
+    await supabase.from('system_heartbeats').upsert({
+      name: 'nightly_jobs',
+      last_ok_at: new Date().toISOString(),
+      last_run_id: correlationId,
+      metadata: summary,
+    });
+  }
   return jsonResponse(req, { ok: !anyErrored, correlationId, summary }, anyErrored ? 500 : 200);
 });

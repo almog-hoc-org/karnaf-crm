@@ -70,14 +70,19 @@ Deno.serve(async (req) => {
   const broadcasts = due ?? [];
   let totalEnqueued = 0;
 
-  // Pacing state for this tick: config + rolling-24h broadcast spend.
+  // Pacing state for this tick: config + rolling-24h template spend.
+  // The count covers EVERY proactive template (broadcast, automation rule,
+  // journey step) — they all stamp payload.kind='template' and they all
+  // consume the same Meta quota. Counting only rows carrying a broadcast_id
+  // meant lifecycle traffic was invisible to the cap, so the real daily
+  // volume could exceed it without the throttle ever engaging.
   const { data: pacingRow } = await supabase
     .from('crm_config').select('config_value').eq('config_key', 'broadcast_pacing').maybeSingle();
   const pacing = resolvePacing(pacingRow?.config_value);
   const { count: enqueuedLast24h } = await supabase
     .from('outbound_dispatch')
     .select('id', { count: 'exact', head: true })
-    .not('payload->>broadcast_id', 'is', null)
+    .eq('payload->>kind', 'template')
     .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
   let allowance = enqueueAllowance(pacing, enqueuedLast24h ?? 0);
   if (allowance === 0 && broadcasts.length > 0) {

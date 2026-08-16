@@ -1,7 +1,7 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { ensureConversation, logLeadEvent, type LeadRow } from './lead-service.ts';
-import { sendWhatsAppTemplate } from './whatsapp-provider.ts';
-import { ensurePendingQueueItem } from './queue-service.ts';
+import { logLeadEvent, type LeadRow } from './lead-service.ts';
+import { canContactLead, type ContactChannel } from './contact-guard.ts';
+import { enqueueTemplateDispatch, releaseOnceClaim } from './outbound-enqueue.ts';
 
 export interface EngineContext {
   lead: LeadRow;
@@ -54,12 +54,19 @@ function valueForVariable(name: string, ctx: EngineContext): string {
   return '';
 }
 
-function renderBody(template: MessageTemplate, ctx: EngineContext): string {
+// Returns the rendered body plus the variables that resolved to nothing.
+// The old version silently substituted '' — a lead with no recorded name
+// received "היי ," — while the automation engine refuses to send in the
+// same situation. Refusing is the correct half of that disagreement.
+function renderBody(template: MessageTemplate, ctx: EngineContext): { text: string; missing: string[] } {
   let body = template.body;
+  const missing: string[] = [];
   for (const variable of template.variables_used ?? []) {
-    body = body.replaceAll(`{{${variable}}}`, valueForVariable(variable, ctx));
+    const value = valueForVariable(variable, ctx);
+    if (!value.trim()) missing.push(variable);
+    body = body.replaceAll(`{{${variable}}}`, value);
   }
-  return body;
+  return { text: body, missing };
 }
 
 async function insertRun(
@@ -142,9 +149,13 @@ export async function sendTemplateAction(
   const channel = action.channel ?? 'whatsapp';
   if (!key) return { type: 'send_template', status: 'failed', reason: 'missing_template_key' };
   if (channel !== 'whatsapp') return { type: 'send_template', status: 'skipped', reason: 'unsupported_channel', payload: { channel } };
-  if (!ctx.lead.phone) return { type: 'send_template', status: 'skipped', reason: 'missing_phone', payload: { key } };
-  if (ctx.lead.do_not_contact || ctx.lead.removed_by_request) {
-    return { type: 'send_template', status: 'skipped', reason: 'lead_suppressed', payload: { key } };
+
+  // Same guard, same answer as every other outbound path. A journey step is
+  // proactive by definition — the customer did not ask for it — so a snooze
+  // or a "no proactive contact" flag stops it here.
+  const guard = canContactLead(ctx.lead, { channel: channel as ContactChannel, kind: 'proactive' });
+  if (!guard.ok) {
+    return { type: 'send_template', status: 'skipped', reason: `contact_guard:${guard.reason}`, payload: { key } };
   }
 
   if (action.once) {
@@ -168,8 +179,14 @@ export async function sendTemplateAction(
     .eq('channel', channel)
     .eq('status', 'active')
     .maybeSingle();
-  if (templateErr) return { type: 'send_template', status: 'failed', reason: templateErr.message, payload: { key } };
-  if (!template) return { type: 'send_template', status: 'failed', reason: 'template_missing', payload: { key } };
+  if (templateErr) {
+    if (action.once) await releaseOnceClaim(supabase, ctx.lead.id as string, key, channel);
+    return { type: 'send_template', status: 'failed', reason: templateErr.message, payload: { key } };
+  }
+  if (!template) {
+    if (action.once) await releaseOnceClaim(supabase, ctx.lead.id as string, key, channel);
+    return { type: 'send_template', status: 'failed', reason: 'template_missing', payload: { key } };
+  }
 
   const row = template as MessageTemplate;
   const metaName = typeof row.metadata?.meta_template_name === 'string'
@@ -178,47 +195,37 @@ export async function sendTemplateAction(
   const language = typeof row.metadata?.meta_language === 'string'
     ? row.metadata.meta_language
     : 'he';
-  const params = (row.variables_used ?? []).map((name) => ({ name, value: valueForVariable(name, ctx) }));
-  const contentText = renderBody(row, ctx);
-  const sendResult = await sendWhatsAppTemplate(ctx.lead.phone as string, metaName, params, language);
-  if (!sendResult.ok) {
-    await ensurePendingQueueItem(supabase, {
-      leadId: ctx.lead.id,
-      queueType: 'failed_automation',
-      priorityLevel: 1,
-      reason: 'Lifecycle template send failed',
-      queueSummary: sendResult.error ?? `Template ${key} failed`,
-      payloadJson: { key, metaName, error: sendResult.error, correlationId: ctx.correlationId },
-      createdByActorType: 'system',
-    });
-    return { type: 'send_template', status: 'failed', reason: sendResult.error ?? 'send_failed', payload: { key, metaName } };
+  const { text: contentText, missing } = renderBody(row, ctx);
+  if (missing.length) {
+    if (action.once) await releaseOnceClaim(supabase, ctx.lead.id as string, key, channel);
+    return {
+      type: 'send_template', status: 'skipped',
+      reason: `missing_vars:${missing.join(',')}`, payload: { key, metaName },
+    };
   }
 
-  const conversation = await ensureConversation(supabase, ctx.lead.id, 'whatsapp', 'meta_cloud_api');
-  const { error: messageErr } = await supabase.from('messages').insert({
-    conversation_id: conversation.id,
-    lead_id: ctx.lead.id,
-    provider_message_id: sendResult.providerMessageId ?? null,
-    sender_type: 'system',
-    sender_name: 'Karnaf lifecycle bot',
-    direction: 'outbound',
-    message_type: 'template',
-    content_text: contentText,
-    provider_status: 'sent',
+  // Enqueue instead of calling the provider inline: dispatch-outbound owns
+  // retry/backoff, the DLQ, the Meta daily cap and the send-time guard.
+  // A failed lifecycle send used to vanish with nothing but a queue item.
+  const params = (row.variables_used ?? []).map((name) => valueForVariable(name, ctx));
+  const enqueued = await enqueueTemplateDispatch(supabase, {
+    leadId: ctx.lead.id as string,
+    channel,
+    text: contentText,
+    templateKey: key,
+    source: 'journey',
+    metaTemplate: { name: metaName, lang: language, params },
+    correlationId: ctx.correlationId,
   });
-  if (messageErr) return { type: 'send_template', status: 'failed', reason: messageErr.message, payload: { key } };
+  if (!enqueued.ok) {
+    if (action.once) await releaseOnceClaim(supabase, ctx.lead.id as string, key, channel);
+    return { type: 'send_template', status: 'failed', reason: enqueued.error ?? 'enqueue_failed', payload: { key, metaName } };
+  }
 
-  await supabase.from('leads').update({
-    last_outbound_at: new Date().toISOString(),
-    last_message_at: new Date().toISOString(),
-  }).eq('id', ctx.lead.id);
-  await logLeadEvent(supabase, ctx.lead.id, 'lifecycle_template_sent', 'system', {
-    key,
-    meta_template_name: metaName,
-    correlation_id: ctx.correlationId,
-  }, conversation.id);
-
-  return { type: 'send_template', status: 'success', payload: { key, metaName, providerMessageId: sendResult.providerMessageId } };
+  return {
+    type: 'send_template', status: 'success',
+    payload: { key, metaName, dispatchId: enqueued.dispatchId },
+  };
 }
 
 export async function runActions(

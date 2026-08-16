@@ -105,6 +105,8 @@ async function summariseWithModel(
       body: JSON.stringify({
         model: env.openaiModel(),
         temperature: runtime.modelTemperature,
+        // The stored summary is truncated to 1200 chars regardless.
+        max_tokens: 512,
         messages: [
           {
             role: 'system',

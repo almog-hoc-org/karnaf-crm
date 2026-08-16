@@ -11,6 +11,7 @@ import { env, optional, safeEqual } from '../_shared/env.ts';
 import { normalizePaymentPayload, parseFormEncoded } from '../_shared/payment-normalize.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
+import { getWebhookIdempotencyResponse, hashBody, storeWebhookIdempotencyResponse } from '../_shared/idempotency.ts';
 import { buildCapiEvent, buildUserData } from '../_shared/meta-capi.ts';
 import { sendCapiEvents } from '../_shared/meta-capi-send.ts';
 
@@ -88,7 +89,9 @@ Deno.serve(async (req) => {
   const productCode = normalized.product_code;
   const paymentStatus = normalized.payment_status;
 
-  // Idempotency on order id.
+  // Idempotency, two layers.
+  //
+  // (1) order id — the strong key, when the PSP sends one.
   if (orderId) {
     const { data: existingEvent } = await supabase
       .from('payment_events')
@@ -99,6 +102,19 @@ Deno.serve(async (req) => {
       log.info('payment_duplicate', { fn: 'payment-webhook', correlationId, orderId });
       return jsonResponse(req, { ok: true, duplicate: true });
     }
+  }
+
+  // (2) body hash — the fallback for payloads with NO order id, where
+  // layer (1) is skipped entirely. Without this a PSP retry re-ran the
+  // whole paid branch: a second deal, a duplicate program membership, a
+  // repeated status transition and a second Purchase event to Meta CAPI.
+  // Reuses the 24h webhook_idempotency table that leads-intake already
+  // relies on.
+  const idemKey = `payment:${orderId ?? await hashBody(rawBody)}`;
+  const cachedResponse = await getWebhookIdempotencyResponse(supabase, idemKey);
+  if (cachedResponse) {
+    log.info('payment_duplicate_body', { fn: 'payment-webhook', correlationId, orderId: orderId ?? null });
+    return jsonResponse(req, { ...cachedResponse, duplicate: true });
   }
 
   // Match priority: order_id → phone → email.
@@ -146,7 +162,9 @@ Deno.serve(async (req) => {
       response_data: { reason: 'no_lead_match' },
     });
     log.warn('payment_unmatched', { fn: 'payment-webhook', correlationId, orderId });
-    return jsonResponse(req, { ok: true, matched: false, eventId: eventRow.id });
+    const unmatchedResponse = { ok: true, matched: false, eventId: eventRow.id };
+    await storeWebhookIdempotencyResponse(supabase, idemKey, 'payment-webhook', unmatchedResponse);
+    return jsonResponse(req, unmatchedResponse);
   }
 
   if (PAID_STATUSES.has(paymentStatus)) {
@@ -286,7 +304,9 @@ Deno.serve(async (req) => {
     });
   }
 
-  return jsonResponse(req, { ok: true, matchedLeadId, eventId: eventRow.id });
+  const finalResponse = { ok: true, matchedLeadId, eventId: eventRow.id };
+  await storeWebhookIdempotencyResponse(supabase, idemKey, 'payment-webhook', finalResponse);
+  return jsonResponse(req, finalResponse);
 });
 
 function resolvePaidTrack(productCode: string | null | undefined): string | null {
