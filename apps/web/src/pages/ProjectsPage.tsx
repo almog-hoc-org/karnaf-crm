@@ -9,6 +9,7 @@ import { PageIntro } from '@/components/PageIntro';
 
 // Tier 7.C.1 — central labels.
 import { PROJECT_TYPE_LABELS, PROJECT_STATUS_LABELS } from '@/lib/format';
+import { Modal } from '@/components/Modal';
 const TYPE_LABELS = PROJECT_TYPE_LABELS as Record<ProjectType, string>;
 const STATUS_LABELS = PROJECT_STATUS_LABELS as Record<ProjectStatus, string>;
 
@@ -235,8 +236,9 @@ function EditDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <form className="kf-card max-h-[90vh] w-full max-w-2xl space-y-3 overflow-auto p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onCancel}>
+      {(state) => (
+      <form data-state={state} className="kf-layer kf-layer-dialog kf-card max-h-[90vh] w-full max-w-2xl space-y-3 overflow-auto p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-semibold">עריכת פרויקט</h2>
         <label className="block text-sm">
           <span className="text-slate-600">שם</span>
@@ -283,6 +285,7 @@ function EditDialog({
           <button type="submit" className="kf-btn kf-btn-primary" disabled={busy}>{busy ? 'שומר...' : 'שמירה'}</button>
         </div>
       </form>
-    </div>
+      )}
+    </Modal>
   );
 }

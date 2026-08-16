@@ -9,6 +9,11 @@ import { resolveMaxReplyChars } from './reply-length.ts';
 import { env } from './env.ts';
 import { log } from './logger.ts';
 
+// Hebrew runs close to one token per character in these models, and the
+// reply itself is capped at ~900 chars, so 1024 leaves room for the JSON
+// scaffolding without letting a stuck generation run to the context limit.
+const AI_MAX_OUTPUT_TOKENS = 1024;
+
 type AiProvider = 'openai' | 'gemini';
 
 interface ModelCallResult {
@@ -201,6 +206,11 @@ async function callOpenAi(args: {
       model: args.modelName,
       response_format: { type: 'json_object' },
       temperature: 0.4,
+      // Bounded output. The contract is a small JSON object whose only
+      // long field is replyText (capped at ~900 chars downstream), so a
+      // runaway generation is always a malfunction — and an unbounded one
+      // is billed in full before validation ever sees it.
+      max_tokens: AI_MAX_OUTPUT_TOKENS,
       messages: [
         { role: 'system', content: args.systemPrompt },
         { role: 'user', content: args.userPrompt },
@@ -235,6 +245,7 @@ async function callGemini(args: {
         generationConfig: {
           temperature: 0.4,
           responseMimeType: 'application/json',
+          maxOutputTokens: AI_MAX_OUTPUT_TOKENS,
         },
       }),
       signal: args.signal,

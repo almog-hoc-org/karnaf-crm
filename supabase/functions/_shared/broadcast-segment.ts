@@ -39,8 +39,17 @@ export interface SegmentChannelOptions {
   requireEmailConsent?: boolean;
 }
 
-// Apply the segment filter + the non-negotiable suppression guards
-// (do_not_contact, removed_by_request) to a leads query builder.
+// Statuses that mean the relationship is over (or the row is a dedupe
+// artifact). A broadcast is marketing to an open pipeline; these leads are
+// not in it. Note this exclusion lives HERE and not in contact-guard:
+// lifecycle sends (student check-ins) legitimately target won leads.
+const CLOSED_STATUSES = ['won', 'lost', 'duplicate'] as const;
+
+// Apply the segment filter + the non-negotiable suppression guards to a
+// leads query builder. The suppressions mirror _shared/contact-guard.ts
+// (kind: 'proactive') expressed as SQL, so a preview count and the actual
+// send agree on who is reachable — snoozed and no-proactive-contact leads
+// used to be counted in the preview and then messaged for real.
 export function applySegment<T>(query: T, segment: BroadcastSegment, opts: SegmentChannelOptions = {}): T {
   // The Supabase query-builder type isn't chainable through a generic
   // here; a loose local type is the pragmatic choice.
@@ -48,9 +57,16 @@ export function applySegment<T>(query: T, segment: BroadcastSegment, opts: Segme
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let q = query as any;
   q = q.eq('do_not_contact', false).eq('removed_by_request', false);
+  q = q.eq('no_proactive_contact', false);
+  q = q.or(`snoozed_until.is.null,snoozed_until.lte.${new Date().toISOString()}`);
+  q = q.not('lead_status', 'in', `("${CLOSED_STATUSES.join('","')}")`);
   if (opts.channel === 'email') {
     q = q.not('email', 'is', null);
     if (opts.requireEmailConsent !== false) q = q.eq('consent_email', true);
+  } else {
+    // WhatsApp is the default channel; a lead with no phone is counted in
+    // the preview and then skipped at send time — the numbers never matched.
+    q = q.not('phone', 'is', null);
   }
   for (const field of ALLOWED_FIELDS) {
     const value = segment?.[field];

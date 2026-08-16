@@ -338,14 +338,14 @@ function ManagerInsightsPanel({
   const overallWinRate = totalLeads > 0 ? Math.round((totalWon / totalLeads) * 100) : 0;
 
   return (
-    <section className="overflow-hidden rounded-3xl border border-brand-100 bg-gradient-to-l from-brand-50 via-white to-white shadow-sm">
+    <section className="overflow-hidden rounded-2xl border border-brand-200 bg-gradient-to-l from-brand-50 via-white to-white shadow-sm">
       <div className="p-4 sm:p-6">
         <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-100">
           📊 דוח מנהלת
         </div>
         <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr] lg:items-start">
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">מה כדאי לעשות לפי הנתונים?</h2>
+            <h2 className="text-xl font-semibold tracking-tight text-slate-950">מה כדאי לעשות לפי הנתונים?</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
               הדוח מתרגם מספרים להחלטות: מאיזה מקור להביא עוד לידים, איפה מאבדים מענה, ואיזה ערוץ דורש בדיקה.
             </p>
@@ -380,7 +380,7 @@ function ManagerInsightsPanel({
 
 function InsightMetric({ label, value, hint, danger = false }: { label: string; value: string; hint: string; danger?: boolean }) {
   return (
-    <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
+    <div className="rounded-lg bg-white p-3 ring-1 ring-inset ring-slate-200">
       <div className="text-xs text-slate-500">{label}</div>
       <div className={`mt-1 text-3xl font-semibold tabular-nums ${danger ? 'text-rose-700' : 'text-slate-950'}`}>{value}</div>
       <div className="mt-1 text-xs text-slate-500">{hint}</div>
@@ -389,12 +389,12 @@ function InsightMetric({ label, value, hint, danger = false }: { label: string; 
 }
 
 function InsightAction({ title, detail, tone }: { title: string; detail: string; tone: 'emerald' | 'amber' | 'rose' | 'slate' }) {
-  const cls = tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
-    : tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-950'
-    : tone === 'rose' ? 'border-rose-200 bg-rose-50 text-rose-950'
-    : 'border-slate-200 bg-slate-50 text-slate-800';
+  const cls = tone === 'emerald' ? 'kf-tone-success'
+    : tone === 'amber' ? 'kf-tone-warning'
+    : tone === 'rose' ? 'kf-tone-danger'
+    : 'kf-tone-neutral';
   return (
-    <div className={`rounded-2xl border p-3 ${cls}`}>
+    <div className={`rounded-lg p-3 ring-1 ring-inset ${cls}`}>
       <div className="text-sm font-semibold">{title}</div>
       <p className="mt-1 text-xs leading-5 opacity-80">{detail}</p>
     </div>

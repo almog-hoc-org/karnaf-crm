@@ -9,6 +9,7 @@ import { PageIntro } from '@/components/PageIntro';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { COMMISSION_STATUS_LABELS, formatRelative } from '@/lib/format';
 import { t } from '@/lib/i18n';
+import { Modal } from '@/components/Modal';
 
 // Tier 7.C.1 — labels live in lib/format.ts. Local alias keeps the
 // rest of the file readable without rewriting every reference.
@@ -220,8 +221,9 @@ function PaymentDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <form className="kf-card w-full max-w-md space-y-3 p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onCancel}>
+      {(state) => (
+      <form data-state={state} className="kf-layer kf-layer-dialog kf-card w-full max-w-md space-y-3 p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-semibold">סימון עמלה כשולמה</h2>
         <p className="text-xs text-slate-500">
           חיוב צפוי: {commission.amount_due.toLocaleString('he-IL')} {commission.currency}
@@ -254,7 +256,8 @@ function PaymentDialog({
           <button type="submit" className="kf-btn kf-btn-primary" disabled={busy}>{busy ? 'שומר...' : 'שמירה'}</button>
         </div>
       </form>
-    </div>
+      )}
+    </Modal>
   );
 }
 
@@ -274,8 +277,9 @@ function CancellationDialog({
     onSubmit(reason.trim());
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <form className="kf-card w-full max-w-md space-y-3 p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onCancel}>
+      {(state) => (
+      <form data-state={state} className="kf-layer kf-layer-dialog kf-card w-full max-w-md space-y-3 p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-semibold">ביטול עמלה</h2>
         <p className="text-xs text-slate-500">פעולה לא הפיכה — הקפד לתעד את הסיבה.</p>
         <label className="block text-sm">
@@ -288,6 +292,7 @@ function CancellationDialog({
           <button type="submit" className="kf-btn kf-btn-danger" disabled={busy}>{busy ? 'מבטל...' : 'בטל עמלה'}</button>
         </div>
       </form>
-    </div>
+      )}
+    </Modal>
   );
 }

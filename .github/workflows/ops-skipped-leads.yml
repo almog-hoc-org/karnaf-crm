@@ -1,6 +1,6 @@
-# TEMPORARY read-only diagnostic — who were the skipped recipients of the
-# latest broadcast, and which of them look like old test leads. Used to
-# decide on a permanent-purge cleanup; remove afterwards.
+# TEMPORARY read-only diagnostic — broadcast + Meta-template health
+# snapshot: sync state per template, recent broadcasts and their
+# failure/skip breakdown. Dispatch manually when something looks off.
 name: Ops - Skipped Leads
 
 on:
@@ -10,10 +10,10 @@ permissions:
   contents: read
 
 jobs:
-  skipped:
+  diag:
     runs-on: ubuntu-latest
     steps:
-      - name: List skipped recipients of the latest broadcast
+      - name: Broadcast + template health snapshot
         env:
           SUPABASE_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
           PROJECT_REF: svkzkpgccahwmyflobvn
@@ -43,48 +43,28 @@ jobs:
               print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
               print()
 
-          import time
-          q('fire template sync', 'select public.run_template_sync()')
-          time.sleep(10)
-          q('sync response from meta-template-status', """
-              select status_code, left(content, 600) as content, created
-              from net._http_response
-              order by created desc limit 2""")
-          q('after_webinar local row post-sync', """
-              select key, status, metadata->'meta' as meta
-              from message_templates where key = 'after_webinar'""")
-          q('last 3 broadcasts', """
-              select left(id::text, 8) as id, name, status, recipients_count,
-                     sent_count, failed_count, skipped_count, scheduled_at
-              from broadcasts order by created_at desc limit 3""")
-          q('recent dispatch failures today', """
+          q('whatsapp templates - meta sync state', """
+              select key, status,
+                     metadata->'meta'->>'status' as meta_status,
+                     metadata->'meta'->>'language' as meta_lang,
+                     metadata->'meta'->>'synced_at' as synced_at
+              from message_templates where channel = 'whatsapp'
+              order by (metadata->'meta'->>'status') nulls last, key""")
+          q('last 5 broadcasts', """
+              select left(id::text, 8) as id, name, channel, template_key,
+                     meta_template, status, recipients_count, sent_count,
+                     failed_count, skipped_count, scheduled_at
+              from broadcasts order by created_at desc limit 5""")
+          q('recipient error breakdown (last 7 days)', """
+              select left(r.broadcast_id::text, 8) as broadcast, r.status,
+                     left(coalesce(r.error, ''), 250) as error, count(*)
+              from broadcast_recipients r
+              where r.broadcast_id in (
+                select id from broadcasts where created_at > now() - interval '7 days')
+              group by 1, 2, 3 order by 1, 4 desc limit 30""")
+          q('dlq dispatches last 7 days grouped', """
               select left(coalesce(last_error, ''), 250) as err, count(*)
               from outbound_dispatch
-              where status = 'dlq' and created_at > now() - interval '6 hours'
-              group by 1 order by 2 desc limit 5""")
-          q('skip reasons breakdown', """
-              select r.error as reason, count(*)
-              from broadcast_recipients r
-              where r.broadcast_id = (select id from broadcasts order by created_at desc limit 1)
-                and r.status = 'skipped'
-              group by 1 order by 2 desc""")
-          q('non-terminal recipients + their queue items', """
-              select r.status as recipient_status, left(r.dispatch_id::text, 8) as dispatch,
-                     d.status as dispatch_status, d.attempts, d.next_attempt_at,
-                     d.claimed_at, left(coalesce(d.last_error, ''), 200) as last_error
-              from broadcast_recipients r
-              left join outbound_dispatch d on d.id = r.dispatch_id
-              where r.broadcast_id = (select id from broadcasts order by created_at desc limit 1)
-                and r.status in ('pending', 'enqueued')""")
-          q('skipped leads detail', """
-              select l.id, l.full_name, l.phone, l.email, l.source,
-                     l.lead_status, l.payment_status, l.do_not_contact,
-                     l.removed_by_request, l.created_at::date as created,
-                     r.error as skip_reason,
-                     (select count(*) from messages m where m.lead_id = l.id) as msg_count
-              from broadcast_recipients r
-              join leads l on l.id = r.lead_id
-              where r.broadcast_id = (select id from broadcasts order by created_at desc limit 1)
-                and r.status = 'skipped'
-              order by l.created_at""")
+              where status = 'dlq' and created_at > now() - interval '7 days'
+              group by 1 order by 2 desc limit 10""")
           EOF

@@ -14,7 +14,7 @@ import { logLeadEvent, upsertLead } from '../_shared/lead-service.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
 import { normalizeIsraeliPhone } from '../_shared/phone.ts';
-import { env, safeEqual } from '../_shared/env.ts';
+import { env, optional, safeEqual } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 
@@ -89,8 +89,18 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
 
   const rawBody = await req.text();
+  // Fail CLOSED when the secret is missing. This used to be a bare
+  // `if (metaSecret)` with no else — an unconfigured deployment accepted
+  // unsigned POSTs from anyone and happily created leads and queue items
+  // from them. Every sibling webhook already refuses to run unsigned;
+  // WEBHOOK_ALLOW_UNSIGNED=true is the explicit dev-only opt-out.
   const metaSecret = env.metaAppSecret();
-  if (metaSecret) {
+  if (!metaSecret) {
+    if (optional('WEBHOOK_ALLOW_UNSIGNED') !== 'true') {
+      log.error('fb_leadgen_webhook_misconfigured', { fn: 'fb-leadgen-webhook', correlationId });
+      return jsonResponse(req, { error: 'Webhook not configured' }, 503);
+    }
+  } else {
     const sig = req.headers.get('x-hub-signature-256');
     if (!sig) return jsonResponse(req, { error: 'Missing signature' }, 401);
     const valid = await verifyMetaSignature(req, rawBody, metaSecret);

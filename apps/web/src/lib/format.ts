@@ -236,6 +236,41 @@ export const SOURCE_LABELS: Record<string, string> = {
   unknown: 'לא ידוע',
 };
 
+// Precise arrival-origin descriptor: the short source label plus the most
+// specific detail we hold — Rav Messer form/list name, landing-page path,
+// or campaign. Answers "מאיפה הליד הזה הגיע" at a glance, without opening
+// the lead card.
+export function describeLeadOrigin(lead: {
+  source?: string | null;
+  source_detail?: string | null;
+  source_campaign?: string | null;
+  utm_campaign?: string | null;
+  landing_page?: string | null;
+}): { label: string; detail: string | null } {
+  const label = lead.source ? labelOr(SOURCE_LABELS, lead.source) : 'לא ידוע';
+  const detail =
+    trimmedOrNull(lead.source_detail) ??
+    trimmedOrNull(lead.utm_campaign) ??
+    trimmedOrNull(lead.source_campaign) ??
+    landingPagePath(lead.landing_page);
+  return { label, detail: detail && detail !== lead.source ? detail : null };
+}
+
+function trimmedOrNull(value: string | null | undefined): string | null {
+  const v = value?.trim();
+  return v ? v : null;
+}
+
+function landingPagePath(value: string | null | undefined): string | null {
+  const v = value?.trim();
+  if (!v) return null;
+  try {
+    return v.startsWith('http') ? new URL(v).pathname : v;
+  } catch {
+    return v;
+  }
+}
+
 export const QUEUE_LABELS: Record<string, string> = {
   first_response_due: 'מענה ראשוני',
   hot_lead: 'ליד חם',

@@ -89,7 +89,7 @@ export function AdminHubPage() {
               <Link
                 key={link.to}
                 to={link.to}
-                className="kf-card group p-3 transition hover:border-brand-300 hover:shadow-sm"
+                className="kf-pressable kf-pressable-subtle kf-card group p-3 transition hover:border-brand-300 hover:shadow-sm"
               >
                 <h3 className="font-medium text-slate-900 group-hover:text-brand-700">{link.title}</h3>
                 <p className="mt-1 text-xs text-slate-500">{link.blurb}</p>

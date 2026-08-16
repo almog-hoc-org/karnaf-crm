@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { t } from '../lib/i18n';
+import { usePresence } from '../lib/usePresence';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -29,6 +30,7 @@ export function ConfirmDialog({
   const headingId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const { mounted, state } = usePresence(open);
 
   useEffect(() => {
     if (!open) return;
@@ -43,7 +45,7 @@ export function ConfirmDialog({
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onCancel]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   const handleBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) onCancel();
@@ -51,7 +53,8 @@ export function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4"
+      data-state={state}
+      className="kf-layer kf-layer-fade fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4"
       onMouseDown={handleBackdrop}
     >
       <div
@@ -59,7 +62,8 @@ export function ConfirmDialog({
         role="alertdialog"
         aria-modal="true"
         aria-labelledby={headingId}
-        className="w-full max-w-md rounded-lg bg-white shadow-xl"
+        data-state={state}
+        className="kf-layer kf-layer-dialog w-full max-w-md rounded-xl bg-white shadow-xl"
       >
         <div className="p-5">
           <h2 id={headingId} className="text-lg font-semibold text-slate-900">

@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { fetchLeadsList, fetchUsersList, postBulkLeadAction, postImportLeads, postLeadManage, postPurgeLead, type ImportLeadsResult, type ProductGroup } from '@/lib/api';
+import { fetchLeadsList, fetchUsersList, postAdminAction, postBulkLeadAction, postImportLeads, postLeadManage, postPurgeLead, type ImportLeadsResult, type ProductGroup } from '@/lib/api';
 import { parseImportRows } from '@/lib/importParse';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { BulkActionBar } from '@/components/BulkActionBar';
+import { QuickClassifyPopover } from '@/components/QuickClassifyPopover';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LeadsTableSkeleton } from '@/components/Skeleton';
 import { useToast } from '@/components/Toast';
 import { useAuth } from '@/auth/auth-context';
-import { formatRelative, labelOr, STATUS_LABELS, HEAT_LABELS, OWNERSHIP_LABELS, SOURCE_LABELS } from '@/lib/format';
+import { describeLeadOrigin, formatRelative, STATUS_LABELS, HEAT_LABELS, OWNERSHIP_LABELS, SOURCE_LABELS } from '@/lib/format';
 import type { IntakeSegment, LeadHeat, LeadRow, LeadStatus, OwnershipMode } from '@/lib/types';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
@@ -119,6 +120,10 @@ function LeadWorkCard({
   canPurge,
   onToggle,
   onPurge,
+  canClassify,
+  classifyBusy,
+  onSetHeat,
+  onSetSegment,
 }: {
   lead: LeadRow;
   selected: boolean;
@@ -126,6 +131,10 @@ function LeadWorkCard({
   canPurge: boolean;
   onToggle: (checked: boolean) => void;
   onPurge: () => void;
+  canClassify: boolean;
+  classifyBusy: boolean;
+  onSetHeat: (heat: LeadHeat) => void;
+  onSetSegment: (segment: IntakeSegment) => void;
 }) {
   const guidance = leadListGuidance(lead);
   return (
@@ -146,7 +155,7 @@ function LeadWorkCard({
             <Link to={`/leads/${lead.id}`} className="text-lg font-semibold text-brand-700 hover:underline">
               {lead.full_name || 'ליד ללא שם'}
             </Link>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${guidance.tone}`}>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${guidance.tone}`}>
               {guidance.label}
             </span>
             <span className="text-xs text-slate-500" title={lead.updated_at}>
@@ -154,7 +163,7 @@ function LeadWorkCard({
             </span>
             {lead.awaiting_reply ? (
               <span
-                className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800 ring-1 ring-amber-300"
+                className="kf-chip kf-tone-warning rounded-full px-2.5"
                 title={lead.last_inbound_at ? `ההודעה האחרונה מהלקוח: ${formatRelative(lead.last_inbound_at)}` : undefined}
               >
                 ⏳ ממתין לתשובה
@@ -162,19 +171,19 @@ function LeadWorkCard({
             ) : null}
             {lead.outcome ? (
               <span
-                className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-800 ring-1 ring-violet-300"
+                className="kf-chip kf-tone-accent rounded-full px-2.5"
                 title={lead.outcome_note ?? undefined}
               >
                 🏷 נסגר ל: {OUTCOME_LABELS[lead.outcome] ?? lead.outcome}
               </span>
             ) : null}
             {lead.snoozed_until && Date.parse(lead.snoozed_until) > Date.now() ? (
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
+              <span className="kf-chip kf-tone-neutral rounded-full px-2.5">
                 ⏰ בהשהיה עד {new Date(lead.snoozed_until).toLocaleDateString('he-IL')}
               </span>
             ) : null}
             {lead.no_proactive_contact ? (
-              <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700 ring-1 ring-orange-200">
+              <span className="kf-chip kf-tone-warning rounded-full px-2.5">
                 ללא פנייה יזומה
               </span>
             ) : null}
@@ -201,7 +210,12 @@ function LeadWorkCard({
               <span>אין טלפון</span>
             )}
             {lead.email ? <span className="break-all">{lead.email}</span> : null}
-            <span>מקור: {lead.source ? labelOr(SOURCE_LABELS, lead.source) : '—'}</span>
+            <span>
+              מקור: {(() => {
+                const origin = describeLeadOrigin(lead);
+                return origin.detail ? `${origin.label} · ${origin.detail}` : origin.label;
+              })()}
+            </span>
             {lead.product_interest ? (
               <span>מוצר: {PRODUCT_INTEREST_LABELS[lead.product_interest] ?? lead.product_interest}</span>
             ) : null}
@@ -216,11 +230,11 @@ function LeadWorkCard({
             <HeatBadge heat={lead.lead_heat} />
             <OwnershipBadge ownership={lead.ownership_mode} />
             {lead.intake_segment ? (
-              <span className="kf-badge bg-violet-100 text-violet-800">
+              <span className="kf-badge kf-tone-accent">
                 {INTAKE_SEGMENT_LABELS[lead.intake_segment] ?? lead.intake_segment}
               </span>
             ) : null}
-            <span className="kf-badge bg-slate-100 text-slate-700">ציון {lead.lead_score}</span>
+            <span className="kf-badge kf-tone-neutral">ציון {lead.lead_score}</span>
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1">
@@ -242,6 +256,16 @@ function LeadWorkCard({
               WhatsApp
             </a>
           ) : null}
+          {canClassify ? (
+            <QuickClassifyPopover
+              heat={lead.lead_heat}
+              segment={lead.intake_segment}
+              busy={classifyBusy}
+              buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
+              onSetHeat={onSetHeat}
+              onSetSegment={onSetSegment}
+            />
+          ) : null}
         </div>
       </div>
     </article>
@@ -253,21 +277,21 @@ function leadListGuidance(lead: LeadRow) {
     return {
       label: 'תמיכה/לקוח קיים',
       detail: 'לעצור מכירה אוטומטית ולבדוק אם זה תלמיד או לקוח קיים שצריך תמיכה.',
-      tone: 'bg-purple-100 text-purple-800',
+      tone: 'kf-tone-warning',
     };
   }
   if (lead.intake_segment === 'hot_sales') {
     return {
       label: 'מכירה חמה',
       detail: 'לענות על חסם אחרון ולהתקדם להרשמה, תשלום או שיחת סגירה קצרה.',
-      tone: 'bg-emerald-100 text-emerald-800',
+      tone: 'kf-tone-success',
     };
   }
   if (lead.intake_segment === 'needs_human') {
     return {
       label: 'מבקש נציג',
       detail: 'הליד ביקש שיחה או אדם אנושי. לפתוח, לקרוא סיכום ולהעביר לנציג.',
-      tone: 'bg-indigo-100 text-indigo-800',
+      tone: 'kf-tone-accent',
     };
   }
   if (
@@ -279,48 +303,48 @@ function leadListGuidance(lead: LeadRow) {
     return {
       label: 'לא ליצור קשר',
       detail: 'הליד מסומן כהסרה/לא ליצור קשר. להשאיר לתיעוד בלבד.',
-      tone: 'bg-rose-100 text-rose-800',
+      tone: 'kf-tone-danger',
     };
   }
   if (lead.ownership_mode === 'phone_sales_pending') {
     return {
       label: 'להתקשר',
       detail: 'השלב הבא הוא שיחת טלפון יזומה. אחרי השיחה כדאי לעדכן סיכום וסטטוס.',
-      tone: 'bg-indigo-100 text-indigo-800',
+      tone: 'kf-tone-accent',
     };
   }
   if (lead.lead_status === 'human_handoff' || lead.ownership_mode === 'mia_active') {
     return {
       label: 'בטיפול אנושי',
       detail: 'ה-AI מושעה כרגע. צריך לוודא שיש מענה אנושי או להחזיר ל-AI אחרי סיום טיפול.',
-      tone: 'bg-amber-100 text-amber-800',
+      tone: 'kf-tone-warning',
     };
   }
   if (lead.lead_status === 'payment_pending') {
     return {
       label: 'קרוב לסגירה',
       detail: 'הליד ממתין לתשלום. לבדוק אם צריך קישור, תזכורת או שיחת סגירה קצרה.',
-      tone: 'bg-emerald-100 text-emerald-800',
+      tone: 'kf-tone-success',
     };
   }
   if (lead.lead_heat === 'hot') {
     return {
       label: 'ליד חם',
       detail: 'כדאי לעקוב מקרוב. אם השיחה רגישה או נתקעת, לקחת לטיפול ידני.',
-      tone: 'bg-rose-100 text-rose-800',
+      tone: 'kf-tone-danger',
     };
   }
   if (lead.ownership_mode === 'ai_active') {
     return {
       label: 'AI מטפל',
       detail: 'אין צורך להתערב כרגע. המערכת ממשיכה את השיחה לפי ה-playbook הפעיל.',
-      tone: 'bg-sky-100 text-sky-800',
+      tone: 'kf-tone-info',
     };
   }
   return {
     label: 'מעקב',
     detail: 'אין פעולה דחופה מזוהה. לפתוח אם צריך להבין הקשר או לעדכן פרטים.',
-    tone: 'bg-slate-100 text-slate-700',
+    tone: 'kf-tone-neutral',
   };
 }
 
@@ -343,9 +367,14 @@ function persistSavedViews(views: SavedView[]) {
   }
 }
 
+const VALID_SORTS = ['updated_desc', 'inbound_oldest', 'score_desc'] as const;
+type LeadsSort = (typeof VALID_SORTS)[number];
+
 export function LeadsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [search, setSearch] = useState('');
+  // Free-text search is URL-persisted too (debounced below) — losing the
+  // query on every navigation was the list's most-felt annoyance.
+  const [search, setSearch] = useState(searchParams.get('search') ?? '');
   const [status, setStatus] = useState(searchParams.get('status') ?? '');
   const [heat, setHeat] = useState(searchParams.get('heat') ?? '');
   const [ownership, setOwnership] = useState(searchParams.get('ownership') ?? '');
@@ -362,7 +391,13 @@ export function LeadsPage() {
   const [inboundFrom, setInboundFrom] = useState(searchParams.get('inboundFrom') ?? '');
   const [offset, setOffset] = useState(0);
   const [savedViews, setSavedViews] = useState<SavedView[]>(() => loadSavedViews());
-  const [searchIn, setSearchIn] = useState<'lead' | 'messages'>('lead');
+  const [searchIn, setSearchIn] = useState<'lead' | 'messages'>(
+    searchParams.get('searchIn') === 'messages' ? 'messages' : 'lead',
+  );
+  const [sort, setSort] = useState<LeadsSort>(() => {
+    const fromUrl = searchParams.get('sort');
+    return (VALID_SORTS as readonly string[]).includes(fromUrl ?? '') ? (fromUrl as LeadsSort) : 'updated_desc';
+  });
   useDocumentTitle(t('leads_title'));
 
   const debouncedSearch = useDebouncedValue(search, 200);
@@ -382,8 +417,13 @@ export function LeadsPage() {
     if (createdFrom) next.set('createdFrom', createdFrom);
     if (createdTo) next.set('createdTo', createdTo);
     if (inboundFrom) next.set('inboundFrom', inboundFrom);
+    // Debounced value, not raw keystrokes — the URL updates when typing
+    // settles, not per character.
+    if (debouncedSearch.trim()) next.set('search', debouncedSearch.trim());
+    if (searchIn === 'messages') next.set('searchIn', 'messages');
+    if (sort !== 'updated_desc') next.set('sort', sort);
     setSearchParams(next, { replace: true });
-  }, [status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, campaign, outcomeFilter, createdFrom, createdTo, inboundFrom, setSearchParams]);
+  }, [status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, campaign, outcomeFilter, createdFrom, createdTo, inboundFrom, debouncedSearch, searchIn, sort, setSearchParams]);
 
   // dates from UI come as yyyy-mm-dd; expand to UTC range so we match the
   // entire day for createdTo, and start-of-day for createdFrom / inboundFrom.
@@ -405,6 +445,7 @@ export function LeadsPage() {
     createdFrom: expandStart(createdFrom),
     createdTo: expandEnd(createdTo),
     inboundFrom: expandStart(inboundFrom),
+    sort: sort !== 'updated_desc' ? sort : undefined,
     limit: PAGE_SIZE,
     offset,
   };
@@ -492,7 +533,18 @@ export function LeadsPage() {
   // never references rows the manager can't currently see.
   useEffect(() => {
     setSelected(new Set());
-  }, [debouncedSearch, status, heat, ownership, source, campaign, outcomeFilter, createdFrom, createdTo, inboundFrom, offset]);
+  }, [debouncedSearch, searchIn, status, heat, ownership, source, productGroup, memberOnly, awaitingOnly, campaign, outcomeFilter, createdFrom, createdTo, inboundFrom, sort, offset]);
+
+  // Quick-classify from the row — one click, no lead page.
+  const classifyMut = useMutation({
+    mutationFn: (input: { leadId: string; metaUpdates: { lead_heat?: LeadHeat; intake_segment?: IntakeSegment } }) =>
+      postAdminAction({ action: 'update_lead_meta', leadId: input.leadId, metaUpdates: input.metaUpdates }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      toast.success('הסיווג עודכן');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
 
   const bulkMut = useMutation({
     mutationFn: postBulkLeadAction,
@@ -573,10 +625,14 @@ export function LeadsPage() {
   const total = q.data?.total ?? null;
   const start = total != null ? offset + 1 : null;
   const end = total != null ? Math.min(offset + (q.data?.leads.length ?? 0), total) : null;
-  const hasFilters = !!(search || status || heat || ownership || source || campaign || outcomeFilter || createdFrom || createdTo || inboundFrom);
+  // Product tab / members / awaiting are filters too — without them here
+  // the "save view" and "clear" buttons vanished exactly when only a tab
+  // was active.
+  const hasFilters = !!(search || status || heat || ownership || source || campaign || outcomeFilter || createdFrom || createdTo || inboundFrom || productGroup || memberOnly || awaitingOnly);
 
   function clearFilters() {
     setSearch('');
+    setSearchIn('lead');
     setStatus('');
     setHeat('');
     setOwnership('');
@@ -586,6 +642,10 @@ export function LeadsPage() {
     setCreatedFrom('');
     setCreatedTo('');
     setInboundFrom('');
+    setProductGroup('');
+    setMemberOnly(false);
+    setAwaitingOnly(false);
+    setSort('updated_desc');
     setOffset(0);
   }
 
@@ -638,7 +698,7 @@ export function LeadsPage() {
               {importMarkMember ? ' וסומנו כחברי תוכנית' : ''}.
             </p>
             {importResult.failCount > 0 ? (
-              <div className="max-h-40 overflow-y-auto rounded border border-red-100 bg-red-50 p-2 text-red-700">
+              <div className="kf-tone-danger max-h-40 overflow-y-auto rounded-lg p-2 ring-1 ring-inset">
                 {importResult.results.filter((r) => r.error).map((r, i) => (
                   <div key={i} className="tabular-nums">{r.phone || '—'} — {r.error}</div>
                 ))}
@@ -657,7 +717,7 @@ export function LeadsPage() {
             <div className="flex items-center justify-between text-sm text-slate-600">
               <span>{importParsed.rows.length} שורות תקינות</span>
               {importParsed.invalid.length > 0 ? (
-                <span className="text-red-600">{importParsed.invalid.length} שורות בלי טלפון תקין ידולגו</span>
+                <span className="text-rose-700">{importParsed.invalid.length} שורות בלי טלפון תקין ידולגו</span>
               ) : null}
             </div>
             <label className="flex items-center gap-2 text-sm">
@@ -935,6 +995,21 @@ export function LeadsPage() {
           <option value="consultation">נסגר: פגישת ייעוץ</option>
           <option value="other">נסגר: אחר</option>
         </select>
+        <select
+          className="kf-input"
+          value={awaitingOnly ? 'inbound_oldest' : sort}
+          disabled={awaitingOnly}
+          title={awaitingOnly ? 'במצב "ממתינים לתשובה" הרשימה תמיד ממוינת מהממתין הוותיק ביותר' : undefined}
+          onChange={(e) => {
+            setSort(e.target.value as LeadsSort);
+            setOffset(0);
+          }}
+          aria-label="מיון הרשימה"
+        >
+          <option value="updated_desc">מיון: עודכן לאחרונה</option>
+          <option value="inbound_oldest">מיון: ממתין הכי הרבה זמן</option>
+          <option value="score_desc">מיון: ציון גבוה</option>
+        </select>
 
         <div className="sm:col-span-2 md:col-span-6">
           <details className="rounded-lg border border-slate-200 bg-slate-50/40 p-2 text-sm">
@@ -1082,6 +1157,10 @@ export function LeadsPage() {
                   else next.delete(lead.id);
                   setSelected(next);
                 }}
+                canClassify={canBulkEdit}
+                classifyBusy={classifyMut.isPending}
+                onSetHeat={(heat) => classifyMut.mutate({ leadId: lead.id, metaUpdates: { lead_heat: heat } })}
+                onSetSegment={(segment) => classifyMut.mutate({ leadId: lead.id, metaUpdates: { intake_segment: segment } })}
               />
             ))}
           </div>

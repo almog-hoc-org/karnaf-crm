@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase';
 
 // Tier 7.C.1 — central labels.
 import { TEMPLATE_CHANNEL_LABELS, TEMPLATE_STATUS_LABELS } from '@/lib/format';
+import { Modal } from '@/components/Modal';
 const CHANNEL_LABELS = TEMPLATE_CHANNEL_LABELS as Record<TemplateChannel, string>;
 const STATUS_LABELS = TEMPLATE_STATUS_LABELS as Record<TemplateStatus, string>;
 
@@ -230,7 +231,7 @@ export function TemplatesPage() {
                   {tpl.variables_used.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-1 text-xs">
                       {tpl.variables_used.map((v) => (
-                        <code key={v} className="rounded bg-violet-50 px-1.5 py-0.5 font-mono text-violet-700">
+                        <code key={v} className="kf-tone-accent rounded px-1.5 py-0.5 font-mono">
                           {`{{${v}}}`}
                         </code>
                       ))}
@@ -313,8 +314,9 @@ function EditDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <form className="kf-card max-h-[90vh] w-full max-w-xl space-y-3 overflow-auto p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onCancel}>
+      {(state) => (
+      <form data-state={state} className="kf-layer kf-layer-dialog kf-card max-h-[90vh] w-full max-w-xl space-y-3 overflow-auto p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-semibold">עריכת תבנית — {template.key}</h2>
         <label className="block text-sm">
           <span className="text-slate-600">שם תיאורי (עברית)</span>
@@ -349,7 +351,8 @@ function EditDialog({
           <button type="submit" className="kf-btn kf-btn-primary" disabled={busy}>{busy ? 'שומר...' : 'שמירה'}</button>
         </div>
       </form>
-    </div>
+      )}
+    </Modal>
   );
 }
 
@@ -466,9 +469,11 @@ function CreateEmailTemplateDialog({
   const canSave = keyValid && name.trim() && subject.trim() && html.trim();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
+    <Modal onClose={onCancel}>
+      {(state) => (
       <div
-        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+        data-state={state}
+        className="kf-layer kf-layer-dialog max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="text-lg font-semibold">תבנית מייל חדשה</h2>
@@ -513,6 +518,7 @@ function CreateEmailTemplateDialog({
           </button>
         </div>
       </div>
-    </div>
+      )}
+    </Modal>
   );
 }

@@ -343,12 +343,26 @@ Deno.serve(async (req) => {
   }
   counters.handoff_stale = (staleHandoffs ?? []).length;
 
-  const hasUrgent = counters.sla_breach > 0 || counters.payment_pending > 0
+  // Dead-lettered sends: messages that exhausted all 5 delivery attempts.
+  // Until now nothing read this status — a customer reply that failed
+  // permanently just vanished, with no dashboard, report or alert.
+  const { count: dlqCount, error: dlqErr } = await supabase
+    .from('outbound_dispatch')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'dlq')
+    .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+  if (dlqErr) {
+    queryErrors.push({ stage: 'dlq_query', message: dlqErr.message });
+  }
+  counters.dispatch_dlq = dlqCount ?? 0;
+
+  const hasUrgent = counters.dispatch_dlq > 0 || counters.sla_breach > 0 || counters.payment_pending > 0
     || counters.ai_stuck > 0 || counters.deal_stalled > 0
     || counters.meeting_outcome_pending > 0 || counters.phone_overdue > 0
     || counters.handoff_stale > 0;
   if (hasUrgent) {
     const lines: string[] = [];
+    if (counters.dispatch_dlq > 0) lines.push(`• הודעות שנכשלו סופית (DLQ): ${counters.dispatch_dlq} בשבוע האחרון`);
     if (counters.sla_breach > 0) lines.push(`• פריצת SLA: ${counters.sla_breach} לידים ללא מענה`);
     if (counters.phone_overdue > 0) lines.push(`• שיחת טלפון באיחור: ${counters.phone_overdue} לידים מעל 24ש׳`);
     if (counters.handoff_stale > 0) lines.push(`• העברה לנציג לא טופלה: ${counters.handoff_stale} לידים מעל ${HANDOFF_STALE_HOURS}ש׳`);
@@ -360,7 +374,7 @@ Deno.serve(async (req) => {
     if (counters.dormant > 0) lines.push(`• הועברו ל-dormant: ${counters.dormant}`);
     await notifyTelegram({
       source: 'sla-worker',
-      severity: counters.sla_breach > 0 || counters.phone_overdue > 0 || counters.handoff_stale > 0 ? 'error' : 'warn',
+      severity: counters.sla_breach > 0 || counters.phone_overdue > 0 || counters.handoff_stale > 0 || counters.dispatch_dlq > 0 ? 'error' : 'warn',
       title: 'Karnaf CRM — SLA tick',
       lines,
       link: 'https://karnaf-crm.vercel.app/inbox',
@@ -369,6 +383,14 @@ Deno.serve(async (req) => {
   }
 
   const ok = queryErrors.length === 0;
+  if (ok) {
+    await supabase.from('system_heartbeats').upsert({
+      name: 'sla_worker',
+      last_ok_at: new Date().toISOString(),
+      last_run_id: correlationId,
+      metadata: { counters },
+    });
+  }
   log.info('sla_worker_run', { fn: 'sla-worker', correlationId, counters, queryErrors });
   return jsonResponse(req, { ok, counters, queryErrors, correlationId }, ok ? 200 : 500);
   } catch (err) {

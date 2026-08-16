@@ -9,6 +9,7 @@ import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { formatRelative } from '@/lib/format';
 import { t } from '@/lib/i18n';
 import { PageIntro } from '@/components/PageIntro';
+import { Modal } from '@/components/Modal';
 
 const CATEGORY_LABELS: Record<string, string> = {
   intake: 'קליטה וניתוב',
@@ -336,8 +337,9 @@ function EditRuleDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <form className="kf-card max-h-[92vh] w-full max-w-3xl space-y-3 overflow-auto p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onCancel}>
+      {(state) => (
+      <form data-state={state} className="kf-layer kf-layer-dialog kf-card max-h-[92vh] w-full max-w-3xl space-y-3 overflow-auto p-5" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
         <header>
           <h2 className="text-lg font-semibold">עריכת כלל — {rule.name_he}</h2>
           <code className="text-xs text-slate-500">{rule.code} · {rule.trigger_event}</code>
@@ -459,6 +461,7 @@ function EditRuleDialog({
           <button type="submit" className="kf-btn kf-btn-primary" disabled={busy}>{busy ? 'שומר...' : 'שמירה'}</button>
         </div>
       </form>
-    </div>
+      )}
+    </Modal>
   );
 }

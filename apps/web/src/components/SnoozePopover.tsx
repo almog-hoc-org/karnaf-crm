@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { usePresence } from '@/lib/usePresence';
 import {
   SNOOZE_PRESETS,
   computeSnoozeUntil,
@@ -25,6 +26,7 @@ export function SnoozePopover({
   const [customDate, setCustomDate] = useState('');
   const [note, setNote] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
+  const { mounted, state } = usePresence(open);
 
   useEffect(() => {
     if (!open) return;
@@ -71,11 +73,15 @@ export function SnoozePopover({
       >
         {label}
       </button>
-      {open ? (
+      {mounted ? (
         <div
           role="dialog"
           aria-label="בחירת מועד לבדיקה חוזרת"
-          className="absolute end-0 top-8 z-40 w-64 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-xl"
+          data-state={state}
+          // Grows from the button that opened it (panel hangs below-end,
+          // so the origin is that corner) and shrinks back into it.
+          style={{ transformOrigin: 'top left' }}
+          className="kf-layer kf-layer-popover absolute end-0 top-8 z-40 w-64 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-xl"
         >
           <div className="text-xs font-semibold text-slate-600">לבדוק שוב בעוד:</div>
           <div className="mt-2 grid grid-cols-2 gap-1.5">
@@ -83,7 +89,7 @@ export function SnoozePopover({
               <button
                 key={p.key}
                 type="button"
-                className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs hover:bg-brand-50 hover:text-brand-700"
+                className="kf-pressable rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs transition hover:bg-brand-50 hover:text-brand-700"
                 onClick={() => pick(p.key)}
               >
                 {p.label}

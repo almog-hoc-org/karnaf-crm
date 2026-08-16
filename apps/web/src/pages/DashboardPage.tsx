@@ -27,22 +27,51 @@ export function DashboardPage() {
 
   const s = summaryQ.data!;
 
-  // Tier 7.B.3 — banner shown when no automation_tick heartbeat in 15 min.
-  const tickHeartbeat = heartbeatsQ.data?.find((h) => h.name === 'automation_tick');
-  const heartbeatStale = tickHeartbeat
-    ? Date.now() - Date.parse(tickHeartbeat.last_ok_at) > 15 * 60_000
-    : false;
+  // Heartbeat health. Every scheduled worker that can silently stop is
+  // watched, with a threshold matched to its cron cadence — the banner
+  // used to watch automation_tick alone, so a dead SLA worker or a
+  // nightly job that stopped running was invisible.
+  //
+  // A MISSING row counts as stale: a worker that has never once succeeded
+  // is the most broken state there is, and it used to read as healthy.
+  const WATCHED_WORKERS: Array<{ name: string; label: string; maxAgeMs: number }> = [
+    { name: 'automation_tick', label: 'מנוע אוטומציות', maxAgeMs: 15 * 60_000 },
+    { name: 'sla_worker', label: 'ניטור SLA', maxAgeMs: 30 * 60_000 },
+    { name: 'ai_watchdog', label: 'שומר AI', maxAgeMs: 20 * 60_000 },
+    { name: 'nightly_jobs', label: 'עבודות לילה', maxAgeMs: 26 * 60 * 60_000 },
+  ];
+  const staleWorkers = heartbeatsQ.data
+    ? WATCHED_WORKERS.filter((w) => {
+      const hb = heartbeatsQ.data!.find((h) => h.name === w.name);
+      if (!hb) return true;
+      return Date.now() - Date.parse(hb.last_ok_at) > w.maxAgeMs;
+    })
+    : [];
+  const heartbeatStale = staleWorkers.length > 0;
+  const lastOkFor = (name: string) => heartbeatsQ.data?.find((h) => h.name === name)?.last_ok_at ?? null;
 
   return (
     <div className="space-y-4 sm:space-y-6">
       {heartbeatStale ? (
-        <section className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-4 text-sm text-rose-900" role="alert">
+        <section className="kf-tone-danger rounded-xl p-4 text-sm ring-1 ring-inset" role="alert">
           <div className="flex items-baseline justify-between gap-3">
             <div>
-              <strong className="block text-base">⚠️ האוטומציות לא רצות</strong>
+              <strong className="block text-base">⚠️ תהליכים מתוזמנים לא רצים</strong>
+              <ul className="mt-1 space-y-0.5 text-sm">
+                {staleWorkers.map((w) => {
+                  const lastOk = lastOkFor(w.name);
+                  return (
+                    <li key={w.name}>
+                      {w.label} — ריצה אחרונה:{' '}
+                      <span className="tabular-nums">
+                        {lastOk ? new Date(lastOk).toLocaleString('he-IL') : 'אף פעם'}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
               <p className="mt-1 text-sm">
-                tick אחרון: <span className="tabular-nums">{tickHeartbeat ? new Date(tickHeartbeat.last_ok_at).toLocaleString('he-IL') : 'אף פעם'}</span>.
-                המנוע אמור לרוץ כל 10 דק׳ — אם הסטטוס לא חוזר, בדוק את ה-cron job ואת secrets האדג׳ פאנקשן.
+                אם הסטטוס לא חוזר, בדוק את ה-cron job ואת secrets האדג׳ פאנקשן.
               </p>
             </div>
           </div>
@@ -104,7 +133,7 @@ export function DashboardPage() {
           {Object.entries(s.queueCounts).map(([key, count]) => (
             <Link
               key={key} to={`/queue?type=${encodeURIComponent(key)}`}
-              className="group rounded-lg bg-slate-50 p-3 ring-1 ring-transparent transition hover:bg-white hover:ring-slate-200"
+              className="kf-pressable kf-pressable-subtle group rounded-lg bg-slate-50 p-3 ring-1 ring-transparent transition hover:bg-white hover:ring-slate-200"
             >
               <div className="text-xs text-slate-500 group-hover:text-slate-600">{QUEUE_LABELS[key] ?? key}</div>
               <div className="mt-1 text-2xl font-semibold tabular-nums">{count}</div>
@@ -128,14 +157,14 @@ function TodayCommandCenter({
   const priority = todayPriority(summary, queues);
   const topQueues = queues.slice(0, 3);
   return (
-    <section className="overflow-hidden rounded-3xl border border-brand-100 bg-gradient-to-l from-brand-50 via-white to-white shadow-sm">
+    <section className="overflow-hidden rounded-2xl border border-brand-200 bg-gradient-to-l from-brand-50 via-white to-white shadow-sm">
       <div className="grid gap-0 lg:grid-cols-[1.3fr_0.9fr]">
         <div className="p-4 sm:p-6">
           <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-100">
             <span aria-hidden="true">🎯</span>
             ניהול היום
           </div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">{priority.title}</h2>
+          <h2 className="text-xl font-semibold tracking-tight text-slate-950">{priority.title}</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{priority.detail}</p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Link to={priority.href} className="kf-btn kf-btn-primary justify-center">{priority.cta}</Link>
@@ -151,7 +180,7 @@ function TodayCommandCenter({
             <ol className="mt-3 space-y-2">
               {topQueues.map((q, i) => (
                 <li key={q.id}>
-                  <Link to={`/leads/${q.lead_id}`} className="flex items-center gap-3 rounded-xl bg-white p-3 text-sm shadow-sm ring-1 ring-slate-100 transition hover:ring-brand-200">
+                  <Link to={`/leads/${q.lead_id}`} className="kf-pressable kf-pressable-subtle flex items-center gap-3 rounded-xl bg-white p-3 text-sm shadow-sm ring-1 ring-slate-100 transition hover:ring-brand-200">
                     <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-50 text-xs font-semibold text-brand-700">{i + 1}</span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium text-slate-800">{q.leads?.full_name ?? 'ליד ללא שם'}</span>
@@ -239,7 +268,7 @@ function SourceHealthSection({
             <Link
               key={source}
               to={`/leads?source=${encodeURIComponent(source)}`}
-              className="group flex items-baseline justify-between rounded-lg bg-slate-50 p-3 ring-1 ring-transparent transition hover:bg-white hover:ring-slate-200"
+              className="kf-pressable kf-pressable-subtle group flex items-baseline justify-between rounded-lg bg-slate-50 p-3 ring-1 ring-transparent transition hover:bg-white hover:ring-slate-200"
               title={source}
             >
               <div className="min-w-0">

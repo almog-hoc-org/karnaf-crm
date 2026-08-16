@@ -1,16 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
-import { fetchAttentionInbox, postAdminAction, postQueueResolve, type LeadOutcome } from '@/lib/api';
+import { fetchAttentionInbox, postAdminAction, postQueueResolve, postSendReply, type LeadOutcome } from '@/lib/api';
+import { ReplyComposer } from '@/components/ReplyComposer';
+import { QuickClassifyPopover } from '@/components/QuickClassifyPopover';
 import { SnoozePopover } from '@/components/SnoozePopover';
+import { useAuth } from '@/auth/auth-context';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
-import { formatRelative, PRODUCT_LABELS } from '@/lib/format';
+import { describeLeadOrigin, formatRelative, PRODUCT_LABELS } from '@/lib/format';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
-import type { AttentionRow } from '@/lib/types';
+import type { AttentionRow, IntakeSegment, LeadHeat } from '@/lib/types';
 
 type WorkLane = 'all' | 'reply' | 'call' | 'risk' | 'ops';
 
@@ -38,6 +41,24 @@ const QUEUE_BACKED_KINDS = new Set([
   'queue', 'ai_stuck', 'phone_overdue', 'phone_escalation', 'deal_stalled', 'meeting_outcome_pending',
 ]);
 
+// "טיפול מיידי" = the customer replied to the bot and is waiting inside
+// the 24h window (or an operator-set snooze popped). Everything else is
+// follow-up work, rendered in a separate, calmer section — the inbox
+// never again nags about a lead who wrote nothing.
+const IMMEDIATE_KINDS = new Set(['mia_reply', 'awaiting_reply', 'snooze_due']);
+
+function isImmediateRow(row: AttentionRow): boolean {
+  return IMMEDIATE_KINDS.has(row.kind);
+}
+
+// Matches the exit half of --duration-exit on .kf-collapse / .kf-layer.
+const CARD_EXIT_MS = 180;
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true;
+  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return true; }
+}
+
 const OUTCOME_OPTIONS: Array<{ value: LeadOutcome; label: string }> = [
   { value: 'investor_mentorship', label: 'ליווי משקיעים' },
   { value: 'program', label: 'קורס הנדל"ן המקיף' },
@@ -57,27 +78,104 @@ export function InboxPage() {
   const [pendingNoAnswer, setPendingNoAnswer] = useState<AttentionRow | null>(null);
   const [closeNote, setCloseNote] = useState('');
   const [copiedTalkTrackId, setCopiedTalkTrackId] = useState<string | null>(null);
+  const [leavingLeadIds, setLeavingLeadIds] = useState<string[]>([]);
+  // At most one inline composer open at a time — a dozen open textareas
+  // would bury the card content this screen just fought to surface.
+  const [replyOpenLeadId, setReplyOpenLeadId] = useState<string | null>(null);
   const qc = useQueryClient();
   const toast = useToast();
+  const auth = useAuth();
+  // Mirrors the server-side gate on update_lead_meta (admin-actions).
+  const canClassify = auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia';
+  const navigate = useNavigate();
+  // Keyboard triage: index into the rendered order (immediate then later).
+  const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
+  const cardRefs = useRef(new Map<string, HTMLElement>());
 
   const q = useQuery({
     queryKey: ['attention-inbox'],
     queryFn: () => fetchAttentionInbox(),
-    refetchInterval: 30_000,
+    // Paused while a composer is open: a refetch can drop or reorder the
+    // card mid-typing and take the draft with it. The safety-net refetch
+    // after every mutation still runs.
+    refetchInterval: replyOpenLeadId ? false : 30_000,
     // Coming back to the tab is exactly when stale rows mislead.
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: !replyOpenLeadId,
   });
 
+  const [originFilter, setOriginFilter] = useState('');
+
   const allRows = useMemo(() => sortRows(q.data ?? []), [q.data]);
-  const rows = useMemo(() => (
-    lane === 'all' ? allRows : allRows.filter((row) => classifyRow(row).lane === lane)
-  ), [allRows, lane]);
+  const originOptions = useMemo(() => {
+    const labels = new Set<string>();
+    for (const row of allRows) labels.add(describeLeadOrigin(row).label);
+    return Array.from(labels).sort((a, b) => a.localeCompare(b, 'he'));
+  }, [allRows]);
+  const rows = useMemo(() => {
+    const byLane = lane === 'all' ? allRows : allRows.filter((row) => classifyRow(row).lane === lane);
+    return originFilter ? byLane.filter((row) => describeLeadOrigin(row).label === originFilter) : byLane;
+  }, [allRows, lane, originFilter]);
+  const immediateRows = useMemo(() => rows.filter(isImmediateRow), [rows]);
+  const laterRows = useMemo(() => rows.filter((row) => !isImmediateRow(row)), [rows]);
 
   const counts = useMemo(() => {
     const acc: Record<WorkLane, number> = { all: allRows.length, reply: 0, call: 0, risk: 0, ops: 0 };
     for (const row of allRows) acc[classifyRow(row).lane] += 1;
     return acc;
   }, [allRows]);
+
+  // The exact order cards appear on screen — immediate section first.
+  const visibleRows = useMemo(() => [...immediateRows, ...laterRows], [immediateRows, laterRows]);
+
+  // Keyboard triage. event.code keeps the keys physical — on the Hebrew
+  // layout the same fingers work without switching languages. Single-key
+  // actions go through data-hotkey + .click() on the card's own buttons,
+  // so every existing handler (dialogs, popovers, links) is reused as-is.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+      if (pendingClose || pendingOutcome || pendingNoAnswer) return;
+      if (!visibleRows.length) return;
+
+      const move = (delta: number) => {
+        e.preventDefault();
+        setFocusedIdx((cur) => {
+          const next = cur === null ? (delta > 0 ? 0 : visibleRows.length - 1)
+            : Math.min(visibleRows.length - 1, Math.max(0, cur + delta));
+          const row = visibleRows[next];
+          const el = row ? cardRefs.current.get(`${row.kind}:${row.ref_id}`) : null;
+          if (el) {
+            el.focus({ preventScroll: true });
+            el.scrollIntoView({ block: 'nearest' });
+          }
+          return next;
+        });
+      };
+
+      if (e.code === 'KeyJ' || e.code === 'ArrowDown') { move(1); return; }
+      if (e.code === 'KeyK' || e.code === 'ArrowUp') { move(-1); return; }
+
+      const row = focusedIdx === null ? null : visibleRows[focusedIdx];
+      if (!row) return;
+      const card = cardRefs.current.get(`${row.kind}:${row.ref_id}`);
+      const clickHotkey = (name: string) => {
+        const el = card?.querySelector<HTMLElement>(`[data-hotkey="${name}"]`);
+        if (!el) return;
+        (el.matches('button, a') ? el : el.querySelector<HTMLElement>('button'))?.click();
+      };
+
+      if (e.code === 'Enter') { e.preventDefault(); navigate(`/leads/${row.lead_id}`); return; }
+      if (e.code === 'KeyD') { e.preventDefault(); clickHotkey('done'); return; }
+      if (e.code === 'KeyR') { e.preventDefault(); clickHotkey('reply'); return; }
+      if (e.code === 'KeyS') { e.preventDefault(); clickHotkey('snooze'); return; }
+      if (e.code === 'KeyW') { e.preventDefault(); clickHotkey('whatsapp'); return; }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [visibleRows, focusedIdx, pendingClose, pendingOutcome, pendingNoAnswer, navigate]);
 
   const resolve = useMutation({
     mutationFn: (input: { queueItemId: string; note?: string | null }) =>
@@ -106,12 +204,63 @@ export function InboxPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
-  // Optimistic removal: acting on a card makes it vanish immediately; the
-  // refetch after the mutation settles is the safety net.
+  // Quick-classify from the card. Classification does NOT remove the
+  // card — the refreshed row updates the badges and chips in place.
+  const classify = useMutation({
+    mutationFn: (input: { leadId: string; metaUpdates: { lead_heat?: LeadHeat; intake_segment?: IntakeSegment } }) =>
+      postAdminAction({ action: 'update_lead_meta', leadId: input.leadId, metaUpdates: input.metaUpdates }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['attention-inbox'] });
+      toast.success('הסיווג עודכן');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
+  // Optimistic removal: acting on a card takes it off the list right
+  // away; the refetch after the mutation settles is the safety net.
+  // Clearing a lead is the action this screen exists for, so the card
+  // fades and collapses on its way out and the ones below flow up —
+  // without it the list snaps and you lose track of where you were.
   const removeLeadRows = (leadId: string) => {
-    qc.setQueryData<AttentionRow[]>(['attention-inbox'], (old) => (old ?? []).filter((r) => r.lead_id !== leadId));
+    const drop = () => qc.setQueryData<AttentionRow[]>(
+      ['attention-inbox'],
+      (old) => (old ?? []).filter((r) => r.lead_id !== leadId),
+    );
+    if (prefersReducedMotion()) { drop(); return; }
+    setLeavingLeadIds((prev) => (prev.includes(leadId) ? prev : [...prev, leadId]));
+    window.setTimeout(() => {
+      drop();
+      setLeavingLeadIds((prev) => prev.filter((id) => id !== leadId));
+    }, CARD_EXIT_MS);
   };
   const refetchInbox = () => qc.invalidateQueries({ queryKey: ['attention-inbox'] });
+
+  // Inline reply — the whole reason the reply lane exists. Unlike the
+  // triage mutations below, the card is removed only on SUCCESS: a failed
+  // send must keep the card on screen and the draft in the composer.
+  const sendInline = useMutation({
+    mutationFn: (input: { row: AttentionRow; text: string }) =>
+      postSendReply({
+        leadId: input.row.lead_id,
+        conversationId: input.row.last_inbound_conversation_id as string,
+        text: input.text,
+      }),
+    onSuccess: (result, input) => {
+      setReplyOpenLeadId(null);
+      removeLeadRows(input.row.lead_id);
+      void refetchInbox();
+      if (result.warning) toast.info(result.warning);
+      if (result.mode === 'sent_as_template') {
+        toast.success('נשלח ללקוח כתבנית (מחוץ לחלון 24 שעות)');
+      } else if (result.queued) {
+        toast.success('ההודעה נשמרה ותישלח אוטומטית כשהלקוח יענה');
+      } else {
+        toast.success('הודעה נשלחה');
+      }
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
 
   const markReviewed = useMutation({
     mutationFn: (row: AttentionRow) =>
@@ -149,10 +298,28 @@ export function InboxPage() {
   });
 
   const urgent = allRows.filter((row) => classifyRow(row).urgency === 'critical').length;
+  const immediateTotal = allRows.filter(isImmediateRow).length;
+
+  const displayGroups = [
+    {
+      key: 'immediate',
+      title: `טיפול מיידי — ענו וממתינים (${immediateRows.length})`,
+      hint: 'לקוחות שכתבו לנו ומחכים — חלון ה-24 שעות רץ. זה התור החשוב.',
+      rows: immediateRows,
+      tone: 'hot' as const,
+    },
+    {
+      key: 'later',
+      title: `מעקב ותפעול — לא דחוף (${laterRows.length})`,
+      hint: 'משימות המשך על לידים שכבר כתבו בעבר. אחרי שסיימתם את המענים.',
+      rows: laterRows,
+      tone: 'calm' as const,
+    },
+  ].filter((group) => group.rows.length > 0);
 
   return (
-    <div className="space-y-5">
-      <header className="overflow-hidden rounded-3xl bg-gradient-to-l from-brand-700 via-brand-600 to-slate-900 p-5 text-white shadow-sm sm:p-6">
+    <div className="space-y-4">
+      <header className="overflow-hidden rounded-2xl bg-gradient-to-l from-brand-700 via-brand-600 to-slate-900 p-5 text-white shadow-sm sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
             <p className="text-sm font-medium text-brand-100">עמדת עבודה יומית</p>
@@ -163,16 +330,14 @@ export function InboxPage() {
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:min-w-[360px]">
-            <Metric label="פתוח" value={allRows.length} />
+            <Metric label="מיידי" value={immediateTotal} tone={immediateTotal > 0 ? 'danger' : 'ok'} />
             <Metric label="דחוף" value={urgent} tone={urgent > 0 ? 'danger' : 'ok'} />
-            <Metric label="רענון" value="30ש׳" />
+            <Metric label="סה״כ פתוח" value={allRows.length} />
           </div>
         </div>
       </header>
 
       <InboxTrainingGuide />
-
-      <DailyFocusPanel rows={allRows} />
 
       <section className="grid gap-3 md:grid-cols-5" aria-label="סינון משימות">
         {LANE_FILTERS.map((item) => {
@@ -190,7 +355,7 @@ export function InboxPage() {
               }}
               aria-pressed={active}
               className={clsx(
-                'rounded-2xl border p-4 text-start shadow-sm transition',
+                'kf-pressable kf-pressable-subtle rounded-xl border p-4 text-start shadow-sm transition',
                 active
                   ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-100'
                   : 'border-slate-200 bg-white hover:border-brand-200 hover:bg-slate-50',
@@ -209,6 +374,36 @@ export function InboxPage() {
         })}
       </section>
 
+      <p className="hidden text-xs text-slate-400 md:block" title="המקשים לפי מיקום פיזי במקלדת — עובדים גם בפריסת עברית">
+        קיצורים: <kbd>J</kbd>/<kbd>K</kbd> ניווט בין כרטיסים · <kbd>Enter</kbd> פתיחת ליד · <kbd>D</kbd> טופל · <kbd>R</kbd> תשובה · <kbd>S</kbd> השהיה · <kbd>W</kbd> וואטסאפ
+      </p>
+
+      {originOptions.length > 1 ? (
+        <section className="flex flex-wrap items-center gap-2" aria-label="סינון לפי מקור הגעה">
+          <label htmlFor="inbox-origin-filter" className="text-sm font-medium text-slate-600">מקור הגעה:</label>
+          <select
+            id="inbox-origin-filter"
+            className="kf-input max-w-[220px]"
+            value={originFilter}
+            onChange={(e) => setOriginFilter(e.target.value)}
+          >
+            <option value="">כל המקורות</option>
+            {originOptions.map((label) => (
+              <option key={label} value={label}>{label}</option>
+            ))}
+          </select>
+          {originFilter ? (
+            <button
+              type="button"
+              className="text-xs font-semibold text-brand-700 hover:underline"
+              onClick={() => setOriginFilter('')}
+            >
+              ניקוי סינון
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="space-y-3">
         {q.isLoading ? (
           <div className="kf-card p-10 text-center text-slate-500">טוען משימות...</div>
@@ -219,28 +414,54 @@ export function InboxPage() {
             hint="המסך מתרענן אוטומטית. אם נכנס ליד או שהלקוח ענה — הוא יופיע כאן."
           />
         ) : (
-          rows.map((row) => {
+          displayGroups.map((group) => (
+            <div key={group.key} className="space-y-3">
+              <div className={clsx(
+                'flex flex-wrap items-baseline justify-between gap-2 rounded-lg px-4 py-2 ring-1 ring-inset',
+                group.tone === 'hot' ? 'kf-tone-danger' : 'kf-tone-neutral',
+              )}>
+                <h2 className="text-sm font-semibold">{group.title}</h2>
+                <span className="text-xs opacity-80">{group.hint}</span>
+              </div>
+              {group.rows.map((row) => {
             const meta = classifyRow(row);
             const plan = operatingPlan(row, meta);
-            const chips = reasonChips(row, meta);
+            const chips = reasonChips(row);
             const talkTrack = repTalkTrack(row, meta);
-            const whatsappWindow = whatsappWindowStatus(row);
             const whatsappUrl = whatsappConversationUrl(row);
+            const origin = describeLeadOrigin(row);
+            const leaving = leavingLeadIds.includes(row.lead_id);
+            // Inline reply: only where a human answer is what's due, and
+            // only when the RPC gave us a real conversation to send into
+            // (a pre-v5 backend or a text-less inbound degrades to the
+            // wa.me link, which stays regardless).
+            const canReplyInline =
+              (row.kind === 'mia_reply' || row.kind === 'awaiting_reply') &&
+              !!row.last_inbound_conversation_id;
+            const replyOpen = canReplyInline && replyOpenLeadId === row.lead_id;
             return (
+              <div key={`${row.kind}:${row.ref_id}`} className="kf-collapse" data-state={leaving ? 'closed' : 'open'}>
+              <div>
               <article
-                key={`${row.kind}:${row.ref_id}`}
+                data-state={leaving ? 'closed' : 'open'}
+                tabIndex={-1}
+                ref={(el) => {
+                  const key = `${row.kind}:${row.ref_id}`;
+                  if (el) cardRefs.current.set(key, el);
+                  else cardRefs.current.delete(key);
+                }}
                 className={clsx(
-                  'kf-card overflow-hidden border-s-4 p-4 transition hover:shadow-md sm:p-5',
+                  'kf-layer kf-layer-fade kf-card overflow-hidden border-s-4 p-4 transition hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 sm:p-5',
                   meta.borderClass,
                 )}
               >
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                   <div className="min-w-0 flex-1 space-y-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={clsx('rounded-full px-2.5 py-1 text-xs font-semibold', meta.pillClass)}>{meta.actionLabel}</span>
+                      <span className={clsx('rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset', meta.pillClass)}>{meta.actionLabel}</span>
                       <span className="text-xs text-slate-500">{formatRelative(row.due_at ?? row.created_at)}</span>
                       {meta.urgency === 'critical' ? (
-                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">דחוף</span>
+                        <span className="kf-tone-danger rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset">דחוף</span>
                       ) : null}
                     </div>
 
@@ -251,15 +472,76 @@ export function InboxPage() {
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
                         {row.lead_phone ? <a href={`tel:${row.lead_phone}`} className="tabular-nums hover:text-brand-700">{row.lead_phone}</a> : null}
                         <span>{humanReason(row)}</span>
+                        <span className="kf-chip kf-tone-neutral rounded-full">
+                          מקור: {origin.label}{origin.detail ? ` · ${origin.detail}` : ''}
+                        </span>
                         {row.product_interest ? (
-                          <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+                          <span className="kf-chip kf-tone-accent rounded-full">
                             {PRODUCT_LABELS[row.product_interest] ?? row.product_interest}
                           </span>
                         ) : null}
                       </div>
                     </div>
 
-                    <div className="grid gap-2 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+                    {/* The one coloured box left on the card. Everything
+                        else that used to be boxed here — the plan, the
+                        WhatsApp banner, the talk track — was competing
+                        with the actual reason the card exists: what the
+                        customer said. */}
+                    {row.last_inbound_text ? (
+                      <div className="kf-callout kf-tone-info">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs font-semibold">ההודעה האחרונה של הלקוח</div>
+                          {row.last_inbound_at ? (
+                            <span className="text-xs opacity-75">{formatRelative(row.last_inbound_at)}</span>
+                          ) : null}
+                        </div>
+                        <p className="mt-1 whitespace-pre-wrap leading-6 text-slate-800">
+                          ״{row.last_inbound_text}״
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {canReplyInline ? (
+                      replyOpen ? (
+                        <div>
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="text-xs font-semibold text-brand-700">תשובה ללקוח</span>
+                            <button
+                              type="button"
+                              className="text-xs text-slate-400 hover:text-slate-700"
+                              onClick={() => setReplyOpenLeadId(null)}
+                            >
+                              סגירה
+                            </button>
+                          </div>
+                          <ReplyComposer
+                            compact
+                            autoFocus
+                            disabled={false}
+                            channel={row.last_inbound_channel ?? 'whatsapp'}
+                            lastInboundAt={row.last_inbound_at}
+                            onSend={(text) => sendInline.mutateAsync({ row, text })}
+                            sending={sendInline.isPending && sendInline.variables?.row.lead_id === row.lead_id}
+                            errorMessage={null}
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          data-hotkey="reply"
+                          className="kf-btn kf-btn-primary w-full justify-center sm:w-auto"
+                          onClick={() => setReplyOpenLeadId(row.lead_id)}
+                        >
+                          השב כאן 💬
+                        </button>
+                      )
+                    ) : null}
+
+                    {/* Plain text, no frame: this is the card's primary
+                        content, and primary content doesn't need a box to
+                        prove it. */}
+                    <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
                       <div>
                         <div className="text-xs font-semibold text-slate-500">פעולה הבאה</div>
                         <div className="mt-1 font-semibold text-slate-900">{plan.nextAction}</div>
@@ -276,26 +558,26 @@ export function InboxPage() {
                     {chips.length ? (
                       <div className="flex flex-wrap gap-2" aria-label="סימני סיבה">
                         {chips.map((chip) => (
-                          <span key={`${chip.label}:${chip.tone}`} className={clsx('rounded-full px-2.5 py-1 text-xs font-medium', chipClass(chip.tone))}>
+                          <span key={`${chip.label}:${chip.tone}`} className={clsx('kf-chip', toneClass(chip.tone))}>
                             {chip.label}
                           </span>
                         ))}
                       </div>
                     ) : null}
 
-                    {whatsappWindow ? (
-                      <div className={clsx('rounded-2xl border p-3 text-sm leading-6', whatsappWindow.className)}>
-                        <div className="font-semibold">{whatsappWindow.title}</div>
-                        <div className="mt-1">{whatsappWindow.hint}</div>
-                      </div>
-                    ) : null}
-
-                    <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs font-semibold text-brand-700">מה להגיד עכשיו</div>
+                    {/* Collapsed by default. A suggested opening line is
+                        useful on the card you are working, not on all
+                        eleven of them at once. */}
+                    <details className="group/talk">
+                      <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-xs font-semibold text-brand-700 hover:underline">
+                        <span aria-hidden="true" className="transition group-open/talk:rotate-90">›</span>
+                        <span>מה להגיד עכשיו</span>
+                      </summary>
+                      <div className="mt-2 flex items-start justify-between gap-3">
+                        <p className="text-sm leading-6 text-slate-800">{talkTrack}</p>
                         <button
                           type="button"
-                          className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-100 transition hover:bg-brand-50"
+                          className="kf-pressable shrink-0 rounded-md bg-white px-2.5 py-1 text-xs font-semibold text-brand-700 ring-1 ring-inset ring-brand-200 transition hover:bg-brand-50"
                           onClick={() => {
                             void copyTalkTrack(talkTrack).then(() => {
                               setCopiedTalkTrackId(row.ref_id);
@@ -306,15 +588,14 @@ export function InboxPage() {
                           {copiedTalkTrackId === row.ref_id ? 'הועתק' : 'העתקת נוסח'}
                         </button>
                       </div>
-                      <p className="mt-1 text-sm leading-6 text-slate-800">{talkTrack}</p>
-                    </div>
+                    </details>
 
                     <div className="flex flex-wrap items-center gap-2">
                       <MemberBadge isMember={row.is_program_member} />
                       <StatusBadge status={row.lead_status} />
                       <HeatBadge heat={row.lead_heat} />
                       <OwnershipBadge ownership={row.ownership_mode} />
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">עדיפות {row.priority_level}</span>
+                      <span className="kf-chip kf-tone-neutral">עדיפות {row.priority_level}</span>
                     </div>
                   </div>
 
@@ -346,6 +627,7 @@ export function InboxPage() {
                         href={whatsappUrl}
                         target="_blank"
                         rel="noreferrer"
+                        data-hotkey="whatsapp"
                         className="kf-btn kf-btn-ghost justify-center"
                         aria-label={`פתיחת WhatsApp עבור ${row.lead_name || row.lead_phone || 'הליד'}`}
                       >
@@ -367,17 +649,32 @@ export function InboxPage() {
                     ) : null}
                     <button
                       type="button"
+                      data-hotkey="done"
                       className="kf-btn justify-center bg-emerald-600 text-white hover:bg-emerald-700"
                       disabled={markReviewed.isPending}
                       onClick={() => markReviewed.mutate(row)}
                     >
                       טופל ✓
                     </button>
-                    <SnoozePopover
-                      buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
-                      busy={snoozeLead.isPending}
-                      onSnooze={(until, note) => snoozeLead.mutate({ row, until, note })}
-                    />
+                    {/* The wrapper carries the hotkey target; the popover
+                        owns its own button. */}
+                    <span data-hotkey="snooze" className="contents">
+                      <SnoozePopover
+                        buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
+                        busy={snoozeLead.isPending}
+                        onSnooze={(until, note) => snoozeLead.mutate({ row, until, note })}
+                      />
+                    </span>
+                    {canClassify ? (
+                      <QuickClassifyPopover
+                        heat={row.lead_heat}
+                        segment={row.intake_segment}
+                        busy={classify.isPending}
+                        buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
+                        onSetHeat={(heat) => classify.mutate({ leadId: row.lead_id, metaUpdates: { lead_heat: heat } })}
+                        onSetSegment={(segment) => classify.mutate({ leadId: row.lead_id, metaUpdates: { intake_segment: segment } })}
+                      />
+                    ) : null}
                     <button
                       type="button"
                       className="kf-btn kf-btn-ghost justify-center"
@@ -400,8 +697,12 @@ export function InboxPage() {
                   </div>
                 </div>
               </article>
+              </div>
+              </div>
             );
-          })
+          })}
+            </div>
+          ))
         )}
       </section>
 
@@ -438,7 +739,7 @@ export function InboxPage() {
             <button
               key={template}
               type="button"
-              className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 transition hover:bg-brand-50 hover:text-brand-700"
+              className="kf-pressable rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 transition hover:bg-brand-50 hover:text-brand-700"
               onClick={() => setCloseNote(template)}
             >
               {template}
@@ -535,7 +836,7 @@ function InboxTrainingGuide() {
       </button>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">הדרך הקצרה לעבודה נכונה</p>
+          <p className="text-xs font-semibold text-brand-700">הדרך הקצרה לעבודה נכונה</p>
           <h2 className="mt-1 text-lg font-semibold text-slate-900">פותחים כרטיס, מטפלים, וסוגרים — בלי לחפש ידנית.</h2>
           <p className="mt-1 text-sm leading-6 text-slate-500">
             המסך הזה הוא נקודת ההתחלה של עובד. אם משהו דורש אדם, הוא יופיע כאן עם סיבה ופעולה מומלצת.
@@ -551,65 +852,47 @@ function InboxTrainingGuide() {
   );
 }
 
-// Tier 6.C — DailyFocusPanel slimmed. Before: 1 hero card ("הדבר
-// הראשון לפתוח") + 3 metric tiles (דחוף/לענות/להתקשר). The 3 metrics
-// already appear as count pills inside LANE_FILTERS below — two rows
-// teaching the same numbers. Now: just the hero, full width.
-function DailyFocusPanel({ rows }: { rows: AttentionRow[] }) {
-  const firstRow = rows[0] ?? null;
-  const firstMeta = firstRow ? classifyRow(firstRow) : null;
-  const first = firstRow && firstMeta ? operatingPlan(firstRow, firstMeta) : null;
+// The six tones from index.css. A chip states a fact about the row; the
+// tone says what kind of fact it is, and it means the same thing here as
+// it does on a badge, a callout or a toast.
+type Tone = 'danger' | 'warning' | 'info' | 'success' | 'accent' | 'neutral';
 
-  return (
-    <section className="kf-card border-s-4 border-s-brand-500 p-4" aria-label="מיקוד יומי">
-      <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">הדבר הראשון לפתוח</p>
-      {first ? (
-        <>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-semibold text-slate-900">{first.nextAction}</h2>
-            {firstMeta ? <span className={clsx('rounded-full px-2 py-0.5 text-xs font-semibold', firstMeta.pillClass)}>{firstMeta.actionLabel}</span> : null}
-          </div>
-          {firstRow ? (
-            <Link to={`/leads/${firstRow.lead_id}`} className="mt-1 inline-flex text-sm font-semibold text-brand-700 hover:underline">
-              לפתוח ראשון: {firstRow.lead_name || `ליד ${firstRow.lead_id.slice(0, 8)}`}
-            </Link>
-          ) : null}
-          <p className="mt-1 text-sm leading-6 text-slate-500">{first.why}</p>
-        </>
-      ) : (
-        <>
-          <h2 className="mt-1 text-lg font-semibold text-slate-900">אין כרגע טיפול דחוף</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-500">אפשר לעבור ללידים חדשים, פולואפים או שיפור נתונים.</p>
-        </>
-      )}
-    </section>
-  );
+function toneClass(tone: Tone) {
+  return `kf-tone-${tone}`;
 }
 
-type ReasonChip = { label: string; tone: 'danger' | 'warning' | 'info' | 'success' | 'neutral' };
-
-function reasonChips(row: AttentionRow, meta = classifyRow(row)): ReasonChip[] {
+// Chips are capped at three. The old cap of six guaranteed a second row
+// of pills under every card, and the first three were the ones anybody
+// read — so the tail was pure noise. Ordered by what actually changes
+// the operator's next move: lateness, then the WhatsApp window, then the
+// queue reason.
+//
+// Dropped entirely: "מחכה למענה אנושי" / "צריך שיחה" / "סיכון נפילה",
+// which restate the action pill at the top of the same card, and
+// "עדיפות גבוהה", which restates the priority badge at the bottom of it.
+function reasonChips(row: AttentionRow): ReasonChip[] {
   const chips: ReasonChip[] = [];
   const dueMs = row.due_at ? Date.parse(row.due_at) : NaN;
   if (Number.isFinite(dueMs)) {
     const deltaMinutes = Math.round((Date.now() - dueMs) / 60_000);
+    // Only real lateness earns a chip. "לטיפול בקרוב" fired for anything
+    // due within two hours, which is most of the board, and the due time
+    // is already spelled out next to the action pill.
     if (deltaMinutes > 0) chips.push({ label: `באיחור ${formatDuration(deltaMinutes)}`, tone: 'danger' });
-    else if (deltaMinutes > -120) chips.push({ label: `לטיפול בקרוב`, tone: 'warning' });
   }
-  if (row.priority_level <= 1) chips.push({ label: 'עדיפות גבוהה', tone: 'danger' });
-  if (row.lead_heat === 'hot') chips.push({ label: 'ליד חם', tone: 'success' });
-  if (row.intake_segment === 'hot_sales') chips.push({ label: 'מכירה חמה', tone: 'success' });
-  if (row.intake_segment === 'support_or_existing') chips.push({ label: 'לקוח/תמיכה', tone: 'warning' });
   const whatsappWindow = whatsappWindowStatus(row);
   if (whatsappWindow?.state === 'open') chips.push({ label: 'WhatsApp פתוח', tone: 'success' });
   if (whatsappWindow?.state === 'closed') chips.push({ label: 'WhatsApp מחוץ ל-24ש׳', tone: 'warning' });
   if (row.queue_type) chips.push({ label: queueTypeLabel(row.queue_type), tone: queueTypeTone(row.queue_type) });
-  if (meta.lane === 'reply') chips.push({ label: 'מחכה למענה אנושי', tone: 'warning' });
-  if (meta.lane === 'call') chips.push({ label: 'צריך שיחה', tone: 'info' });
-  if (meta.lane === 'risk') chips.push({ label: 'סיכון נפילה', tone: 'danger' });
-  if (row.product_interest) chips.push({ label: PRODUCT_LABELS[row.product_interest] ?? row.product_interest, tone: 'neutral' });
-  return dedupeChips(chips).slice(0, 6);
+  // "ליד חם" and "מכירה חמה" are the same news from two fields; a hot
+  // lead in the hot_sales segment used to get both chips.
+  if (row.lead_heat === 'hot') chips.push({ label: 'ליד חם', tone: 'success' });
+  else if (row.intake_segment === 'hot_sales') chips.push({ label: 'מכירה חמה', tone: 'success' });
+  if (row.intake_segment === 'support_or_existing') chips.push({ label: 'לקוח/תמיכה', tone: 'warning' });
+  return dedupeChips(chips).slice(0, 3);
 }
+
+type ReasonChip = { label: string; tone: Tone };
 
 function dedupeChips(chips: ReasonChip[]): ReasonChip[] {
   const seen = new Set<string>();
@@ -618,16 +901,6 @@ function dedupeChips(chips: ReasonChip[]): ReasonChip[] {
     seen.add(chip.label);
     return true;
   });
-}
-
-function chipClass(tone: ReasonChip['tone']) {
-  switch (tone) {
-    case 'danger': return 'bg-rose-50 text-rose-700 ring-1 ring-rose-100';
-    case 'warning': return 'bg-amber-50 text-amber-700 ring-1 ring-amber-100';
-    case 'info': return 'bg-sky-50 text-sky-700 ring-1 ring-sky-100';
-    case 'success': return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100';
-    default: return 'bg-slate-100 text-slate-700';
-  }
 }
 
 function queueTypeLabel(queueType: string) {
@@ -643,45 +916,23 @@ function queueTypeLabel(queueType: string) {
   return labels[queueType] ?? queueType.replace(/_/g, ' ');
 }
 
-function queueTypeTone(queueType: string): ReasonChip['tone'] {
+function queueTypeTone(queueType: string): Tone {
   if (queueType.includes('failed') || queueType.includes('stuck')) return 'danger';
   if (queueType.includes('handoff') || queueType.includes('manual')) return 'warning';
   if (queueType.includes('call')) return 'info';
   return 'neutral';
 }
 
-function whatsappWindowStatus(row: AttentionRow): null | {
-  state: 'open' | 'closed' | 'unknown';
-  title: string;
-  hint: string;
-  className: string;
-} {
+// Was a full titled banner on every card, carrying its own colour
+// vocabulary; it now feeds a single chip, because the chip row was
+// already saying the same thing one line above it.
+function whatsappWindowStatus(row: AttentionRow): null | { state: 'open' | 'closed' | 'unknown' } {
   if (!isWhatsAppRelevant(row)) return null;
-  if (!row.last_inbound_at) {
-    return {
-      state: 'unknown',
-      title: 'סטטוס WhatsApp לא ידוע',
-      hint: 'אין הודעת לקוח אחרונה במערכת. לפתוח את הליד ולבדוק את השיחה לפני שליחה.',
-      className: 'border-slate-200 bg-slate-50 text-slate-700',
-    };
-  }
+  if (!row.last_inbound_at) return { state: 'unknown' };
   const lastInboundMs = Date.parse(row.last_inbound_at);
   if (!Number.isFinite(lastInboundMs)) return null;
   const ageMs = Date.now() - lastInboundMs;
-  if (ageMs <= WHATSAPP_FREEFORM_WINDOW_MS) {
-    return {
-      state: 'open',
-      title: 'WhatsApp פתוח למענה חופשי',
-      hint: `הלקוח כתב ב-${WHATSAPP_FREEFORM_WINDOW_HOURS} השעות האחרונות. אפשר לענות חופשי מתוך הכרטיס.`,
-      className: 'border-emerald-100 bg-emerald-50 text-emerald-800',
-    };
-  }
-  return {
-    state: 'closed',
-    title: 'WhatsApp מחוץ לחלון 24 שעות',
-    hint: 'אפשר לכתוב ב-CRM, אבל ההודעה תישמר ותישלח רק כשהלקוח יענה שוב או אחרי אישור תבנית Meta בעברית.',
-    className: 'border-amber-100 bg-amber-50 text-amber-800',
-  };
+  return { state: ageMs <= WHATSAPP_FREEFORM_WINDOW_MS ? 'open' : 'closed' };
 }
 
 function isWhatsAppRelevant(row: AttentionRow) {
@@ -726,7 +977,7 @@ function formatDuration(minutes: number) {
 
 function TrainingStep({ number, title, text }: { number: string; title: string; text: string }) {
   return (
-    <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100">
+    <div className="rounded-lg bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
       <div className="flex items-center gap-2">
         <span className="grid h-6 w-6 place-items-center rounded-full bg-brand-600 text-xs font-semibold text-white">{number}</span>
         <span className="font-semibold text-slate-800">{title}</span>
@@ -742,7 +993,7 @@ function parseLane(value: string | null): WorkLane {
 
 function Metric({ label, value, tone }: { label: string; value: number | string; tone?: 'danger' | 'ok' }) {
   return (
-    <div className="rounded-2xl bg-white/12 p-3 ring-1 ring-white/20 backdrop-blur">
+    <div className="rounded-xl bg-white/12 p-3 ring-1 ring-inset ring-white/20 backdrop-blur">
       <div className="text-xs text-white/75">{label}</div>
       <div className={clsx('mt-1 text-2xl font-semibold tabular-nums', tone === 'danger' && 'text-rose-100', tone === 'ok' && 'text-emerald-100')}>
         {value}
@@ -751,13 +1002,26 @@ function Metric({ label, value, tone }: { label: string; value: number | string;
   );
 }
 
-function classifyRow(row: AttentionRow): {
+// The left stripe answers "how urgent", not "what kind" — so it has
+// three states, not the twelve colour/weight combinations it used to
+// carry. Kind is already said by the action pill next to it, in words.
+function classifyRow(row: AttentionRow): ClassifiedRow & { pillClass: string; borderClass: string } {
+  const base = classifyRowBase(row);
+  const borderClass =
+    base.urgency === 'critical' ? 'border-s-rose-500' :
+    base.lane === 'reply' ? 'border-s-amber-400' :
+    'border-s-brand-400';
+  return { ...base, pillClass: toneClass(base.tone), borderClass };
+}
+
+type ClassifiedRow = {
   lane: WorkLane;
   actionLabel: string;
   urgency: 'critical' | 'normal';
-  pillClass: string;
-  borderClass: string;
-} {
+  tone: Tone;
+};
+
+function classifyRowBase(row: AttentionRow): ClassifiedRow {
   const reason = `${row.reason ?? ''} ${row.queue_type ?? ''} ${row.queue_summary ?? ''} ${row.lead_status} ${row.ownership_mode}`.toLowerCase();
   const dueMs = row.due_at ? Date.parse(row.due_at) : NaN;
   const overdue = row.kind === 'overdue_action' || (Number.isFinite(dueMs) && dueMs < Date.now());
@@ -766,32 +1030,27 @@ function classifyRow(row: AttentionRow): {
   // sla-worker watchers route to the right lane regardless of free-text.
   if (row.kind === 'snooze_due') {
     return {
-      lane: 'risk', actionLabel: 'חזר מהשהיה', urgency: 'normal',
-      pillClass: 'bg-brand-100 text-brand-800', borderClass: 'border-s-brand-500',
+      lane: 'risk', actionLabel: 'חזר מהשהיה', urgency: 'normal', tone: 'accent',
     };
   }
   if (row.kind === 'phone_overdue' || row.kind === 'phone_escalation') {
     return {
-      lane: 'call', actionLabel: 'להתקשר עכשיו', urgency: 'critical',
-      pillClass: 'bg-indigo-100 text-indigo-800', borderClass: 'border-s-indigo-500',
+      lane: 'call', actionLabel: 'להתקשר עכשיו', urgency: 'critical', tone: 'accent',
     };
   }
   if (row.kind === 'ai_stuck') {
     return {
-      lane: 'risk', actionLabel: 'בדיקת תקלת AI', urgency: 'critical',
-      pillClass: 'bg-rose-100 text-rose-800', borderClass: 'border-s-rose-500',
+      lane: 'risk', actionLabel: 'בדיקת תקלת AI', urgency: 'critical', tone: 'danger',
     };
   }
   if (row.kind === 'deal_stalled') {
     return {
-      lane: 'risk', actionLabel: 'להזיז עסקה', urgency: row.priority_level <= 1 ? 'critical' : 'normal',
-      pillClass: 'bg-amber-100 text-amber-800', borderClass: 'border-s-amber-500',
+      lane: 'risk', actionLabel: 'להזיז עסקה', urgency: row.priority_level <= 1 ? 'critical' : 'normal', tone: 'warning',
     };
   }
   if (row.kind === 'meeting_outcome_pending') {
     return {
-      lane: 'ops', actionLabel: 'לסכם פגישה', urgency: 'normal',
-      pillClass: 'bg-violet-100 text-violet-800', borderClass: 'border-s-violet-400',
+      lane: 'ops', actionLabel: 'לסכם פגישה', urgency: 'normal', tone: 'accent',
     };
   }
 
@@ -806,25 +1065,21 @@ function classifyRow(row: AttentionRow): {
     // once the customer has waited more than 2 hours.
     const waitedOverTwoHours = Number.isFinite(dueMs) && Date.now() - dueMs > 2 * 60 * 60 * 1000;
     return {
-      lane: 'reply', actionLabel: 'לענות עכשיו', urgency: waitedOverTwoHours ? 'critical' : 'normal',
-      pillClass: 'bg-amber-100 text-amber-800', borderClass: 'border-s-amber-400',
+      lane: 'reply', actionLabel: 'לענות עכשיו', urgency: waitedOverTwoHours ? 'critical' : 'normal', tone: 'warning',
     };
   }
   if (row.ownership_mode === 'phone_sales_pending' || reason.includes('phone') || reason.includes('call') || reason.includes('שיחה') || reason.includes('טלפון')) {
     return {
-      lane: 'call', actionLabel: 'להתקשר', urgency: row.priority_level <= 1 ? 'critical' : 'normal',
-      pillClass: 'bg-indigo-100 text-indigo-800', borderClass: 'border-s-indigo-400',
+      lane: 'call', actionLabel: 'להתקשר', urgency: row.priority_level <= 1 ? 'critical' : 'normal', tone: 'accent',
     };
   }
   if (overdue || reason.includes('sla') || reason.includes('failed') || reason.includes('תקלה') || reason.includes('כשל')) {
     return {
-      lane: 'risk', actionLabel: 'לטפל בסיכון', urgency: 'critical',
-      pillClass: 'bg-rose-100 text-rose-800', borderClass: 'border-s-rose-500',
+      lane: 'risk', actionLabel: 'לטפל בסיכון', urgency: 'critical', tone: 'danger',
     };
   }
   return {
-    lane: 'ops', actionLabel: 'בדיקה / מעקב', urgency: 'normal',
-    pillClass: 'bg-sky-100 text-sky-800', borderClass: 'border-s-sky-400',
+    lane: 'ops', actionLabel: 'בדיקה / מעקב', urgency: 'normal', tone: 'info',
   };
 }
 

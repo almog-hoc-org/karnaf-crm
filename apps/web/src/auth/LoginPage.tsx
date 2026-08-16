@@ -104,7 +104,7 @@ export function LoginPage() {
             </svg>
           </span>
           <div>
-            <h1 className="text-xl font-semibold">{t('app_name')}</h1>
+            <h1 className="text-xl font-semibold tracking-tight">{t('app_name')}</h1>
             <p className="text-sm text-slate-500">{isSignup ? t('signup_title') : t('login_title')}</p>
           </div>
         </div>

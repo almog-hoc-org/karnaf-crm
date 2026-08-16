@@ -96,10 +96,12 @@ function renderDashboard() {
 beforeEach(() => {
   vi.mocked(fetchDashboardSummary).mockResolvedValue(summaryFixture);
   vi.mocked(fetchQueueList).mockResolvedValue(queueFixture);
-  // Tier 7.B.3 — default to fresh heartbeat so banner doesn't render.
-  vi.mocked(fetchHeartbeats).mockResolvedValue([
-    { name: 'automation_tick', last_ok_at: new Date().toISOString(), last_run_id: 'mock', metadata: {} },
-  ]);
+  // Every watched worker fresh by default so the banner stays hidden.
+  vi.mocked(fetchHeartbeats).mockResolvedValue(
+    ['automation_tick', 'sla_worker', 'ai_watchdog', 'nightly_jobs'].map((name) => ({
+      name, last_ok_at: new Date().toISOString(), last_run_id: 'mock', metadata: {},
+    })),
+  );
 });
 
 afterEach(() => {
@@ -164,6 +166,29 @@ describe('DashboardPage', () => {
     renderDashboard();
     const danaLinks = await screen.findAllByRole('link', { name: /דנה כהן/ });
     expect(danaLinks.some((link) => link.getAttribute('href') === '/leads/lead-1')).toBe(true);
+  });
+
+  it('warns for a worker whose heartbeat is stale', async () => {
+    vi.mocked(fetchHeartbeats).mockResolvedValue([
+      { name: 'automation_tick', last_ok_at: new Date().toISOString(), last_run_id: 'm', metadata: {} },
+      { name: 'sla_worker', last_ok_at: new Date(Date.now() - 60 * 60_000).toISOString(), last_run_id: 'm', metadata: {} },
+      { name: 'ai_watchdog', last_ok_at: new Date().toISOString(), last_run_id: 'm', metadata: {} },
+      { name: 'nightly_jobs', last_ok_at: new Date().toISOString(), last_run_id: 'm', metadata: {} },
+    ]);
+    renderDashboard();
+    expect(await screen.findByText('⚠️ תהליכים מתוזמנים לא רצים')).toBeInTheDocument();
+    expect(screen.getByText(/ניטור SLA/)).toBeInTheDocument();
+  });
+
+  it('treats a worker that never reported as stale, not as healthy', async () => {
+    // The old banner only looked at automation_tick and read a missing row
+    // as "fine" — a worker that never once succeeded raised no alarm.
+    vi.mocked(fetchHeartbeats).mockResolvedValue([
+      { name: 'automation_tick', last_ok_at: new Date().toISOString(), last_run_id: 'm', metadata: {} },
+    ]);
+    renderDashboard();
+    expect(await screen.findByText('⚠️ תהליכים מתוזמנים לא רצים')).toBeInTheDocument();
+    expect(screen.getAllByText(/אף פעם/).length).toBeGreaterThan(0);
   });
 
   it('renders an error message when the summary query fails', async () => {

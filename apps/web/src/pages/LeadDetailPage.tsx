@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import clsx from 'clsx';
@@ -6,7 +6,6 @@ import {
   fetchAutomationRunsForContact,
   fetchJourneyRunsForContact,
   fetchLeadDetail,
-  fetchMessageTemplates,
   postAdminAction,
   type LeadOutcome,
   postLeadManage,
@@ -17,10 +16,10 @@ import {
   type LeadMetaUpdates,
   type ReopenTarget,
 } from '@/lib/api';
-import { contextFromLead, renderTemplate } from '@/lib/template-render';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { EmojiPicker } from '@/components/EmojiPicker';
+import { ReplyComposer } from '@/components/ReplyComposer';
+import { SEGMENT_QUICK_OPTIONS } from '@/components/QuickClassifyPopover';
 import { SnoozePopover } from '@/components/SnoozePopover';
 import { LeadDetailSkeleton } from '@/components/Skeleton';
 import { ChatTimeline } from '@/components/ChatTimeline';
@@ -42,7 +41,6 @@ import {
   formatDateTime, formatRelative,
 } from '@/lib/format';
 import type {
-  ConversationRow,
   DealRow,
   IntakeSegment,
   InquiryType,
@@ -51,7 +49,6 @@ import type {
   LeadHeat,
   MeetingRow,
   MessageRow,
-  MessageTemplateRow,
   ProductInterest,
   ProgramMemberRow,
   QueueRow,
@@ -211,6 +208,19 @@ export function LeadDetailPage() {
     onError: (err) => toast.error((err as Error).message),
   });
 
+  // Duplicate-merge, previously locked inside QueuePage (the only screen
+  // with access to payload_json). lead-detail selects work_queue.* so the
+  // payload is right here; the backend auto-resolves the queue item.
+  const mergeDuplicate = useMutation({
+    mutationFn: (duplicateLeadId: string) =>
+      postAdminAction({ action: 'merge_lead_duplicate', leadId, duplicateLeadId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lead-detail', leadId] });
+      toast.success('הלידים מוזגו');
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
   const resolveQueue = useMutation({
     mutationFn: (input: { queueItemId: string; note?: string }) =>
       postQueueResolve({ queueItemId: input.queueItemId, resolutionNote: input.note ?? null }),
@@ -232,6 +242,7 @@ export function LeadDetailPage() {
     destructive: boolean;
   } | null>(null);
   const [pendingQueueClose, setPendingQueueClose] = useState<{ id: string; label: string } | null>(null);
+  const [pendingMergeDuplicateId, setPendingMergeDuplicateId] = useState<string | null>(null);
   const [queueCloseNote, setQueueCloseNote] = useState('');
   const [reopenOpen, setReopenOpen] = useState(false);
   const [conversationTab, setConversationTab] = useState<'chat' | 'activity'>('chat');
@@ -542,10 +553,10 @@ export function LeadDetailPage() {
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="kf-card p-4 lg:col-span-2">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">
+            <h2 className="text-lg font-semibold">
               שיחה
               {detailQ.data?.conversations[0]?.channel === 'instagram' ? (
-                <span className="ms-2 inline-flex items-center rounded-full bg-fuchsia-100 px-2 py-0.5 text-xs font-medium text-fuchsia-700">אינסטגרם</span>
+                <span className="kf-chip kf-tone-neutral ms-2 rounded-full">אינסטגרם</span>
               ) : null}
             </h2>
             {lead.phone ? (
@@ -575,7 +586,7 @@ export function LeadDetailPage() {
               aria-selected={conversationTab === 'chat'}
               onClick={() => setConversationTab('chat')}
               className={clsx(
-                'rounded-t-lg px-4 py-1.5 text-sm',
+                'kf-pressable rounded-t-lg px-4 py-1.5 text-sm transition',
                 conversationTab === 'chat'
                   ? 'border border-b-0 border-slate-200 bg-white font-semibold text-slate-900'
                   : 'text-slate-500 hover:text-slate-700',
@@ -589,7 +600,7 @@ export function LeadDetailPage() {
               aria-selected={conversationTab === 'activity'}
               onClick={() => setConversationTab('activity')}
               className={clsx(
-                'inline-flex items-center gap-1.5 rounded-t-lg px-4 py-1.5 text-sm',
+                'kf-pressable inline-flex items-center gap-1.5 rounded-t-lg px-4 py-1.5 text-sm transition',
                 conversationTab === 'activity'
                   ? 'border border-b-0 border-slate-200 bg-white font-semibold text-slate-900'
                   : 'text-slate-500 hover:text-slate-700',
@@ -608,7 +619,7 @@ export function LeadDetailPage() {
           ) : (
             <ActivityFeed activities={activities} />
           )}
-          <ReplyBox
+          <ReplyComposer
             disabled={!conversationId || lead.do_not_contact || lead.removed_by_request}
             onSend={(text) => sendReply.mutateAsync(text)}
             sending={sendReply.isPending}
@@ -627,7 +638,7 @@ export function LeadDetailPage() {
               to know the lead and focus the call before diving into the full
               record. Read-only (pulled from AI capture) + manual operator notes. */}
           <div className="kf-card border-brand-300 bg-brand-50/50 p-4">
-            <h2 className="font-semibold">תקציר ליד</h2>
+            <h2 className="text-lg font-semibold">תקציר ליד</h2>
             <p className="mt-0.5 text-xs text-slate-500">מבט מהיר לפני שיחה</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <HeatBadge heat={lead.lead_heat} />
@@ -670,7 +681,7 @@ export function LeadDetailPage() {
               (it's the routing key for inbound webhooks; rewriting it would
               orphan the conversation history). */}
           <div className="kf-card p-4">
-            <h2 className="font-semibold">פרטי קשר</h2>
+            <h2 className="text-lg font-semibold">פרטי קשר</h2>
             <dl className="mt-2 space-y-1 text-sm">
               <EditableRow
                 k="שם מלא"
@@ -701,7 +712,7 @@ export function LeadDetailPage() {
               the long tail collapses into <details> so a beginner sees
               only what changes every conversation. */}
           <div className="kf-card p-4">
-            <h2 className="font-semibold">סיווג ואבחון</h2>
+            <h2 className="text-lg font-semibold">סיווג ואבחון</h2>
             <p className="mt-1 text-xs text-slate-500">
               הסיווג העיקרי תמיד גלוי. השאר נפתח כשצריך.
             </p>
@@ -894,7 +905,7 @@ export function LeadDetailPage() {
               Done items are read in the timeline. */}
           {queueItems.filter((q) => q.status === 'pending' || q.status === 'claimed').length > 0 ? (
             <div className="kf-card p-4">
-              <h2 className="font-semibold">פעולות פתוחות</h2>
+              <h2 className="text-lg font-semibold">פעולות פתוחות</h2>
               <p className="text-xs text-slate-500">פריטים שמחכים לסגירה ידנית. ההיסטוריה המלאה בציר הזמן.</p>
               <ul className="mt-2 space-y-2">
                 {queueItems
@@ -906,19 +917,39 @@ export function LeadDetailPage() {
                         <span className="text-xs text-slate-500">{q.status}</span>
                       </div>
                       {q.reason ? <div className="text-slate-600">{q.reason}</div> : null}
-                      <button
-                        type="button"
-                        className="kf-btn mt-2 text-xs"
-                        onClick={() => {
-                          setPendingQueueClose({
-                            id: q.id,
-                            label: QUEUE_LABELS[q.queue_type] ?? q.queue_type,
-                          });
-                          setQueueCloseNote('');
-                        }}
-                      >
-                        סגירה
-                      </button>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="kf-btn text-xs"
+                          onClick={() => {
+                            setPendingQueueClose({
+                              id: q.id,
+                              label: QUEUE_LABELS[q.queue_type] ?? q.queue_type,
+                            });
+                            setQueueCloseNote('');
+                          }}
+                        >
+                          סגירה
+                        </button>
+                        {(auth.role === 'owner' || auth.role === 'admin') && mergeDuplicateId(q) ? (
+                          <>
+                            <button
+                              type="button"
+                              className="kf-btn kf-btn-danger text-xs"
+                              disabled={mergeDuplicate.isPending}
+                              onClick={() => setPendingMergeDuplicateId(mergeDuplicateId(q))}
+                            >
+                              מיזוג כפילות
+                            </button>
+                            <Link
+                              to={`/leads/${mergeDuplicateId(q)}`}
+                              className="text-xs text-brand-700 hover:underline"
+                            >
+                              צפייה בליד הכפול
+                            </Link>
+                          </>
+                        ) : null}
+                      </div>
                     </li>
                   ))}
               </ul>
@@ -1024,6 +1055,21 @@ export function LeadDetailPage() {
       </ConfirmDialog>
 
       <ConfirmDialog
+        open={!!pendingMergeDuplicateId}
+        title={`מיזוג לידים — ${lead.full_name ?? ''}`}
+        description="הרשומה הכפולה תמוזג לתוך הליד הזה: שיחות, הודעות, עסקאות והיסטוריה יעברו אליו, והכפילות תסומן ככזו. הפעולה אינה הפיכה."
+        confirmLabel="מיזוג"
+        destructive
+        busy={mergeDuplicate.isPending}
+        onCancel={() => setPendingMergeDuplicateId(null)}
+        onConfirm={() => {
+          if (!pendingMergeDuplicateId) return;
+          mergeDuplicate.mutate(pendingMergeDuplicateId);
+          setPendingMergeDuplicateId(null);
+        }}
+      />
+
+      <ConfirmDialog
         open={reopenOpen}
         title="פתיחת ליד מחדש"
         description="הליד יחזור לסטטוס פעיל. אם הוא נסגר כ-Won/Lost שדות הסגירה יתאפסו; תשלומים שכבר נרשמו יישארו לתיעוד."
@@ -1105,7 +1151,7 @@ function OperatorGuidanceCard({
 
   return (
     <section
-      className={clsx('rounded-2xl border p-4 shadow-sm sm:p-5', insight.tone)}
+      className={clsx('rounded-xl p-4 shadow-sm ring-1 ring-inset sm:p-5', insight.tone)}
       aria-label="המלצת פעולה למפעילה"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -1259,7 +1305,7 @@ function PipelineOverviewCard({
 
   return (
     <div className="kf-card p-4">
-      <h2 className="font-semibold">מסלולים ועסקאות</h2>
+      <h2 className="text-lg font-semibold">מסלולים ועסקאות</h2>
       <p className="mt-1 text-xs text-slate-500">
         שכבת ה־PRD החדשה: איש קשר אחד יכול להחזיק כמה מסלולי מכירה במקביל.
       </p>
@@ -1398,7 +1444,7 @@ function ScheduleMeetingForm({
   }
 
   return (
-    <form onSubmit={submit} className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 text-sm">
+    <form onSubmit={submit} className="mt-3 rounded-lg bg-slate-50 p-3 text-sm ring-1 ring-inset ring-slate-200">
       <div className="mb-2 font-semibold text-slate-800">תיאום פגישה</div>
       <div className="grid gap-2 sm:grid-cols-2">
         <label className="block">
@@ -1450,7 +1496,7 @@ function MeetingsList({
   onUpdate: (input: { meetingId: string; status: MeetingRow['status']; note: string | null }) => void;
 }) {
   return (
-    <div className="mt-3 rounded-2xl border border-slate-100 bg-white p-3">
+    <div className="mt-3 rounded-lg bg-white p-3 ring-1 ring-inset ring-slate-200">
       <div className="text-sm font-semibold text-slate-800">פגישות</div>
       <ul className="mt-2 space-y-2 text-sm">
         {[...meetings]
@@ -1645,7 +1691,7 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
       script: 'לא לשלוח הודעה חדשה אלא אם הליד נפתח מחדש במודע.',
       ownerLine: 'מצב סגור',
       primaryAction: null,
-      tone: 'border-slate-200 bg-slate-50 text-slate-800',
+      tone: 'kf-tone-neutral',
     };
   }
   if (failed) {
@@ -1656,7 +1702,7 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
       script: lastText ? `להתייחס להודעה האחרונה: “${lastText.slice(0, 120)}”` : humanScript,
       ownerLine: 'דורש בדיקה ידנית',
       primaryAction: 'takeover' as const,
-      tone: 'border-rose-200 bg-rose-50 text-rose-950',
+      tone: 'kf-tone-danger',
     };
   }
   if (phone) {
@@ -1667,7 +1713,7 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
       script: 'להתקשר, לפתוח בשאלה קצרה על הצורך שלו, ואז לתעד תוצאה: ענה / לא ענה / נקבע המשך.',
       ownerLine: 'ממתין לשיחה',
       primaryAction: 'phone' as const,
-      tone: 'border-indigo-200 bg-indigo-50 text-indigo-950',
+      tone: 'kf-tone-accent',
     };
   }
   if (human && lastFromLead) {
@@ -1678,7 +1724,7 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
       script: humanScript,
       ownerLine: 'בטיפול אנושי',
       primaryAction: 'return_ai' as const,
-      tone: 'border-amber-200 bg-amber-50 text-amber-950',
+      tone: 'kf-tone-warning',
     };
   }
   if (human) {
@@ -1689,7 +1735,7 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
       script: 'אם אין צורך בטיפול אישי נוסף — להחזיר למענה אוטומטי. אם יש צורך — לענות ידנית ולתעד.',
       ownerLine: 'בטיפול אנושי',
       primaryAction: 'return_ai' as const,
-      tone: 'border-amber-200 bg-amber-50 text-amber-950',
+      tone: 'kf-tone-warning',
     };
   }
   if (ai) {
@@ -1851,12 +1897,12 @@ function TriageStateBanner({ lead }: { lead: LeadDetailType }) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-2.5 text-sm ring-1 ring-slate-200">
       {lead.outcome ? (
-        <span className="inline-flex items-center gap-2 rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
+        <span className="kf-chip kf-tone-accent gap-2 rounded-full px-3">
           🏷 נסגר ל: {outcomeLabels[lead.outcome] ?? lead.outcome}
           {isManager ? (
             <button
               type="button"
-              className="text-violet-600 underline hover:text-violet-900"
+              className="underline opacity-80 hover:opacity-100"
               disabled={act.isPending}
               onClick={() => act.mutate({ action: 'set_outcome', leadId: lead.id, outcome: null })}
             >
@@ -1866,12 +1912,12 @@ function TriageStateBanner({ lead }: { lead: LeadDetailType }) {
         </span>
       ) : null}
       {snoozeActive ? (
-        <span className="inline-flex items-center gap-2 rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
+        <span className="kf-chip kf-tone-neutral gap-2 rounded-full px-3">
           ⏰ בהשהיה עד {new Date(lead.snoozed_until as string).toLocaleDateString('he-IL')}
           {lead.snooze_note ? ` · ${lead.snooze_note}` : ''}
           <button
             type="button"
-            className="text-slate-500 underline hover:text-slate-900"
+            className="underline opacity-80 hover:opacity-100"
             disabled={act.isPending}
             onClick={() => act.mutate({ action: 'unsnooze_lead', leadId: lead.id })}
           >
@@ -1880,11 +1926,11 @@ function TriageStateBanner({ lead }: { lead: LeadDetailType }) {
         </span>
       ) : null}
       {lead.no_proactive_contact ? (
-        <span className="inline-flex items-center gap-2 rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700 ring-1 ring-orange-200">
+        <span className="kf-chip kf-tone-warning gap-2 rounded-full px-3">
           ללא פנייה יזומה בשלב הזה
           <button
             type="button"
-            className="text-orange-500 underline hover:text-orange-800"
+            className="underline opacity-80 hover:opacity-100"
             disabled={act.isPending}
             onClick={() => act.mutate({ action: 'set_no_followup', leadId: lead.id, enabled: false })}
           >
@@ -1928,14 +1974,14 @@ function HandlerBanner({
     switch (ownership) {
       case 'ai_active':
         return {
-          tone: 'bg-violet-50 text-violet-800 ring-violet-200',
+          tone: 'kf-tone-accent',
           icon: '🤖',
           label: 'AI מטפל בליד',
           detail: 'הבוט עונה אוטומטית להודעות נכנסות.',
         };
       case 'mia_active':
         return {
-          tone: 'bg-amber-50 text-amber-800 ring-amber-200',
+          tone: 'kf-tone-warning',
           icon: '👤',
           label: 'נציג מטפל',
           detail: lastHumanTouchAt
@@ -1944,28 +1990,28 @@ function HandlerBanner({
         };
       case 'phone_sales_pending':
         return {
-          tone: 'bg-orange-50 text-orange-800 ring-orange-200',
+          tone: 'kf-tone-warning',
           icon: '📞',
           label: 'ממתין לשיחת טלפון',
           detail: 'הליד סומן להתקשרות יזומה.',
         };
       case 'shared_watch':
         return {
-          tone: 'bg-slate-100 text-slate-700 ring-slate-200',
+          tone: 'kf-tone-neutral',
           icon: '👁️',
           label: 'במעקב משותף',
           detail: 'אין מטפל פעיל; הצוות עוקב.',
         };
       case 'suppressed':
         return {
-          tone: 'bg-rose-50 text-rose-800 ring-rose-200',
+          tone: 'kf-tone-danger',
           icon: '🚫',
           label: 'ליד מנותק',
           detail: 'לא נשלחות הודעות אוטומטיות.',
         };
       default:
         return {
-          tone: 'bg-slate-100 text-slate-700 ring-slate-200',
+          tone: 'kf-tone-neutral',
           icon: '•',
           label: ownership,
           detail: '',
@@ -2332,14 +2378,10 @@ const PRODUCT_OPTIONS: Array<{ value: ProductInterest; label: string }> = [
 
 
 
-const SEGMENT_OPTIONS: Array<{ value: IntakeSegment; label: string }> = [
-  { value: 'hot_sales', label: 'מכירה חמה' },
-  { value: 'needs_human', label: 'נציג אנושי' },
-  { value: 'needs_nurture', label: 'טיפוח/הבשלה' },
-  { value: 'info_seeker', label: 'מחפש מידע' },
-  { value: 'support_or_existing', label: 'תמיכה/קיים' },
-  { value: 'unknown', label: 'לא ידוע' },
-];
+// The segment list lives with the quick-classify popover — one list for
+// the quick path (inbox/leads row) and this full editor, so they can't
+// drift apart.
+const SEGMENT_OPTIONS = SEGMENT_QUICK_OPTIONS;
 
 const CLASSIFICATION_CONFIDENCE_LABELS: Record<'high' | 'medium' | 'low', string> = {
   high: 'גבוה',
@@ -2417,188 +2459,6 @@ function CallLogForm({
   );
 }
 
-function ReplyBox({
-  disabled,
-  onSend,
-  sending,
-  errorMessage,
-  lead,
-  channel = 'whatsapp',
-  lastInboundAt,
-  conversations = [],
-  conversationId,
-  onPickConversation,
-}: {
-  disabled: boolean;
-  onSend: (text: string) => Promise<unknown>;
-  sending: boolean;
-  errorMessage: string | null;
-  lead: { full_name: string | null; phone: string | null; email: string | null; city: string | null };
-  channel?: string;
-  lastInboundAt?: string | null;
-  conversations?: ConversationRow[];
-  conversationId?: string;
-  onPickConversation?: (id: string) => void;
-}) {
-  const [text, setText] = useState('');
-  const [missingVars, setMissingVars] = useState<string[]>([]);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const templatesQ = useQuery({
-    queryKey: ['templates', 'whatsapp', 'active'],
-    queryFn: () => fetchMessageTemplates({ channel: 'whatsapp', status: 'active' }),
-    enabled: pickerOpen,
-  });
-
-  // 24h-window awareness: outside the window a WhatsApp reply goes out as
-  // the fallback template, whose single body param holds 600 chars max.
-  const windowOpen = channel !== 'instagram' && !!lastInboundAt &&
-    Date.now() - Date.parse(lastInboundAt) < 24 * 60 * 60 * 1000;
-  const templateMode = channel !== 'instagram' && !windowOpen;
-  const overTemplateLimit = templateMode && text.length > 600;
-
-  // The draft clears ONLY after a successful send — a failed send keeps
-  // the operator's text (the old version wiped it on submit).
-  async function send() {
-    if (!text.trim() || disabled || sending) return;
-    try {
-      await onSend(text.trim());
-      setText('');
-      setMissingVars([]);
-    } catch {
-      // The mutation's onError already toasts; the draft stays put.
-    }
-  }
-
-  function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    void send();
-  }
-
-  // Caret-aware insertion — used by both the emoji picker and the
-  // template picker (which used to WIPE whatever was already typed).
-  function insertAtCaret(insert: string) {
-    const el = textareaRef.current;
-    if (!el) {
-      setText((t) => t + insert);
-      return;
-    }
-    const start = el.selectionStart ?? text.length;
-    const endPos = el.selectionEnd ?? text.length;
-    const next = text.slice(0, start) + insert + text.slice(endPos);
-    setText(next);
-    requestAnimationFrame(() => {
-      el.focus();
-      const caret = start + insert.length;
-      el.setSelectionRange(caret, caret);
-    });
-  }
-
-  function insertTemplate(template: MessageTemplateRow) {
-    const ctx = contextFromLead(lead);
-    const { text: rendered, missing } = renderTemplate(template.body, ctx);
-    setMissingVars(missing);
-    insertAtCaret(text.trim().length ? `\n${rendered}` : rendered);
-    setPickerOpen(false);
-  }
-
-  const showConversationPicker = conversations.length > 1 && onPickConversation;
-
-  return (
-    <form onSubmit={submit} className="mt-3 space-y-2">
-      {showConversationPicker ? (
-        <select
-          className="kf-input w-full text-xs sm:w-auto"
-          value={conversationId ?? ''}
-          onChange={(e) => onPickConversation?.(e.target.value)}
-          aria-label="בחירת שיחה לשליחה"
-        >
-          {conversations.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.channel === 'instagram' ? 'אינסטגרם' : 'וואטסאפ'} · פעילות אחרונה {formatRelative(c.last_activity_at)}
-            </option>
-          ))}
-        </select>
-      ) : null}
-      <textarea
-        ref={textareaRef}
-        className="kf-input min-h-[88px] w-full"
-        placeholder={disabled ? 'לא ניתן לשלוח (ליד מושתק או חסרה שיחה).' : 'הקלד תשובה ידנית... (Enter לשליחה, Shift+Enter לשורה חדשה)'}
-        value={text}
-        maxLength={2000}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            void send();
-          }
-        }}
-        disabled={disabled}
-      />
-      {missingVars.length ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-          שים לב: בתבנית חסרים נתונים לליד הזה — {missingVars.map((m) => `{{${m}}}`).join(', ')} יישלחו כפי שהם.
-          מומלץ להשלים ידנית לפני שליחה.
-        </div>
-      ) : null}
-      {overTemplateLimit ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-          מחוץ לחלון 24 שעות: הלקוח יקבל כעת רק את 600 התווים הראשונים (כתבנית), והנוסח המלא
-          יישלח אוטומטית כשיענה.
-        </div>
-      ) : null}
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <EmojiPicker disabled={disabled} onPick={insertAtCaret} />
-          {channel !== 'instagram' ? (
-            <button type="button" className="kf-btn text-xs" disabled={disabled}
-              onClick={() => setPickerOpen((open) => !open)}>
-              {pickerOpen ? 'סגור תבניות' : '+ הכנס תבנית'}
-            </button>
-          ) : null}
-          <span className="text-slate-500">
-            {channel === 'instagram'
-              ? 'ייצא דרך אינסטגרם. מחוץ לחלון 24 שעות ההודעה תמתין עד שהלקוח יכתוב שוב.'
-              : windowOpen
-                ? 'ייצא דרך WhatsApp — חלון 24 השעות פתוח.'
-                : 'ייצא דרך WhatsApp. מחוץ לחלון 24 שעות תישלח תבנית.'}
-          </span>
-          <span className={clsx('tabular-nums', text.length > 1800 ? 'text-amber-600' : 'text-slate-400')} dir="ltr">
-            {text.length}/2000
-          </span>
-        </div>
-        <button
-          type="submit"
-          className="kf-btn kf-btn-primary w-full sm:w-auto"
-          disabled={disabled || sending || !text.trim()}
-        >
-          {sending ? 'שולח...' : 'שליחה'}
-        </button>
-      </div>
-      {pickerOpen ? (
-        <div className="max-h-64 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2">
-          {templatesQ.isLoading ? <p className="text-xs text-slate-500">טוען תבניות...</p> :
-            templatesQ.data?.templates.length ? (
-              <ul className="space-y-1">
-                {templatesQ.data.templates.map((tpl) => (
-                  <li key={tpl.id}>
-                    <button type="button" className="w-full rounded-md p-2 text-right text-sm hover:bg-white"
-                      onClick={() => insertTemplate(tpl)}>
-                      <div className="font-medium">{tpl.name_he}</div>
-                      <div className="mt-0.5 truncate text-xs text-slate-500">{tpl.body}</div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="text-xs text-slate-500">אין תבניות פעילות. אפשר להוסיף ב-/templates.</p>}
-        </div>
-      ) : null}
-      {errorMessage ? <p className="text-sm text-rose-600">{errorMessage}</p> : null}
-    </form>
-  );
-}
-
 // ── Current owner line (P2 — operator clarity) ───────────────────────────
 // Singular source of truth on the question "who is responsible RIGHT NOW
 // for this lead?". Combines ownership_mode + the human profile (when
@@ -2643,7 +2503,7 @@ function AutomationHistoryCard({ contactId }: { contactId: string }) {
 
   return (
     <div className="kf-card p-4">
-      <h2 className="font-semibold">היסטוריית אוטומציה</h2>
+      <h2 className="text-lg font-semibold">היסטוריית אוטומציה</h2>
       {/* Tier 5 polish — journey rows + automation rows linkable to
           their definitions for one-click drill-down. */}
       {journeys.length > 0 ? (
@@ -2692,4 +2552,12 @@ function AutomationHistoryCard({ contactId }: { contactId: string }) {
       ) : null}
     </div>
   );
+}
+
+// Same contract as QueuePage: phone-collision review items carry the
+// duplicate's id in payload_json.
+function mergeDuplicateId(row: QueueRow): string | null {
+  if (row.queue_type !== 'manual_review_required') return null;
+  const dup = (row.payload_json ?? {}).duplicate_lead_id;
+  return typeof dup === 'string' && dup.length > 0 ? dup : null;
 }

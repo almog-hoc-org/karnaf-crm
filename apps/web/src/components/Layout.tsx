@@ -5,6 +5,7 @@ import { useAuth } from '@/auth/auth-context';
 import { t, type TranslationKey } from '@/lib/i18n';
 import { RoleHelp } from '@/components/RoleHelp';
 import { useAttentionCount, useAttentionTitle } from '@/lib/useAttentionCount';
+import { usePresence } from '@/lib/usePresence';
 
 interface NavItem {
   to: string;
@@ -41,6 +42,7 @@ export function Layout() {
   const isManager = isAdmin || auth.role === 'mia';
   const visible = NAV.filter((item) => (!item.adminOnly || isAdmin) && (!item.managerOnly || isManager));
   const [mobileOpen, setMobileOpen] = useState(false);
+  const drawer = usePresence(mobileOpen);
   const location = useLocation();
   // Live "someone is waiting" counter — red badge on the inbox link and
   // a "(n)" title prefix so an open-but-backgrounded tab still signals.
@@ -78,7 +80,7 @@ export function Layout() {
                 end={item.end}
                 className={({ isActive }) =>
                   clsx(
-                    'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
+                    'kf-pressable flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition',
                     isActive
                       ? 'bg-brand-50 text-brand-700'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
@@ -90,7 +92,7 @@ export function Layout() {
                     <span aria-hidden="true" className="text-current opacity-80">{item.icon}</span>
                     <span aria-current={isActive ? 'page' : undefined}>{t(item.labelKey)}</span>
                     {item.to === '/inbox' && attentionCount > 0 ? (
-                      <span className="ms-0.5 grid min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[11px] font-bold leading-5 text-white" aria-label={`${attentionCount} ממתינים למענה`}>
+                      <span key={attentionCount} className="kf-badge-pop ms-0.5 grid min-w-5 place-items-center rounded-full bg-rose-600 px-1 text-[11px] font-bold leading-5 text-white" aria-label={`${attentionCount} ממתינים למענה`}>
                         {attentionCount > 99 ? '99+' : attentionCount}
                       </span>
                     ) : null}
@@ -137,8 +139,12 @@ export function Layout() {
           </div>
         </div>
 
-        {mobileOpen ? (
-          <div id="kf-mobile-nav" className="border-t border-slate-200 bg-white md:hidden">
+        {drawer.mounted ? (
+          <div
+            id="kf-mobile-nav"
+            data-state={drawer.state}
+            className="kf-layer kf-layer-drawer border-t border-slate-200 bg-white md:hidden"
+          >
             <nav
               className="mx-auto flex max-w-7xl flex-col gap-1 px-2 py-2"
               role="navigation"
@@ -151,7 +157,7 @@ export function Layout() {
                   end={item.end}
                   className={({ isActive }) =>
                     clsx(
-                      'flex items-center gap-2 rounded-md px-3 py-3 text-sm font-medium',
+                      'kf-pressable flex items-center gap-2 rounded-md px-3 py-3 text-sm font-medium transition',
                       isActive ? 'bg-brand-50 text-brand-700' : 'text-slate-700 hover:bg-slate-100',
                     )
                   }
@@ -161,7 +167,7 @@ export function Layout() {
                       <span aria-hidden="true">{item.icon}</span>
                       <span aria-current={isActive ? 'page' : undefined}>{t(item.labelKey)}</span>
                       {item.to === '/inbox' && attentionCount > 0 ? (
-                        <span className="ms-auto grid min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[11px] font-bold leading-5 text-white" aria-label={`${attentionCount} ממתינים למענה`}>
+                        <span key={attentionCount} className="kf-badge-pop ms-auto grid min-w-5 place-items-center rounded-full bg-rose-600 px-1 text-[11px] font-bold leading-5 text-white" aria-label={`${attentionCount} ממתינים למענה`}>
                           {attentionCount > 99 ? '99+' : attentionCount}
                         </span>
                       ) : null}
@@ -180,11 +186,12 @@ export function Layout() {
           </div>
         ) : null}
       </header>
-      {mobileOpen ? (
+      {drawer.mounted ? (
         <button
           type="button"
           aria-label="סגירת תפריט"
-          className="fixed inset-0 z-20 bg-slate-900/20 md:hidden"
+          data-state={drawer.state}
+          className="kf-layer kf-layer-fade fixed inset-0 z-[25] bg-slate-900/20 md:hidden"
           onClick={() => setMobileOpen(false)}
         />
       ) : null}

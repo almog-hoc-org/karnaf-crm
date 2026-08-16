@@ -12,6 +12,7 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendWhatsAppTemplate } from './whatsapp-provider.ts';
 import { logLeadEvent } from './lead-service.ts';
 import { log } from './logger.ts';
+import { canContactLead, type ContactGuardLead } from './contact-guard.ts';
 
 export interface ReengagementConfig {
   enabled: boolean;
@@ -57,8 +58,15 @@ async function sendNudge(
   eventType: string,
   correlationId: string,
 ): Promise<boolean> {
-  const phone = lead.phone as string | null;
-  if (!phone) return false;
+  // A nudge is the definition of proactive contact — an operator who
+  // snoozed this lead or flagged it "no proactive contact" was promising
+  // exactly this message would not go out.
+  const guard = canContactLead(lead as ContactGuardLead, { channel: 'whatsapp', kind: 'proactive' });
+  if (!guard.ok) {
+    log.info('reengagement_skipped', { fn: 'reengagement', correlationId, leadId: lead.id as string, eventType, reason: guard.reason });
+    return false;
+  }
+  const phone = lead.phone as string;
   const res = await sendWhatsAppTemplate(phone, cfg.templateName, [
     { name: 'context', value: contextLine(lead) },
   ]);
@@ -84,7 +92,7 @@ export async function runReengagement(
   }
 
   const now = Date.now();
-  const SELECT = 'id, phone, full_name, lead_status, ownership_mode, last_human_touch_at, last_inbound_at, last_outbound_at, updated_at, goal_summary, pain_point_summary, interest_topic, primary_track, do_not_contact, removed_by_request';
+  const SELECT = 'id, phone, full_name, lead_status, ownership_mode, last_human_touch_at, last_inbound_at, last_outbound_at, updated_at, goal_summary, pain_point_summary, interest_topic, primary_track, do_not_contact, removed_by_request, snoozed_until, no_proactive_contact';
 
   // ── 1. check-in: handed to a human ~checkinDays ago, lead never replied ──
   let checkins = 0;

@@ -108,7 +108,11 @@ export interface LeadContext {
 const LEAD_SELECT_COLUMNS =
   'id, full_name, phone, email, city, product_interest, intake_segment, ' +
   'primary_track, lead_status, ownership_mode, lead_heat, do_not_contact, ' +
-  'removed_by_request, source, source_campaign, created_at, last_inbound_at, last_outbound_at';
+  // snoozed_until + no_proactive_contact feed the contact guard in
+  // automation-engine's send action; ig_user_id/consent_email let the same
+  // guard answer for the non-WhatsApp channels.
+  'removed_by_request, snoozed_until, no_proactive_contact, ig_user_id, consent_email, ' +
+  'source, source_campaign, created_at, last_inbound_at, last_outbound_at';
 
 // Resolve the lead from id then delegate. The common case for one-off
 // emitters (mark_won, mark_lost, dormant).

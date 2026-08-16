@@ -16,6 +16,7 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { logAutomationRun } from './automation-log.ts';
 import { notifyTelegram } from './notify-telegram.ts';
 import { log } from './logger.ts';
+import { canContactLead, type ContactChannel, type ContactGuardLead } from './contact-guard.ts';
 
 // ── Conditions DSL ────────────────────────────────────────────────────
 
@@ -142,6 +143,17 @@ async function actionSendTemplate(action: Record<string, unknown>, ctx: ActionCo
   const channel = (action.channel as string | undefined) ?? 'whatsapp';
   if (!key) return { type: 'send_template', status: 'skipped', detail: 'missing key' };
   if (!ctx.contactId) return { type: 'send_template', status: 'skipped', detail: 'no contactId' };
+
+  // A rule firing on a trigger is proactive contact. This send used to have
+  // no suppression check at all — not even DNC — relying entirely on
+  // dispatch-outbound catching it later, which still burned a dispatch row
+  // per suppressed lead. Check against the context we already hold;
+  // dispatch-outbound re-checks at send time in case it went stale.
+  const guardLead = ctx.context.lead as ContactGuardLead | undefined;
+  if (guardLead) {
+    const guard = canContactLead(guardLead, { channel: channel as ContactChannel, kind: 'proactive' });
+    if (!guard.ok) return { type: 'send_template', status: 'skipped', detail: `contact_guard:${guard.reason}` };
+  }
 
   const { data: tpl, error } = await ctx.supabase
     .from('message_templates')

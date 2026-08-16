@@ -4,6 +4,7 @@ import {
 } from 'react';
 import clsx from 'clsx';
 import { ToastContext, type ToastApi, type ToastInput, type ToastTone } from './toast-context';
+import { usePresence } from '@/lib/usePresence';
 
 // eslint-disable-next-line react-refresh/only-export-components
 export { useToast } from './toast-context';
@@ -11,14 +12,23 @@ export type { ToastApi, ToastInput, ToastTone } from './toast-context';
 
 interface ToastItem extends Required<ToastInput> {
   id: number;
+  /** Flipped before removal so the item can play its exit. */
+  leaving?: boolean;
 }
+
+const TOAST_EXIT_MS = 150;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const idRef = useRef(0);
 
+  // Two-step removal: mark leaving so the row can fade and collapse its
+  // height (neighbours flow up instead of snapping), then drop it.
   const dismiss = useCallback((id: number) => {
-    setItems((prev) => prev.filter((t) => t.id !== id));
+    setItems((prev) => prev.map((t) => (t.id === id ? { ...t, leaving: true } : t)));
+    window.setTimeout(() => {
+      setItems((prev) => prev.filter((t) => t.id !== id));
+    }, TOAST_EXIT_MS);
   }, []);
 
   const push = useCallback((input: ToastInput) => {
@@ -45,32 +55,45 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
+      {/* Above dialogs (z-50): a toast confirming an action taken inside a
+          modal must not render behind it. */}
       <div
         aria-live="polite" aria-atomic="false"
-        className="pointer-events-none fixed top-4 left-1/2 z-50 flex w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 flex-col gap-2"
+        className="pointer-events-none fixed top-4 left-1/2 z-[60] flex w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 flex-col gap-2"
       >
         {items.map((t) => (
-          <div
-            key={t.id}
-            role="status"
-            className={clsx(
-              'kf-toast',
-              t.tone === 'success' && 'kf-toast-success',
-              t.tone === 'error' && 'kf-toast-error',
-              t.tone === 'info' && 'kf-toast-info',
-            )}
-          >
-            <ToneIcon tone={t.tone} />
-            <div className="flex-1 leading-snug">{t.message}</div>
-            <button
-              type="button" aria-label="סגירת התראה"
-              className="text-slate-500 hover:text-slate-900"
-              onClick={() => dismiss(t.id)}
-            >×</button>
-          </div>
+          <ToastRow key={t.id} item={t} onDismiss={dismiss} />
         ))}
       </div>
     </ToastContext.Provider>
+  );
+}
+
+function ToastRow({ item, onDismiss }: { item: ToastItem; onDismiss: (id: number) => void }) {
+  const { state } = usePresence(!item.leaving, { exitMs: TOAST_EXIT_MS });
+  return (
+    <div className="kf-collapse" data-state={state}>
+      <div>
+        <div
+          role="status"
+          data-state={state}
+          className={clsx(
+            'kf-toast',
+            item.tone === 'success' && 'kf-toast-success',
+            item.tone === 'error' && 'kf-toast-error',
+            item.tone === 'info' && 'kf-toast-info',
+          )}
+        >
+          <ToneIcon tone={item.tone} />
+          <div className="flex-1 leading-snug">{item.message}</div>
+          <button
+            type="button" aria-label="סגירת התראה"
+            className="kf-pressable text-slate-500 transition hover:text-slate-900"
+            onClick={() => onDismiss(item.id)}
+          >×</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -2,12 +2,48 @@
 
 @theme {
   --font-sans: 'Heebo', 'Assistant', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Full brand ramp. 200/300/400/800/900 were referenced across eight
+     places (text-brand-800, border-brand-300, …) without ever being
+     defined, so those utilities rendered nothing at all. */
   --color-brand-50: oklch(0.97 0.01 270);
   --color-brand-100: oklch(0.93 0.04 270);
+  --color-brand-200: oklch(0.88 0.07 270);
+  --color-brand-300: oklch(0.8 0.1 270);
+  --color-brand-400: oklch(0.67 0.13 270);
   --color-brand-500: oklch(0.55 0.15 270);
   --color-brand-600: oklch(0.48 0.16 270);
   --color-brand-700: oklch(0.4 0.17 270);
-  --radius-card: 0.75rem;
+  --color-brand-800: oklch(0.33 0.14 270);
+  --color-brand-900: oklch(0.27 0.11 270);
+
+  /* Typography scale — tuned for Hebrew/Heebo (RTL, no case, tight
+     sidebearings). Body sizes get reading leading by default: the ~30
+     hand-written leading-6/leading-5 overrides scattered in pages were
+     the intent all along — now it's the default for every text-sm/xs.
+     Controls (.kf-btn/.kf-input/.kf-badge) pin their own compact leading
+     below so button/input/badge heights don't change. */
+  --text-xs--line-height: 1.25rem;
+  --text-sm--line-height: 1.5rem;
+  --text-2xl--line-height: 1.3;
+  --text-3xl--line-height: 1.2;
+  --text-4xl--line-height: 1.1;
+
+  /* Hebrew display tracking: the Latin default (-0.025em) is too
+     aggressive for Heebo, and positive tracking breaks Hebrew word
+     cohesion. Recalibrating the tokens fixes every tracking-tight
+     heading at once. */
+  --tracking-tight: -0.01em;
+  --tracking-wide: 0.02em;
+
+  /* Motion. Layers animate with transitions rather than keyframes so a
+     half-open panel that gets closed again retargets from where it
+     actually is on screen instead of restarting. Exits are shorter than
+     entries and use the mirrored curve, so a surface leaves along the
+     path it arrived on. */
+  --ease-out-soft: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-soft: cubic-bezier(0.5, 0, 0.75, 0);
+  --duration-enter: 200ms;
+  --duration-exit: 150ms;
 }
 
 html { direction: rtl; font-family: var(--font-sans); }
@@ -19,38 +55,133 @@ body {
   background-attachment: fixed;
 }
 :focus-visible { @apply outline-2 outline-offset-2 outline-brand-500; }
+/* The bulk-select checkboxes are native and unstyled; at minimum they
+   should be the product's colour rather than the browser's blue. */
+input[type='checkbox'], input[type='radio'] { accent-color: var(--color-brand-600); }
 
-/* Component primitives */
+/* Motion primitives
+   ------------------
+   .kf-layer drives every overlay (modal panel, scrim, popover, drawer,
+   action dock). The markup sets data-state via usePresence; the closed
+   state per surface is declared alongside it with kf-layer-*, so enter
+   and exit share one path in both directions. */
+.kf-layer {
+  transition-property: opacity, transform;
+  transition-duration: var(--duration-enter);
+  transition-timing-function: var(--ease-out-soft);
+}
+.kf-layer[data-state='closed'] {
+  transition-duration: var(--duration-exit);
+  transition-timing-function: var(--ease-in-soft);
+}
+.kf-layer-fade[data-state='closed'] { opacity: 0; }
+/* A dialog settles in place rather than flying in — it is a new context,
+   not an object arriving from somewhere. */
+.kf-layer-dialog[data-state='closed'] { opacity: 0; transform: scale(0.96); }
+/* Popovers grow from the control that opened them; the caller sets
+   transform-origin to the trigger's corner. */
+.kf-layer-popover[data-state='closed'] { opacity: 0; transform: scale(0.95); }
+.kf-layer-drawer[data-state='closed'] { opacity: 0; transform: translateY(-0.5rem); }
+.kf-layer-dock[data-state='closed'] { opacity: 0; transform: translateY(0.75rem); }
+
+/* Press feedback. The dip is instant on pointer-down — waiting even
+   150ms to acknowledge a press is what makes a control feel dead — and
+   only the release is eased. */
+.kf-pressable {
+  transition: transform 150ms var(--ease-out-soft);
+  touch-action: manipulation;
+}
+.kf-pressable:active { transform: scale(0.98); transition-duration: 0ms; }
+.kf-pressable-subtle:active { transform: scale(0.995); }
+
+/* Count badges pop when the number changes (keyed remount) — a change
+   that arrived on its own deserves the eye, so this one may overshoot. */
+@keyframes kf-badge-pop {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+.kf-badge-pop { animation: kf-badge-pop 250ms var(--ease-out-soft); }
+
+/* Height collapse for list items leaving (toasts, resolved inbox
+   cards): the row shrinks so its neighbours flow up instead of jumping. */
+.kf-collapse { display: grid; grid-template-rows: 1fr; transition: grid-template-rows var(--duration-exit) var(--ease-in-soft); }
+.kf-collapse[data-state='closed'] { grid-template-rows: 0fr; }
+.kf-collapse > * { overflow: hidden; }
+
+/* Component primitives
+   --------------------
+   These live in @layer components on purpose. Unlayered rules beat every
+   layered utility no matter the specificity, so while .kf-card and .kf-btn
+   sat outside the cascade layers they silently swallowed the utilities
+   written next to them in the JSX: `kf-card border-s-rose-500` kept the
+   card's slate border (the lead cards' whole urgency stripe was invisible),
+   and `kf-btn bg-emerald-600` on the "טופל ✓" button rendered white. Inside
+   the layer, a utility next to the class wins — which is what every call
+   site already assumed.
+
+   Elevation has exactly three steps, and each one means something:
+   shadow-sm = a surface at rest (cards, inputs, buttons), shadow-md = it
+   lifted under the pointer, shadow-xl = it is floating above the page
+   (modals, popovers, the action dock, toasts). Nothing in between.
+
+   Motion primitives above stay unlayered deliberately: a stray
+   `transition` utility in the markup must not outrank .kf-layer's timing. */
+@layer components {
 .kf-card { @apply rounded-xl border border-slate-200 bg-white shadow-sm; }
-.kf-btn { @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100; }
-.kf-btn-primary { @apply border-transparent bg-brand-600 text-white shadow hover:bg-brand-700; }
-.kf-btn-danger { @apply border-transparent bg-rose-600 text-white shadow hover:bg-rose-700; }
+.kf-btn { @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-5 font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100; }
+/* Same instant-dip / eased-release asymmetry as .kf-pressable: the
+   inherited `transition` above would otherwise take 150ms just to
+   acknowledge the press. */
+.kf-btn { touch-action: manipulation; }
+.kf-btn:active:not(:disabled) { transition-duration: 0ms; }
+.kf-btn-primary { @apply border-transparent bg-brand-600 text-white shadow-sm hover:bg-brand-700; }
+.kf-btn-danger { @apply border-transparent bg-rose-600 text-white shadow-sm hover:bg-rose-700; }
 .kf-btn-ghost { @apply border-transparent bg-transparent text-slate-600 shadow-none hover:bg-slate-100; }
-.kf-input { @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500; }
-.kf-badge { @apply inline-flex items-center rounded-md px-2 py-1 text-xs font-medium; }
-.kf-badge-hot { @apply bg-rose-50 text-rose-700; }
-.kf-badge-warm { @apply bg-amber-50 text-amber-700; }
-.kf-badge-cool { @apply bg-sky-50 text-sky-700; }
-.kf-badge-cold { @apply bg-slate-100 text-slate-600; }
-.kf-badge-success { @apply bg-emerald-50 text-emerald-700; }
-.kf-badge-mute { @apply bg-slate-100 text-slate-600; }
-/* Ownership palette — distinct from status (cool/warm) so the eye can
-   separate "what stage" from "who is handling" at a glance. */
-.kf-badge-ai { @apply bg-violet-50 text-violet-700; }
-.kf-badge-mia { @apply bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200; }
-.kf-badge-phone { @apply bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200; }
-.kf-badge-watch { @apply bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200; }
+.kf-input { @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-5 shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500; }
+/* Semantic tone system
+   --------------------
+   One meaning, one colour, everywhere. Before this there were nine
+   parallel vocabularies for the same four ideas — chipClass(),
+   classifyRow(), the toast tones, the guidance-card map, plus hand-rolled
+   pills — and five of them could land on a single lead card, so nothing
+   read as urgent because everything was coloured.
+
+   A tone says what something MEANS; a shape (.kf-chip / .kf-callout) says
+   how loudly to say it. Tones carry no ring width of their own — the
+   shape owns that, which is also how the old border-vs-ring coin flip on
+   sibling boxes got settled.
+
+   Legacy badge names are grouped onto the tone they now mean, which is
+   also where the hue count drops from nine to six: -cold/-mute/-watch
+   were three ways to say "neutral", -mia/-warm two ways to say
+   "warning", -phone was orange and -ai violet for no reason either could
+   defend. */
+.kf-tone-danger, .kf-badge-hot { @apply bg-rose-50 text-rose-700 ring-rose-200; }
+.kf-tone-warning, .kf-badge-warm, .kf-badge-mia, .kf-badge-phone { @apply bg-amber-50 text-amber-700 ring-amber-200; }
+.kf-tone-info, .kf-badge-cool { @apply bg-sky-50 text-sky-700 ring-sky-200; }
+.kf-tone-success, .kf-badge-success { @apply bg-emerald-50 text-emerald-700 ring-emerald-200; }
+.kf-tone-accent, .kf-badge-ai { @apply bg-brand-50 text-brand-700 ring-brand-200; }
+.kf-tone-neutral, .kf-badge-cold, .kf-badge-mute, .kf-badge-watch { @apply bg-slate-100 text-slate-600 ring-slate-200; }
+
+/* The small label. .kf-badge is the same shape under its original name
+   (48 call sites) rather than a second one that drifts from it. */
+.kf-chip, .kf-badge { @apply inline-flex items-center rounded-md px-2 py-1 text-xs leading-4 font-medium ring-1 ring-inset; }
+/* The full-width coloured box. Nested inside .kf-card (rounded-xl), so it
+   is one step tighter — a child is never rounder than its parent. */
+.kf-callout { @apply rounded-lg px-3 py-2 text-sm ring-1 ring-inset; }
 
 /* Tables */
 .kf-table { @apply w-full text-sm; }
 .kf-table thead { @apply bg-slate-50 text-slate-600; }
-.kf-table th { @apply text-right p-3 font-medium tracking-tight; }
+.kf-table th { @apply text-right p-3 font-medium; }
 .kf-table tbody tr { @apply border-t border-slate-100 transition hover:bg-slate-50/70; }
 .kf-table td { @apply p-3 align-middle; }
 
 /* SLA risk highlights for queue + tasks rows. */
 .kf-row-overdue { @apply bg-rose-50/70 hover:bg-rose-100/70; }
 .kf-row-warning { @apply bg-amber-50/70 hover:bg-amber-100/70; }
+}
 
 /* Visually-hidden, keyboard-accessible (for screen-reader-only labels). */
 .kf-sr-only {
@@ -130,16 +261,49 @@ body {
 .kf-skeleton { @apply animate-pulse rounded bg-slate-200/70; }
 .kf-dot { @apply inline-block h-2 w-2 rounded-full; }
 
-/* Toasts */
+/* Toasts. Enter and exit are transitions (not the old keyframe) so a
+   toast dismissed mid-entry reverses from where it is, and the stack
+   collapses the vacated height instead of snapping the siblings up. */
 .kf-toast {
-  @apply pointer-events-auto flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm shadow-lg;
-  animation: kf-toast-in 180ms ease-out;
+  @apply pointer-events-auto flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm shadow-xl;
+  transition-property: opacity, transform;
+  transition-duration: var(--duration-enter);
+  transition-timing-function: var(--ease-out-soft);
+}
+.kf-toast[data-state='closed'] {
+  opacity: 0;
+  transform: translateY(-0.375rem);
+  transition-duration: var(--duration-exit);
+  transition-timing-function: var(--ease-in-soft);
 }
 .kf-toast-success { @apply border-emerald-200 bg-emerald-50/90 text-emerald-900; }
 .kf-toast-error { @apply border-rose-200 bg-rose-50/90 text-rose-900; }
 .kf-toast-info { @apply border-sky-200 bg-sky-50/90 text-sky-900; }
 
-@keyframes kf-toast-in {
-  from { opacity: 0; transform: translateY(-6px); }
-  to   { opacity: 1; transform: translateY(0); }
+/* Reduced motion: keep meaning, drop travel. Surfaces still fade so an
+   appearance is still noticed, but nothing slides, scales, or pulses.
+   Spinners are exempt — their rotation reports progress, it isn't
+   decoration. */
+@media (prefers-reduced-motion: reduce) {
+  .kf-layer,
+  .kf-layer[data-state='closed'],
+  .kf-toast,
+  .kf-toast[data-state='closed'] {
+    transition-property: opacity;
+    transition-duration: 120ms;
+    transition-timing-function: linear;
+    transform: none !important;
+  }
+  .kf-collapse, .kf-collapse[data-state='closed'] {
+    transition: none;
+    grid-template-rows: 1fr;
+  }
+  .kf-pressable, .kf-pressable:active,
+  .kf-pressable-subtle:active,
+  .kf-btn:active:not(:disabled) {
+    transform: none !important;
+    transition: none;
+  }
+  .kf-badge-pop { animation: none; }
+  .kf-skeleton, .animate-pulse { animation: none; opacity: 0.7; }
 }

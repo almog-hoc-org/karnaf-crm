@@ -33,6 +33,27 @@ if (typeof globalThis.alert !== 'function') {
   });
 }
 
+// Run the suite as a reduced-motion environment. Layer enter/exit
+// (usePresence) then mounts and unmounts synchronously, so assertions
+// about a dialog appearing or disappearing stay direct instead of every
+// spec needing waitFor for an animation that has no visual meaning in a
+// headless DOM. Motion itself is verified by usePresence's own spec,
+// which drives the timers explicitly.
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  configurable: true,
+  value: (query: string) => ({
+    matches: query.includes('prefers-reduced-motion'),
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }),
+});
+
 afterEach(() => {
   cleanup();
 });

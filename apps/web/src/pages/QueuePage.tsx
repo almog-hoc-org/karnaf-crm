@@ -283,7 +283,7 @@ function StatusTab({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       type="button" onClick={onClick}
       className={
-        'rounded-full px-4 py-1.5 text-sm font-medium transition ' +
+        'kf-pressable rounded-full px-4 py-1.5 text-sm font-medium transition ' +
         (active ? 'bg-brand-600 text-white shadow-sm' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50')
       }
       aria-pressed={active}

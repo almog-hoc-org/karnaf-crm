@@ -21,6 +21,11 @@ export interface RuntimeConfig extends AiRuntimeConfig {
     templateName: string;
   };
   safetyNet: SafetyNetConfig;
+  // Emergency kill switch. The AI answers only on the channels listed
+  // here; an empty array silences the bot everywhere while humans keep
+  // working the inbox. Documented in docs/runbooks/ai-quota-exhausted.md,
+  // which pointed at a config key nothing actually read until now.
+  aiEnabledChannels: string[];
   notifications: {
     // Telegram alert the moment a human-owned lead writes (throttled
     // per-lead). Seeded ON in migration 117; the operator can flip the
@@ -47,6 +52,7 @@ const DEFAULT: RuntimeConfig = {
   whatsappSession: { freeformWindowHours: 24, fallbackTemplateName: 'karnaf_followup_v1' },
   reengagement: { enabled: false, checkinDays: 7, reactivationDays: 60, templateName: '' },
   safetyNet: DEFAULT_SAFETY_NET,
+  aiEnabledChannels: ['whatsapp', 'instagram'],
   notifications: { perInboundTelegram: false },
 };
 
@@ -70,5 +76,16 @@ export async function getRuntimeConfig(supabase: SupabaseClient): Promise<Runtim
     whatsappSession: get('whatsapp_session', DEFAULT.whatsappSession),
     reengagement: get('reengagement', DEFAULT.reengagement),
     safetyNet: resolveSafetyNet(map.get('ai_safety_net')),
+    aiEnabledChannels: resolveEnabledChannels(map.get('ai_enabled_channels')),
   };
+}
+
+// An absent or malformed key means "no restriction configured" — the AI
+// keeps working. Only a well-formed array (including an empty one, which
+// is the kill switch) narrows the channels.
+export function resolveEnabledChannels(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return DEFAULT.aiEnabledChannels;
+  const channels = raw.filter((c): c is string => typeof c === 'string').map((c) => c.trim().toLowerCase());
+  if (channels.length !== raw.length) return DEFAULT.aiEnabledChannels;
+  return channels;
 }
