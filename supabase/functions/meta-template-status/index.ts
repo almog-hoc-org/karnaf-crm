@@ -78,6 +78,53 @@ Deno.serve(async (req) => {
     return await syncTemplates(req, token, wabaId, graphVersion);
   }
 
+  // ── action: 'subscription' — is Meta still delivering to us? ────────
+  //
+  // Production has recorded no inbound message since 2026-08-27 17:24, on
+  // every channel. Nothing in the database can distinguish "no customers
+  // wrote" from "Meta stopped calling the webhook", because inbound needs
+  // no Meta token (only an HMAC), so a lapsed token or subscription looks
+  // exactly like silence. This asks Meta directly, from the server, using
+  // the token already in the secrets — no credential ever leaves the
+  // function and none is echoed back.
+  if (req.method === 'POST' && postBody?.action === 'subscription') {
+    const out: Record<string, unknown> = { wabaId };
+
+    const subsRes = await fetch(
+      `https://graph.facebook.com/${graphVersion}/${wabaId}/subscribed_apps`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const subsText = await subsRes.text();
+    out.subscribedApps = {
+      ok: subsRes.ok,
+      status: subsRes.status,
+      body: safeJson(subsText),
+    };
+
+    const phoneRes = await fetch(
+      `https://graph.facebook.com/${graphVersion}/${phoneId}?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status,throughput`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const phoneText = await phoneRes.text();
+    out.phoneNumber = {
+      ok: phoneRes.ok,
+      status: phoneRes.status,
+      body: safeJson(phoneText),
+    };
+
+    // Empty `data` on subscribed_apps is the smoking gun: the app is no
+    // longer subscribed to this WABA, so Meta delivers nothing and never
+    // reports an error to us.
+    const apps = (out.subscribedApps as { body?: { data?: unknown[] } }).body?.data;
+    out.verdict = !subsRes.ok
+      ? 'token_or_permission_problem'
+      : Array.isArray(apps) && apps.length === 0
+        ? 'app_not_subscribed_to_waba'
+        : 'subscription_present';
+
+    return jsonResponse(req, { ok: true, ...out }, 200);
+  }
+
   if (req.method === 'POST') {
     const body = postBody ?? {};
     if (body?.action !== 'create_karnaf_followup_v1' && body?.action !== 'create_lifecycle_templates') {
@@ -190,6 +237,10 @@ Deno.serve(async (req) => {
     templates,
   });
 });
+
+function safeJson(text: string): unknown {
+  try { return JSON.parse(text || '{}'); } catch { return { raw: text.slice(0, 400) }; }
+}
 
 async function notifySyncFailure(
   supabase: ReturnType<typeof getServiceSupabase>,

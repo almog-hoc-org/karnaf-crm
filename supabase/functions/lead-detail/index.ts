@@ -2,6 +2,15 @@ import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 
+// Machine chatter that mirrors into `activities` at a rate no human can
+// read. Excluded from the lead card's activity window so the 400 rows it
+// returns carry actual history. Kept as a PostgREST `in` list literal.
+const NOISY_ACTIVITY_TITLES = '('
+  + ['inbound_message_received', 'provider_message_status_updated',
+     'sla_breach', 'state_transition_rejected', 'manual_return_to_ai']
+    .map((t) => `"${t}"`).join(',')
+  + ')';
+
 Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
@@ -51,7 +60,13 @@ Deno.serve(async (req) => {
     // status callback), but they still consumed the 400-row window and
     // pushed real history out of it. Excluded at the source.
     supabase.from('activities').select('*').eq('contact_id', leadId)
-      .not('title', 'in', '("inbound_message_received","provider_message_status_updated")')
+      // Production measurement over 30 days: sla_breach 2219 rows / 3 leads,
+      // state_transition_rejected 1257 / 8, manual_return_to_ai 939 / 6,
+      // against inbound_message_received 34 and human_reply_sent 6. The
+      // emitters are fixed and the backlog is cleared by migration 123, but
+      // the window has to be defended at read time too — one new flood and
+      // the chat screen goes blank again.
+      .not('title', 'in', NOISY_ACTIVITY_TITLES)
       .order('occurred_at', { ascending: false }).limit(400),
   ]);
 
