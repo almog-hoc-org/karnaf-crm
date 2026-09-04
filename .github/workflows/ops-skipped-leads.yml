@@ -1,6 +1,8 @@
-# TEMPORARY read-only diagnostic — broadcast + Meta-template health
-# snapshot: sync state per template, recent broadcasts and their
-# failure/skip breakdown. Dispatch manually when something looks off.
+# TEMPORARY read-only diagnostic. Repurposed 2026-09-04 to answer the
+# "silent intake" incident: no leads or messages were recorded from
+# 2026-08-28 onward, and nothing in the system can currently tell us
+# whether Meta stopped calling the webhook or the calls are being
+# swallowed. Every query below is read-only and prints no secret values.
 name: Ops - Skipped Leads
 
 on:
@@ -13,7 +15,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Broadcast + template health snapshot
+      - name: Intake + pipeline health snapshot
         env:
           SUPABASE_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
           PROJECT_REF: svkzkpgccahwmyflobvn
@@ -24,7 +26,7 @@ jobs:
           token = os.environ['SUPABASE_TOKEN']
           ref = os.environ['PROJECT_REF']
 
-          def q(label, sql):
+          def q(label, sql, proves=''):
               req = urllib.request.Request(
                   f'https://api.supabase.com/v1/projects/{ref}/database/query',
                   data=json.dumps({'query': sql}).encode(),
@@ -33,38 +35,119 @@ jobs:
                       'Content-Type': 'application/json',
                       'User-Agent': 'karnaf-ops/1.0',
                   }, method='POST')
+              print(f'== {label} ==')
+              if proves:
+                  print(f'-- proves: {proves}')
               try:
-                  with urllib.request.urlopen(req, timeout=30) as r:
+                  with urllib.request.urlopen(req, timeout=45) as r:
                       rows = json.loads(r.read().decode())
               except Exception as e:
-                  print(f'== {label} ==\nERROR: {e}\n')
+                  body = ''
+                  try:
+                      body = e.read().decode(errors='replace')[:300]
+                  except Exception:
+                      pass
+                  print(f'ERROR: {e} {body}\n')
                   return
-              print(f'== {label} ==')
               print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
               print()
 
-          q('whatsapp templates - meta sync state', """
-              select key, status,
-                     metadata->'meta'->>'status' as meta_status,
-                     metadata->'meta'->>'language' as meta_lang,
-                     metadata->'meta'->>'synced_at' as synced_at
-              from message_templates where channel = 'whatsapp'
-              order by (metadata->'meta'->>'status') nulls last, key""")
-          q('last 5 broadcasts', """
-              select left(id::text, 8) as id, name, channel, template_key,
-                     meta_template, status, recipients_count, sent_count,
-                     failed_count, skipped_count, scheduled_at
-              from broadcasts order by created_at desc limit 5""")
-          q('recipient error breakdown (last 7 days)', """
-              select left(r.broadcast_id::text, 8) as broadcast, r.status,
-                     left(coalesce(r.error, ''), 250) as error, count(*)
-              from broadcast_recipients r
-              where r.broadcast_id in (
-                select id from broadcasts where created_at > now() - interval '7 days')
-              group by 1, 2, 3 order by 1, 4 desc limit 30""")
-          q('dlq dispatches last 7 days grouped', """
-              select left(coalesce(last_error, ''), 250) as err, count(*)
+          # ---------- 1. Is intake actually dead? ----------
+          q('message timeline', """
+              select direction,
+                     count(*) as total,
+                     max(created_at) as newest,
+                     min(created_at) as oldest
+              from messages group by direction order by direction""",
+            'whether ANY message (in or out) has been written recently')
+
+          q('inbound per day, last 30 days', """
+              select created_at::date as day, count(*) as inbound
+              from messages
+              where direction = 'inbound' and created_at > now() - interval '30 days'
+              group by 1 order by 1 desc""",
+            'the exact day inbound stopped, and whether it tapered or cut off')
+
+          q('leads created per day, last 30 days', """
+              select created_at::date as day, count(*) as leads
+              from leads where created_at > now() - interval '30 days'
+              group by 1 order by 1 desc""",
+            'whether NON-whatsapp intake (forms, fb) also stopped -> points at DB vs Meta')
+
+          q('outbound attempts since the silence', """
+              select status, count(*), max(created_at) as newest
               from outbound_dispatch
-              where status = 'dlq' and created_at > now() - interval '7 days'
-              group by 1 order by 2 desc limit 10""")
+              where created_at > now() - interval '14 days'
+              group by 1 order by 2 desc""",
+            'if outbound was still flowing, the platform was up and only INBOUND died')
+
+          # ---------- 2. The empty-chat theory ----------
+          q('activities composition for the reported lead', """
+              select activity_type, count(*) as rows,
+                     min(occurred_at) as oldest, max(occurred_at) as newest
+              from activities
+              where contact_id = '3a4ead6c-a1a7-438b-96c3-b107fd30668f'
+              group by 1 order by 2 desc""",
+            'THE root cause: if sla_breach dominates and message rows are old, the 400-row cap hid the chat')
+
+          q('lead_events flood, top types last 30 days', """
+              select event_type, count(*) as rows, count(distinct lead_id) as leads
+              from lead_events
+              where created_at > now() - interval '30 days'
+              group by 1 order by 2 desc limit 15""",
+            'the scale of the sla_breach / status-callback flood across the whole system')
+
+          q('worst affected leads by event volume', """
+              select lead_id, count(*) as events
+              from lead_events
+              where created_at > now() - interval '30 days'
+              group by 1 order by 2 desc limit 10""",
+            'how many leads have a chat screen that is already buried')
+
+          q('activities + lead_events total size', """
+              select 'activities' as t, count(*) from activities
+              union all select 'lead_events', count(*) from lead_events
+              union all select 'messages', count(*) from messages""",
+            'how big the one-time cleanup has to be')
+
+          # ---------- 3. Are the mirrors and workers alive? ----------
+          q('mirror triggers', """
+              select c.relname as table_name, t.tgname, t.tgenabled
+              from pg_trigger t join pg_class c on c.oid = t.tgrelid
+              where not t.tgisinternal and t.tgname like 'trg_sync%'
+              order by 1, 2""",
+            "tgenabled='O' means enabled; 'D' would mean someone disabled the message mirror")
+
+          q('cron jobs', """
+              select jobid, jobname, schedule, active from cron.job order by jobname""",
+            'which schedulers exist and are active')
+
+          q('cron run history, last 24h', """
+              select j.jobname, d.status, count(*) as runs,
+                     max(d.start_time) as last_run,
+                     left(max(d.return_message), 200) as sample_message
+              from cron.job_run_details d join cron.job j on j.jobid = d.jobid
+              where d.start_time > now() - interval '24 hours'
+              group by 1, 2 order by 1, 2""",
+            'WHICH workers actually ran and which silently failed (run_sla_worker / run_nightly_jobs)')
+
+          q('system heartbeats', """
+              select name, last_ok_at, now() - last_ok_at as age
+              from system_heartbeats order by name""",
+            'which worker feeds the red dashboard banner')
+
+          q('webhook_inbox rows', """
+              select count(*) as rows from webhook_inbox""",
+            'expected 0 - confirms we have zero evidence of inbound webhook calls')
+
+          # ---------- 4. Config presence (names only, never values) ----------
+          q('crm_config keys present', """
+              select config_key, updated_at from crm_config order by config_key""",
+            'which config rows exist (values deliberately not selected)')
+
+          q('queue backlog by type', """
+              select queue_type, status, count(*)
+              from work_queue where status in ('pending','claimed')
+              group by 1,2 order by 3 desc limit 20""",
+            'the size and shape of the noise in "my day"')
           EOF
