@@ -519,12 +519,27 @@ export interface RunRulesInput {
   context: Record<string, unknown>;
   contactId?: string | null;
   correlationId?: string;
+  /**
+   * Evaluate conditions and report what WOULD happen, executing no actions
+   * and writing no audit rows. The point is to be able to answer "how many
+   * leads does this rule touch, and which ones?" before switching a rule on
+   * against a pipeline that has been accumulating for months — a naive
+   * restore of the time-based scan would have sent hundreds of messages to
+   * a backlog of stale leads on its first tick.
+   */
+  dryRun?: boolean;
+}
+
+export interface RuleMatch {
+  ruleCode: string;
+  contactId?: string | null;
+  actionKinds: string[];
 }
 
 export async function runMatchingRules(
   supabase: SupabaseClient,
   input: RunRulesInput,
-): Promise<void> {
+): Promise<RuleMatch[]> {
   const { data: rules, error } = await supabase
     .from('automation_rules')
     .select('id, code, enabled, source, conditions, actions')
@@ -533,12 +548,23 @@ export async function runMatchingRules(
     .eq('trigger_event', input.triggerEvent);
   if (error) {
     log.warn('engine_load_rules_failed', { triggerEvent: input.triggerEvent, err: error.message });
-    return;
+    return [];
   }
 
+  const matches: RuleMatch[] = [];
   for (const rule of rules ?? []) {
     const start = Date.now();
     const passes = evaluateConditions(rule.conditions, input.context);
+    if (passes && input.dryRun) {
+      matches.push({
+        ruleCode: rule.code,
+        contactId: input.contactId,
+        actionKinds: (Array.isArray(rule.actions) ? rule.actions : [])
+          .map((a) => String((a as Record<string, unknown>).type ?? 'unknown')),
+      });
+      continue;
+    }
+    if (input.dryRun) continue;
     if (!passes) {
       await logAutomationRun(supabase, {
         ruleCode: rule.code,
@@ -576,5 +602,11 @@ export async function runMatchingRules(
       durationMs: Date.now() - start,
       correlationId: input.correlationId,
     });
+    matches.push({
+      ruleCode: rule.code,
+      contactId: input.contactId,
+      actionKinds: results.map((r) => r.type),
+    });
   }
+  return matches;
 }
