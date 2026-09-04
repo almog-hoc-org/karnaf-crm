@@ -121,6 +121,7 @@ export function DashboardPage() {
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard label="ממתינים לתשובה" value={s.awaitingReplyNow ?? s.unansweredNow}
                  tone={(s.awaitingReplyNow ?? s.unansweredNow) > 0 ? 'warn' : 'normal'}
+                 atLeast={s.awaitingReplyCapped === true}
                  to="/leads?awaiting=true" icon={<IconClock />} />
         <KpiCard label={t('kpi_hot_leads')} value={s.hotLeadsNow} tone={s.hotLeadsNow > 0 ? 'hot' : 'normal'}
                  to="/leads?heat=hot" icon={<IconFlame />} />
@@ -303,10 +304,12 @@ function SourceHealthSection({
 }
 
 function KpiCard({
-  label, value, tone = 'normal', to, icon,
+  label, value, tone = 'normal', to, icon, atLeast = false,
 }: {
   label: string; value: number; tone?: 'normal' | 'warn' | 'hot';
   to?: string; icon?: React.ReactNode;
+  /** The number is a floor (a capped query), not a total — renders "500+". */
+  atLeast?: boolean;
 }) {
   const toneClass = tone === 'hot' ? 'text-rose-700' : tone === 'warn' ? 'text-amber-700' : 'text-slate-900';
   const accent = tone === 'hot' ? 'bg-rose-50 text-rose-600'
@@ -316,7 +319,12 @@ function KpiCard({
     <div className="kf-card flex items-start justify-between gap-3 p-4 transition group-hover:shadow-md">
       <div>
         <div className="text-xs text-slate-500">{label}</div>
-        <div className={`mt-1 text-3xl font-semibold tabular-nums ${toneClass}`}>{value}</div>
+        <div
+          className={`mt-1 text-3xl font-semibold tabular-nums ${toneClass}`}
+          title={atLeast ? 'המספר האמיתי עשוי להיות גבוה יותר — השאילתה מוגבלת' : undefined}
+        >
+          {value}{atLeast ? '+' : ''}
+        </div>
       </div>
       {icon ? (
         <span aria-hidden="true" className={`grid h-9 w-9 place-items-center rounded-lg ${accent}`}>{icon}</span>
