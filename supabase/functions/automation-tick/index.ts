@@ -28,7 +28,7 @@ import { runMatchingRules, type RuleMatch } from '../_shared/automation-engine.t
 import { advanceDueJourneys } from '../_shared/journey-runner.ts';
 import { runBiweeklyStudentCheckins } from '../_shared/student-lifecycle.ts';
 import { runLeadJourneyManager } from '../_shared/lead-journey-manager.ts';
-import { buildLeadContextFromRow } from '../_shared/event-context.ts';
+import { buildLeadContextFromRow, type LeadRowForContext } from '../_shared/event-context.ts';
 
 const TRIGGER = 'time.elapsed';
 
@@ -186,7 +186,12 @@ async function runTimeElapsedPass(
   const matches: Record<string, number> = {};
   const sampleLeads: Record<string, string[]> = {};
   let scanned = 0;
-  for (const lead of leads ?? []) {
+  // supabase-js infers the row shape from the select string literally, and a
+  // string built by concatenation defeats that inference (it lands on
+  // GenericStringError). The column list is shared with the investor pass on
+  // purpose, so assert the shape here rather than duplicating the literal.
+  const scannedLeads = (leads ?? []) as unknown as LeadRowForContext[];
+  for (const lead of scannedLeads) {
     const leadCtx = await buildLeadContextFromRow(supabase, lead, { includeDerived: true });
     const fired = await runMatchingRules(supabase, {
       triggerEvent: TRIGGER,
