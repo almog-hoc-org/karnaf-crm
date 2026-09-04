@@ -8,7 +8,7 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
-import { notifyTelegram } from '../_shared/notify-telegram.ts';
+import { notifyOperator } from '../_shared/operator-alert.ts';
 import { logAutomationRun } from '../_shared/automation-log.ts';
 
 // Labels + lanes come from the shared kind registry so the digest, the
@@ -117,10 +117,14 @@ Deno.serve(async (req) => {
       lines.push('🎉 התיבה ריקה — אין פריטים פתוחים. יום נעים!');
     }
 
-    await notifyTelegram({
-      source: 'daily-sales-inbox',
+    // The daily digest is already gated by its 05:00 cron, so no throttle —
+    // suppressing it would just mean a silent morning.
+    await notifyOperator(supabase, {
+      kind: 'daily_inbox',
+      dedupeKey: `daily_inbox:${new Date().toISOString().slice(0, 10)}`,
+      throttleMinutes: 0,
       severity: critical > 0 ? 'warn' : 'info',
-      title: 'Karnaf CRM — תיבת בוקר',
+      title: 'תיבת בוקר — קרנף CRM',
       lines,
       link: 'https://karnaf-crm.vercel.app/inbox',
       correlationId,

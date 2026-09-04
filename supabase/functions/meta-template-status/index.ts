@@ -3,7 +3,7 @@ import { env } from '../_shared/env.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
-import { notifyTelegram } from '../_shared/notify-telegram.ts';
+import { notifyOperator } from '../_shared/operator-alert.ts';
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
     const phoneText = await phoneRes.text();
     phoneJson = JSON.parse(phoneText || '{}');
     if (!phoneRes.ok) {
-      if (postBody?.action === 'sync') await notifySyncFailure('phone_lookup', phoneText);
+      if (postBody?.action === 'sync') await notifySyncFailure(getServiceSupabase(), 'phone_lookup', phoneText);
       return jsonResponse(req, {
         ok: false,
         stage: 'phone_lookup',
@@ -70,7 +70,7 @@ Deno.serve(async (req) => {
     wabaId = phoneJson?.whatsapp_business_account?.id ?? '';
   }
   if (!wabaId) {
-    if (postBody?.action === 'sync') await notifySyncFailure('phone_lookup', 'No WABA id available');
+    if (postBody?.action === 'sync') await notifySyncFailure(getServiceSupabase(), 'phone_lookup', 'No WABA id available');
     return jsonResponse(req, { ok: false, stage: 'phone_lookup', error: 'No WABA id available' }, 500);
   }
 
@@ -191,9 +191,16 @@ Deno.serve(async (req) => {
   });
 });
 
-async function notifySyncFailure(stage: string, detail: string): Promise<void> {
-  await notifyTelegram({
-    source: 'meta-template-status',
+async function notifySyncFailure(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  stage: string,
+  detail: string,
+): Promise<void> {
+  await notifyOperator(supabase, {
+    kind: 'template_sync_failed',
+    // Nightly job: one alert per failing stage per day, not one per attempt.
+    dedupeKey: `template_sync:${stage}`,
+    throttleMinutes: 12 * 60,
     severity: 'warn',
     title: 'סנכרון תבניות וואטסאפ ממטא נכשל',
     lines: [
@@ -225,7 +232,7 @@ async function syncTemplates(
     // A broken sync is worse than a non-approved template: the whole CRM
     // goes blind to Meta template state and nobody notices (the WABA-id
     // misconfiguration hid for 3 weeks exactly this way). Alert loudly.
-    await notifySyncFailure('template_lookup', text);
+    await notifySyncFailure(getServiceSupabase(), 'template_lookup', text);
     return jsonResponse(req, { ok: false, stage: 'template_lookup', errorText: text }, 200);
   }
   const json = JSON.parse(text || '{}');
@@ -251,7 +258,7 @@ async function syncTemplates(
     .select('id, key, body, metadata')
     .eq('channel', 'whatsapp');
   if (error) {
-    await notifySyncFailure('local_lookup', error.message);
+    await notifySyncFailure(supabase, 'local_lookup', error.message);
     return jsonResponse(req, { ok: false, stage: 'local_lookup', error: error.message }, 500);
   }
 
@@ -271,8 +278,12 @@ async function syncTemplates(
   }
 
   if (nonApproved.length > 0) {
-    await notifyTelegram({
-      source: 'meta-template-status',
+    await notifyOperator(supabase, {
+      kind: 'templates_not_approved',
+      // Keyed on the actual set, so the same standing list stays quiet and a
+      // newly-rejected template alerts immediately.
+      dedupeKey: `templates_not_approved:${nonApproved.map((t) => `${t.key}=${t.status}`).sort().join(',')}`,
+      throttleMinutes: 24 * 60,
       severity: 'warn',
       title: 'תבניות וואטסאפ שאינן מאושרות במטא',
       lines: nonApproved.map((t) => `${t.key}: ${t.status}`),

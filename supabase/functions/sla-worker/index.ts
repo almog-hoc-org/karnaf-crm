@@ -6,7 +6,7 @@ import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
-import { notifyTelegram } from '../_shared/notify-telegram.ts';
+import { notifyOperator } from '../_shared/operator-alert.ts';
 import { logAutomationRun } from '../_shared/automation-log.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
 import { buildLeadContext } from '../_shared/event-context.ts';
@@ -405,10 +405,14 @@ Deno.serve(async (req) => {
     if (counters.payment_pending > 0) lines.push(`• תשלום תקוע: ${counters.payment_pending} לידים`);
     if (counters.sla_risk > 0) lines.push(`• סיכון SLA: ${counters.sla_risk} לידים מתקרבים לסף`);
     if (counters.dormant > 0) lines.push(`• הועברו ל-dormant: ${counters.dormant}`);
-    await notifyTelegram({
-      source: 'sla-worker',
+    await notifyOperator(supabase, {
+      kind: 'sla_tick',
+      // Same reasoning as ai-watchdog: key on the shape of the backlog, not
+      // on "something is non-zero", so a steady state is reported once.
+      dedupeKey: `sla_tick:${counters.sla_breach_new}:${counters.phone_overdue}:${counters.handoff_stale}:${counters.dispatch_dlq}:${counters.ai_stuck}`,
+      throttleMinutes: 60,
       severity: counters.sla_breach_new > 0 || counters.phone_overdue > 0 || counters.handoff_stale > 0 || counters.dispatch_dlq > 0 ? 'error' : 'warn',
-      title: 'Karnaf CRM — SLA tick',
+      title: 'מצב SLA — לידים שממתינים',
       lines,
       link: 'https://karnaf-crm.vercel.app/inbox',
       correlationId,

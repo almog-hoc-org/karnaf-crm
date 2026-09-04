@@ -8,6 +8,7 @@ import { env } from '../_shared/env.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
 import { buildLeadContext } from '../_shared/event-context.ts';
 import { ensureProgramMember } from '../_shared/member-service.ts';
+import { alertChannelStatus, notifyOperator } from '../_shared/operator-alert.ts';
 
 type ActionName =
   | 'assign_to_mia'
@@ -29,7 +30,8 @@ type ActionName =
   | 'snooze_lead'
   | 'unsnooze_lead'
   | 'set_outcome'
-  | 'set_no_followup';
+  | 'set_no_followup'
+  | 'test_alert_channels';
 
 const REOPEN_TARGETS = new Set(['responded', 'qualified', 'nurture', 'human_handoff']);
 
@@ -64,6 +66,9 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   unsnooze_lead: ['owner', 'admin', 'mia'],
   set_outcome: ['owner', 'admin', 'mia'],
   set_no_followup: ['owner', 'admin', 'mia'],
+  // Sends a real message on every configured channel. Owner/admin only —
+  // it is the one action whose whole purpose is to reach the owner's phone.
+  test_alert_channels: ['owner', 'admin'],
 };
 
 interface ActionPayload {
@@ -236,6 +241,31 @@ Deno.serve(async (req) => {
     await resolveQueueItem(supabase, queueItemId, note ?? null);
     log.info('admin_action', { fn: 'admin-actions', correlationId, userId: staff.userId, action });
     return jsonResponse(req, { ok: true, action });
+  }
+
+  // Answers "are alerts actually configured, and do they actually arrive?"
+  // — a question nobody could answer before, which is how ten alert call
+  // sites stayed silent no-ops in production without anyone noticing.
+  if (action === 'test_alert_channels') {
+    const configured = alertChannelStatus();
+    const result = await notifyOperator(supabase, {
+      kind: 'selftest',
+      dedupeKey: `selftest:${correlationId}`,
+      throttleMinutes: 0,
+      severity: 'info',
+      title: 'בדיקת ערוצי התראה — קרנף CRM',
+      lines: [
+        'זו הודעת בדיקה. אם קיבלת אותה, הערוץ הזה עובד.',
+        `ערוצים מוגדרים: ${Object.entries(configured).filter(([, on]) => on).map(([n]) => n).join(', ') || 'אף אחד'}`,
+        `נשלח על ידי: ${staff.role}`,
+      ],
+      link: 'https://karnaf-crm.vercel.app/inbox',
+      correlationId,
+    });
+    log.info('admin_action', { fn: 'admin-actions', correlationId, userId: staff.userId, action });
+    return jsonResponse(req, {
+      ok: true, action, configured, delivered: result.delivered, channels: result.channels,
+    });
   }
 
   if (!leadId) return jsonResponse(req, { error: 'Missing leadId' }, 400);

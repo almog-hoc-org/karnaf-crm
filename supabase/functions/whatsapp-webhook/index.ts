@@ -10,7 +10,7 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { pendingReplyDecision } from '../_shared/pending-reply-policy.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
-import { maybeAlertHumanInbound } from '../_shared/inbound-alert.ts';
+import { alertInboundWindowOpened, maybeAlertHumanInbound } from '../_shared/inbound-alert.ts';
 import { archiveWhatsAppMedia } from '../_shared/media-fetch.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { buildHumanHandoffSchedule } from '../_shared/handoff-schedule.ts';
@@ -118,6 +118,22 @@ Deno.serve(async (req) => {
     log.error('inbound_insert_failed', { fn: 'whatsapp-webhook', correlationId, err: String(msgErr) });
     return jsonResponse(req, { error: 'Failed to log inbound message' }, 500);
   }
+
+  // A closed 24-hour window just reopened? Tell the operator now — this is
+  // the perishable part. `lead` was read before the insert, so
+  // `last_inbound_at` here is still the PREVIOUS inbound. Deliberately
+  // ahead of every routing branch (concierge, router, AI, human handoff):
+  // the window opens regardless of who ends up answering.
+  await alertInboundWindowOpened(supabase, {
+    leadId: lead.id,
+    leadName: (lead.full_name as string | null) ?? normalized.senderName ?? null,
+    phone,
+    snippet: normalized.text,
+    channel: 'whatsapp',
+    ownershipMode: lead.ownership_mode as string | null,
+    previousInboundAt: lead.last_inbound_at as string | null,
+    correlationId,
+  });
 
   // Archive WhatsApp media (image/audio/video/document) to private storage
   // out-of-band. Failures are logged but never break the webhook contract.

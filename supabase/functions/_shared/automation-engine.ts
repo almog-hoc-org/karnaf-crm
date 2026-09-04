@@ -14,7 +14,7 @@
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { logAutomationRun } from './automation-log.ts';
-import { notifyTelegram } from './notify-telegram.ts';
+import { notifyOperator } from './operator-alert.ts';
 import { log } from './logger.ts';
 import { canContactLead, type ContactChannel, type ContactGuardLead } from './contact-guard.ts';
 
@@ -285,24 +285,29 @@ async function actionNotifyInternal(action: Record<string, unknown>, ctx: Action
     auditWritten = true;
   }
 
-  // Tier 4.D.3 — forward to Telegram if configured. The notifier
-  // silently no-ops when env vars are missing (NotifyResult.sent=false,
-  // skipped='no_token' / 'no_chat'), so this is safe-by-default.
-  const tg = await notifyTelegram({
-    source: 'automation_engine',
+  // Forward to whichever operator channels are configured. This used to be
+  // Telegram-only, and Telegram was never configured in production, so a
+  // rule whose whole purpose was "tell a human" reliably told nobody.
+  const tg = await notifyOperator(ctx.supabase, {
+    kind: 'automation_notify',
+    // Same rendered text within the hour is the same notice.
+    dedupeKey: `automation_notify:${ctx.contactId ?? 'global'}:${rendered.slice(0, 120)}`,
+    throttleMinutes: 60,
     severity: 'info',
     title: rendered,
+    link: ctx.contactId ? `https://karnaf-crm.vercel.app/leads/${ctx.contactId}` : undefined,
     correlationId: ctx.correlationId,
   });
 
   return {
     type: 'notify_internal',
-    status: auditWritten || tg.sent ? 'ok' : 'skipped',
+    status: auditWritten || tg.delivered ? 'ok' : 'skipped',
     detail: {
       chars: rendered.length,
       audit_written: auditWritten,
-      telegram_sent: tg.sent,
-      telegram_skipped: tg.skipped ?? null,
+      alert_delivered: tg.delivered,
+      alert_throttled: tg.throttled,
+      alert_channels: tg.channels,
     },
   };
 }
