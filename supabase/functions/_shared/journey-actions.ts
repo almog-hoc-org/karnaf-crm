@@ -186,7 +186,13 @@ export async function sendTemplateAction(
   }
   if (!template) {
     if (action.once) await releaseOnceClaim(supabase, ctx.lead.id as string, key, channel);
-    return { type: 'send_template', status: 'failed', reason: 'template_missing', payload: { key } };
+    // A SKIP, not a failure. The journey runner marks a run permanently
+    // `failed` on any failed action, so one template being disabled or
+    // renamed used to kill every run of that journey forever, for every
+    // lead in it — including the later steps that had nothing to do with
+    // that template. The step is skipped, the run carries on, and the
+    // reason is recorded on the run's metadata.
+    return { type: 'send_template', status: 'skipped', reason: 'template_missing_or_inactive', payload: { key } };
   }
 
   const row = template as MessageTemplate;

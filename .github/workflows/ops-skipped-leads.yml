@@ -1,8 +1,6 @@
 name: Ops diagnostic (read-only)
 
-# Temporary, manually-dispatched production diagnostic. Read-only: every
-# statement is a SELECT, and config values are never selected — only key
-# names — so nothing secret reaches the workflow log.
+# Temporary, manually-dispatched production diagnostic. Read-only.
 on:
   workflow_dispatch:
 
@@ -10,22 +8,18 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Query production
+      - name: Ask Meta whether it is still delivering to us
         env:
           SUPABASE_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
           PROJECT_REF: svkzkpgccahwmyflobvn
         run: |
           python3 - <<'EOF'
-          import json, os, time, urllib.request
+          import json, os, time, urllib.error, urllib.request
 
           token = os.environ['SUPABASE_TOKEN']
           ref = os.environ['PROJECT_REF']
 
-          # The first run of this diagnostic lost 8 of 14 queries to
-          # "Connection terminated due to connection timeout" — the pooler
-          # refusing new connections, not slow SQL. Retry with backoff so a
-          # saturated moment doesn't cost us the answer.
-          def q(label, sql, proves='', attempts=4):
+          def q(label, sql, proves='', attempts=5):
               print(f'== {label} ==')
               if proves:
                   print(f'-- proves: {proves}')
@@ -33,111 +27,66 @@ jobs:
                   req = urllib.request.Request(
                       f'https://api.supabase.com/v1/projects/{ref}/database/query',
                       data=json.dumps({'query': sql}).encode(),
-                      headers={
-                          'Authorization': f'Bearer {token}',
-                          'Content-Type': 'application/json',
-                          'User-Agent': 'karnaf-ops/1.0',
-                      }, method='POST')
+                      headers={'Authorization': f'Bearer {token}',
+                               'Content-Type': 'application/json',
+                               'User-Agent': 'karnaf-ops/1.0'}, method='POST')
                   try:
-                      with urllib.request.urlopen(req, timeout=60) as r:
+                      with urllib.request.urlopen(req, timeout=90) as r:
                           rows = json.loads(r.read().decode())
                       print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
                       print()
-                      return
+                      return rows
                   except Exception as e:
                       body = ''
                       try:
                           body = e.read().decode(errors='replace')[:200]
                       except Exception:
                           pass
-                      print(f'-- attempt {i + 1}/{attempts} failed: {e} {body}')
+                      print(f'-- attempt {i + 1}/{attempts}: {e} {body}')
                       if i < attempts - 1:
-                          time.sleep(5 * (i + 1))
+                          time.sleep(8 * (i + 1))
               print('GAVE UP\n')
+              return None
 
-          # ---------- 1. Is intake actually dead? ----------
-          q('message timeline', """
-              select direction,
-                     count(*) as total,
-                     max(created_at) as newest,
-                     min(created_at) as oldest
-              from messages group by direction order by direction""",
-            'whether ANY message (in or out) has been written recently')
+          # The decisive question. Calls the deployed meta-template-status
+          # function server-side with the WhatsApp token already in the
+          # secrets; no credential is echoed back, only Meta's verdict.
+          q('Meta subscription + phone number state', """
+              select net.http_post(
+                url := 'https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/meta-template-status',
+                headers := jsonb_build_object('Content-Type','application/json'),
+                body := jsonb_build_object('action','subscription')
+              ) as request_id""",
+            'kicks off the async call; the response lands in net._http_response')
 
-          q('inbound per day, last 30 days', """
-              select created_at::date as day, count(*) as inbound
-              from messages
-              where direction = 'inbound' and created_at > now() - interval '30 days'
-              group by 1 order by 1 desc""",
-            'the exact day inbound stopped, and whether it tapered or cut off')
+          print('waiting 20s for the async HTTP response to land...')
+          time.sleep(20)
 
-          q('leads created per day, last 21 days', """
-              select created_at::date as day, count(*) as leads
-              from leads where created_at > now() - interval '21 days'
-              group by 1 order by 1 desc""",
-            'whether NON-whatsapp intake (forms, fb) also stopped -> DB vs Meta')
-
-          q('outbound dispatch, last 14 days', """
-              select status, count(*) as rows, max(created_at) as newest
-              from outbound_dispatch
-              where created_at > now() - interval '14 days'
-              group by 1 order by 2 desc""",
-            'if outbound still flowed, the platform was up and only INBOUND died')
-
-          # ---------- 2. Why did the workers stop at 11:30? ----------
-          q('cron run history, last 24h', """
-              select j.jobname, d.status, count(*) as runs,
-                     max(d.start_time) as last_run,
-                     left(max(d.return_message), 300) as sample_message
-              from cron.job_run_details d join cron.job j on j.jobid = d.jobid
-              where d.start_time > now() - interval '24 hours'
-              group by 1, 2 order by 1, 2""",
-            'WHICH workers ran and which failed - heartbeats stop at 11:30 today')
-
-          q('recent failed cron runs verbatim', """
-              select j.jobname, d.start_time, d.status,
-                     left(d.return_message, 400) as message
-              from cron.job_run_details d join cron.job j on j.jobid = d.jobid
-              where d.start_time > now() - interval '24 hours'
-                and d.status <> 'succeeded'
-              order by d.start_time desc limit 20""",
-            'the exact failure text - net.http_post errors, timeouts, 401s')
-
-          q('http responses from the cron callers', """
-              select status_code, count(*) as rows, max(created) as newest,
-                     left(max(content), 200) as sample
+          q('the Meta answer', """
+              select status_code, left(content, 1500) as content, created
               from net._http_response
-              where created > now() - interval '24 hours'
-              group by 1 order by 3 desc""",
-            'whether the edge functions answered the cron calls, and with what')
+              order by created desc limit 3""",
+            'subscribed_apps.data empty => the app is no longer subscribed to the WABA')
 
-          # ---------- 3. The empty-chat theory ----------
-          q('activities composition for the reported lead', """
-              select activity_type, count(*) as rows,
-                     min(occurred_at) as oldest, max(occurred_at) as newest
+          q('cron run history, last 6h', """
+              select j.jobname, d.status, count(*) as runs, max(d.start_time) as last_run,
+                     left(max(d.return_message), 200) as sample
+              from cron.job_run_details d join cron.job j on j.jobid = d.jobid
+              where d.start_time > now() - interval '6 hours'
+              group by 1,2 order by 1,2""",
+            'which workers actually fire')
+
+          q('flood cleanup result', """
+              select event_type, count(*) as rows
+              from lead_events
+              where event_type in ('sla_breach','state_transition_rejected','manual_return_to_ai')
+              group by 1 order by 2 desc""",
+            'migration 123 should have cut these to at most 5 per lead')
+
+          q('activities for the reported lead', """
+              select activity_type, count(*) as rows
               from activities
               where contact_id = '3a4ead6c-a1a7-438b-96c3-b107fd30668f'
               group by 1 order by 2 desc""",
-            'THE root cause: sla_breach dominating a 400-row window hid the chat')
-
-          q('lead_events flood, top types last 30 days', """
-              select event_type, count(*) as rows, count(distinct lead_id) as leads
-              from lead_events
-              where created_at > now() - interval '30 days'
-              group by 1 order by 2 desc limit 15""",
-            'the scale of the flood across the whole system')
-
-          q('worst affected leads by event volume', """
-              select lead_id, count(*) as events
-              from lead_events
-              where created_at > now() - interval '30 days'
-              group by 1 order by 2 desc limit 10""",
-            'how many leads have a chat screen that is already buried')
-
-          q('table sizes', """
-              select 'activities' as t, count(*) as rows from activities
-              union all select 'lead_events', count(*) from lead_events
-              union all select 'messages', count(*) from messages
-              union all select 'conversations', count(*) from conversations""",
-            'how big the one-time cleanup has to be')
+            'the chat should now fit inside the 400-row window')
           EOF
