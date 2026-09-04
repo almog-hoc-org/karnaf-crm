@@ -10,7 +10,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LeadsTableSkeleton } from '@/components/Skeleton';
 import { useToast } from '@/components/Toast';
 import { useAuth } from '@/auth/auth-context';
-import { describeLeadOrigin, formatRelative, STATUS_LABELS, HEAT_LABELS, OWNERSHIP_LABELS, SOURCE_LABELS } from '@/lib/format';
+import { describeLeadOrigin, formatRelative, STATUS_LABELS, HEAT_LABELS, OWNERSHIP_LABELS, SOURCE_LABELS, whatsappHref } from '@/lib/format';
 import type { IntakeSegment, LeadHeat, LeadRow, LeadStatus, OwnershipMode } from '@/lib/types';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
@@ -248,7 +248,7 @@ function LeadWorkCard({
           ) : null}
           {lead.phone ? (
             <a
-              href={`https://wa.me/${lead.phone.replace(/\D/g, '')}`}
+              href={whatsappHref(lead.phone) ?? '#'}
               target="_blank"
               rel="noopener noreferrer"
               className="kf-btn kf-btn-ghost justify-center"

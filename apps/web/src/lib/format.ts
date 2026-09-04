@@ -326,11 +326,42 @@ export function formatRelative(value: string | null | undefined, now = Date.now(
   const ts = Date.parse(value);
   if (!Number.isFinite(ts)) return '—';
   const diffMs = now - ts;
+  // Future timestamps are real and common here — a scheduled follow-up, a
+  // meeting next week, a snooze-until. The old code took `now - ts`, got a
+  // negative number, and every one of them rendered as "הרגע", so a task due
+  // in three days looked like it had just happened. Render the direction.
+  if (diffMs < 0) return `בעוד ${describeSpan(-diffMs)}`;
   const minutes = Math.round(diffMs / 60000);
   if (minutes < 1) return 'הרגע';
-  if (minutes < 60) return `לפני ${minutes} ד׳`;
+  return `לפני ${describeSpan(diffMs)}`;
+}
+
+function describeSpan(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60000));
+  if (minutes < 60) return `${minutes} ד׳`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `לפני ${hours} שעות`;
+  if (hours < 24) return `${hours} שעות`;
   const days = Math.round(hours / 24);
-  return `לפני ${days} ימים`;
+  return `${days} ימים`;
+}
+
+// Israeli numbers reach the CRM in every shape a human can type: 050-123-4567,
+// +972 50 123 4567, 00972…, 972…. wa.me accepts exactly one of those — digits
+// in full international form, no plus. Two of the three screens used to strip
+// non-digits and hand wa.me a leading 0, which resolves to nothing.
+export function normalizePhoneForWhatsApp(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  const compact = phone.replace(/[^\d+]/g, '');
+  if (compact.startsWith('+')) return compact.slice(1).replace(/\D/g, '') || null;
+  const digits = compact.replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('00')) return digits.slice(2) || null;
+  if (digits.startsWith('972')) return digits;
+  if (digits.startsWith('0')) return `972${digits.slice(1)}`;
+  return digits;
+}
+
+export function whatsappHref(phone: string | null | undefined): string | null {
+  const normalized = normalizePhoneForWhatsApp(phone);
+  return normalized ? `https://wa.me/${normalized}` : null;
 }

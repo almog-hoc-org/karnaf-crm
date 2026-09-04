@@ -11,7 +11,7 @@ import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/component
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
-import { describeLeadOrigin, formatRelative, PRODUCT_LABELS } from '@/lib/format';
+import { describeLeadOrigin, formatRelative, PRODUCT_LABELS, whatsappHref } from '@/lib/format';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import type { AttentionRow, IntakeSegment, LeadHeat } from '@/lib/types';
 
@@ -949,19 +949,7 @@ function isWhatsAppRelevant(row: AttentionRow) {
 
 function whatsappConversationUrl(row: AttentionRow): string | null {
   if (!row.lead_phone || !isWhatsAppRelevant(row)) return null;
-  const normalized = normalizePhoneForWhatsApp(row.lead_phone);
-  return normalized ? `https://wa.me/${normalized}` : null;
-}
-
-function normalizePhoneForWhatsApp(phone: string): string | null {
-  const compact = phone.replace(/[^\d+]/g, '');
-  if (compact.startsWith('+')) return compact.slice(1).replace(/\D/g, '') || null;
-  const digits = compact.replace(/\D/g, '');
-  if (!digits) return null;
-  if (digits.startsWith('00')) return digits.slice(2) || null;
-  if (digits.startsWith('972')) return digits;
-  if (digits.startsWith('0')) return `972${digits.slice(1)}`;
-  return digits;
+  return whatsappHref(row.lead_phone);
 }
 
 function formatDuration(minutes: number) {

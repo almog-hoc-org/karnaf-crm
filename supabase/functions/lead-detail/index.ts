@@ -21,7 +21,12 @@ Deno.serve(async (req) => {
   const [leadRes, conversationsRes, messagesRes, queueRes, tasksRes, eventsRes, dealsRes, meetingsRes, programMemberRes, activitiesRes] = await Promise.all([
     supabase.from('leads').select('*').eq('id', leadId).single(),
     supabase.from('conversations').select('*').eq('lead_id', leadId),
-    supabase.from('messages').select('*').eq('lead_id', leadId).order('created_at', { ascending: true }).limit(200),
+    // Newest 400, not oldest 200. Ordered DESC here and reversed below so
+    // the returned array stays chronological: a long thread used to return
+    // its FIRST 200 messages, which hid the recent conversation entirely
+    // and made `messages[messages.length - 1]` (the operator-guidance
+    // "last message" heuristic) read a months-old line as the latest.
+    supabase.from('messages').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(400),
     supabase.from('work_queue').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(50),
     supabase.from('lead_tasks').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(50),
     supabase.from('lead_events').select('*').eq('lead_id', leadId).order('created_at', { ascending: false }).limit(100),
@@ -41,7 +46,13 @@ Deno.serve(async (req) => {
     // legacy source tables into this one. Returned alongside the legacy
     // arrays for one release so the new feed can be A/B verified before
     // the frontend cuts over (Tier 0.F) and the legacy arrays go away.
-    supabase.from('activities').select('*').eq('contact_id', leadId).order('occurred_at', { ascending: false }).limit(400),
+    // The activity feed hides these two event types anyway (they are pure
+    // machine chatter: one row per inbound message and one per provider
+    // status callback), but they still consumed the 400-row window and
+    // pushed real history out of it. Excluded at the source.
+    supabase.from('activities').select('*').eq('contact_id', leadId)
+      .not('title', 'in', '("inbound_message_received","provider_message_status_updated")')
+      .order('occurred_at', { ascending: false }).limit(400),
   ]);
 
   if (leadRes.error) return jsonResponse(req, { error: leadRes.error.message }, 404);
@@ -82,7 +93,9 @@ Deno.serve(async (req) => {
     ok: true,
     lead: leadRes.data,
     conversations: conversationsRes.data ?? [],
-    messages: messagesRes.data ?? [],
+    // Reversed back to chronological order — the query above fetches
+    // newest-first to get the right 400 rows, the UI renders oldest-first.
+    messages: (messagesRes.data ?? []).slice().reverse(),
     queueItems: queueRes.data ?? [],
     tasks: tasksRes.data ?? [],
     events: eventsRes.data ?? [],

@@ -111,79 +111,35 @@ const messages: MessageRow[] = [
   },
 ];
 
-// Tier 0.F.1 — the chat/activity tabs read from `activities` rather than the
-// individual messages/events/tasks/queue arrays. Mirror the test's two
-// outbound/inbound messages into activities so the timeline can render.
-const activities: import('@/lib/types').ActivityRow[] = [
-  {
-    id: 'a1',
-    contact_id: 'lead-1',
-    occurred_at: '2026-04-28T09:30:00Z',
-    activity_type: 'message',
-    actor_type: 'lead',
-    conversation_id: 'conv-1',
-    deal_id: null,
-    meeting_id: null,
-    actor_user_id: null,
-    title: 'דנה',
-    body: 'שלום, אשמח לפרטים',
-    status: null,
-    priority_level: null,
-    due_at: null,
-    completed_at: null,
-    direction: 'inbound',
-    source_table: 'messages',
-    source_id: 'm1',
-    payload: {},
-    created_at: '2026-04-28T09:30:00Z',
-  },
-  {
-    id: 'a2',
-    contact_id: 'lead-1',
-    occurred_at: '2026-04-28T09:31:00Z',
-    activity_type: 'message',
-    actor_type: 'ai',
-    conversation_id: 'conv-1',
-    deal_id: null,
-    meeting_id: null,
-    actor_user_id: null,
-    title: 'AI',
-    body: 'היי דנה, נשמח לעזור.',
-    status: null,
-    priority_level: null,
-    due_at: null,
-    completed_at: null,
-    direction: 'outbound',
-    source_table: 'messages',
-    source_id: 'm2',
-    payload: { provider_message_id: 'wa-1', provider_status: 'delivered' },
-    created_at: '2026-04-28T09:31:00Z',
-  },
-  // A system event — must render in the "פעילות" tab only, never
-  // between the chat bubbles.
-  {
-    id: 'a3',
-    contact_id: 'lead-1',
-    occurred_at: '2026-04-28T09:32:00Z',
-    activity_type: 'event',
-    actor_type: 'system',
-    conversation_id: 'conv-1',
-    deal_id: null,
-    meeting_id: null,
-    actor_user_id: null,
-    title: 'sla_breach',
-    body: null,
-    status: null,
-    priority_level: null,
-    due_at: null,
-    completed_at: null,
-    direction: null,
-    source_table: 'lead_events',
-    source_id: 'e1',
-    payload: {},
-    created_at: '2026-04-28T09:32:00Z',
-  },
-];
+// This fixture deliberately reproduces the production failure that made the
+// chat screen render empty: `activities` holds NOTHING but the sla_breach
+// flood (the sla-worker wrote one every 10 minutes), and not a single
+// message row. The previous version of this file hand-mirrored the two
+// messages into `activities`, which is exactly why the test suite stayed
+// green while the real screen showed "עוד אין הודעות בשיחה". The chat now
+// renders from `messages`, so these assertions only pass if that holds.
+const activities: import('@/lib/types').ActivityRow[] = Array.from({ length: 400 }, (_, i) => ({
+  id: `flood-${i}`,
+  contact_id: 'lead-1',
+  occurred_at: new Date(Date.parse('2026-04-28T09:32:00Z') + i * 600_000).toISOString(),
+  activity_type: 'event' as const,
+  actor_type: 'system',
+  conversation_id: 'conv-1',
+  deal_id: null,
+  meeting_id: null,
+  actor_user_id: null,
+  title: 'sla_breach',
+  body: null,
+  status: null,
+  priority_level: null,
+  due_at: null,
+  completed_at: null,
+  direction: null,
+  source_table: 'lead_events',
+  source_id: `e${i}`,
+  payload: {},
+  created_at: new Date(Date.parse('2026-04-28T09:32:00Z') + i * 600_000).toISOString(),
+}));
 
 const queueItems: QueueRow[] = [
   {
@@ -323,9 +279,10 @@ describe('LeadDetailPage', () => {
     // Chat tab (default): bubbles yes, event no.
     expect(await screen.findByText('שלום, אשמח לפרטים')).toBeInTheDocument();
     expect(screen.queryByText('חריגת זמן מענה')).not.toBeInTheDocument();
-    // Switch to the activity tab: event visible (labeled Hebrew), bubbles gone.
+    // Switch to the activity tab: events visible (labeled Hebrew), bubbles
+    // gone. findAllBy — the fixture holds the whole 400-row breach flood.
     fireEvent.click(screen.getByRole('tab', { name: /פעילות/ }));
-    expect(await screen.findByText('חריגת זמן מענה')).toBeInTheDocument();
+    expect((await screen.findAllByText('חריגת זמן מענה')).length).toBeGreaterThan(0);
     expect(screen.queryByText('שלום, אשמח לפרטים')).not.toBeInTheDocument();
     // Back to chat.
     fireEvent.click(screen.getByRole('tab', { name: 'שיחה' }));

@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, Navigate, RouterProvider, useParams } from 'react-router-dom';
 import { AuthProvider } from '@/auth/AuthProvider';
 import { ProtectedRoute } from '@/auth/ProtectedRoute';
 import { LoginPage } from '@/auth/LoginPage';
@@ -13,6 +13,13 @@ import { Spinner } from '@/components/Spinner';
 const HomeRoute = lazy(() => import('@/pages/HomeRoute').then((m) => ({ default: m.HomeRoute })));
 const LeadsPage = lazy(() => import('@/pages/LeadsPage').then((m) => ({ default: m.LeadsPage })));
 const LeadDetailPage = lazy(() => import('@/pages/LeadDetailPage').then((m) => ({ default: m.LeadDetailPage })));
+// Remounts LeadDetailPage whenever the route's :leadId changes. See the
+// route entry below for why that matters.
+function KeyedLeadDetailPage() {
+  const { leadId } = useParams();
+  return <LeadDetailPage key={leadId} />;
+}
+
 const QueuePage = lazy(() => import('@/pages/QueuePage').then((m) => ({ default: m.QueuePage })));
 const InboxPage = lazy(() => import('@/pages/InboxPage').then((m) => ({ default: m.InboxPage })));
 const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
@@ -53,7 +60,13 @@ const router = createBrowserRouter([
         children: [
           { path: '/', element: <Suspense fallback={<PageFallback />}><HomeRoute /></Suspense> },
           { path: '/leads', element: <Suspense fallback={<PageFallback />}><LeadsPage /></Suspense> },
-          { path: '/leads/:leadId', element: <Suspense fallback={<PageFallback />}><LeadDetailPage /></Suspense> },
+          // `key` on the element is load-bearing. React Router reuses the same
+          // component instance when only the :leadId param changes, so every
+          // local piece of state survived the navigation — including the reply
+          // draft and the conversationId it was about to be sent with. Typing a
+          // reply to lead A, jumping to lead B and hitting Enter sent A's text
+          // to B's conversation. Keying on the id forces a fresh mount.
+          { path: '/leads/:leadId', element: <Suspense fallback={<PageFallback />}><KeyedLeadDetailPage /></Suspense> },
           { path: '/inbox', element: <Suspense fallback={<PageFallback />}><InboxPage /></Suspense> },
           { path: '/queue', element: <Suspense fallback={<PageFallback />}><QueuePage /></Suspense> },
           { path: '/analytics', element: <Suspense fallback={<PageFallback />}><AnalyticsPage /></Suspense> },
