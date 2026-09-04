@@ -5,6 +5,7 @@ import { fetchQueueList, postAdminAction, postQueueResolve } from '@/lib/api';
 import { MEETING_STATUS_LABELS, MEETING_TYPE_LABELS, QUEUE_LABELS, formatDateTime, formatRelative } from '@/lib/format';
 import { HeatBadge, OwnershipBadge } from '@/components/Badge';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { LoadFailed } from '@/components/LoadFailed';
 import { useToast } from '@/components/Toast';
 import { t } from '@/lib/i18n';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
@@ -118,6 +119,10 @@ export function QueuePage() {
           <tbody>
             {q.isLoading ? (
               <tr><td colSpan={8} className="p-6 text-center text-slate-500">{t('loading')}</td></tr>
+            ) : q.error && !q.data?.length ? (
+              <tr><td colSpan={8} className="p-0">
+                <LoadFailed error={q.error} onRetry={() => void q.refetch()} retrying={q.isFetching} />
+              </td></tr>
             ) : q.data && q.data.length > 0 ? (
               q.data.map((row) => {
                 const sla = computeSlaState(row.queue_type, row.created_at);

@@ -9,6 +9,7 @@ import { SnoozePopover } from '@/components/SnoozePopover';
 import { useAuth } from '@/auth/auth-context';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { EmptyState } from '@/components/EmptyState';
+import { LoadFailed } from '@/components/LoadFailed';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import { describeLeadOrigin, formatRelative, PRODUCT_LABELS, whatsappHref } from '@/lib/format';
@@ -407,6 +408,10 @@ export function InboxPage() {
       <section className="space-y-3">
         {q.isLoading ? (
           <div className="kf-card p-10 text-center text-slate-500">טוען משימות...</div>
+        ) : q.error && rows.length === 0 ? (
+          // A failed fetch is not an empty inbox. Showing "🎉 אין טיפול
+          // פתוח" over a 500 tells the operator to go home while leads wait.
+          <LoadFailed error={q.error} onRetry={() => void refetchInbox()} retrying={q.isFetching} />
         ) : rows.length === 0 ? (
           <EmptyState
             icon="🎉"

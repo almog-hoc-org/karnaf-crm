@@ -8,6 +8,7 @@ import { BulkActionBar } from '@/components/BulkActionBar';
 import { QuickClassifyPopover } from '@/components/QuickClassifyPopover';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { LeadsTableSkeleton } from '@/components/Skeleton';
+import { LoadFailed } from '@/components/LoadFailed';
 import { useToast } from '@/components/Toast';
 import { useAuth } from '@/auth/auth-context';
 import { describeLeadOrigin, formatRelative, STATUS_LABELS, HEAT_LABELS, OWNERSHIP_LABELS, SOURCE_LABELS, whatsappHref } from '@/lib/format';
@@ -1141,6 +1142,8 @@ export function LeadsPage() {
         </div>
         {q.isLoading ? (
           <LeadsTableSkeleton rows={6} />
+        ) : q.error && !q.data ? (
+          <LoadFailed error={q.error} onRetry={() => void q.refetch()} retrying={q.isFetching} />
         ) : q.data && q.data.leads.length > 0 ? (
           <div className="divide-y divide-slate-100">
             {q.data.leads.map((lead) => (
