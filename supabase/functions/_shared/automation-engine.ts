@@ -113,6 +113,7 @@ export async function dispatchAction(action: Record<string, unknown>, ctx: Actio
       case 'journey_start': return await actionJourneyStart(action, ctx);
       case 'assign_partner': return await actionAssignPartner(action, ctx);
       case 'add_to_email_list': return await actionAddToEmailList(action, ctx);
+      case 'transition_status': return await actionTransitionStatus(action, ctx);
       default:
         return { type, status: 'skipped', detail: `unknown action type: ${type}` };
     }
@@ -310,6 +311,31 @@ async function actionNotifyInternal(action: Record<string, unknown>, ctx: Action
       alert_channels: tg.channels,
     },
   };
+}
+
+// Documented in migration 065's schema comment as a supported action type
+// ({"type":"transition_status","to":"...","reason":"..."}) but never
+// implemented — a rule using it dispatched to `default` and was silently
+// skipped, which reads in the audit log as "the rule ran fine".
+async function actionTransitionStatus(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const to = action.to as string | undefined;
+  if (!to) return { type: 'transition_status', status: 'skipped', detail: 'missing to' };
+  if (!ctx.contactId) return { type: 'transition_status', status: 'skipped', detail: 'no contactId' };
+
+  // The RPC enforces the state machine and returns NULL for an illegal
+  // transition — that is a skip, not a failure: the rule asked for
+  // something the lead's current status does not allow.
+  const { data, error } = await ctx.supabase.rpc('transition_lead_status', {
+    p_lead_id: ctx.contactId,
+    p_target: to,
+    p_actor_type: 'system',
+    p_reason: (action.reason as string | undefined) ?? 'automation_rule',
+  });
+  if (error) return { type: 'transition_status', status: 'failed', detail: error.message };
+  if (!data) {
+    return { type: 'transition_status', status: 'skipped', detail: `illegal transition to ${to}` };
+  }
+  return { type: 'transition_status', status: 'ok', detail: { to } };
 }
 
 async function actionCreateTask(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
