@@ -39,6 +39,7 @@ const BroadcastsPage = lazy(() => import('@/pages/BroadcastsPage').then((m) => (
 const AdminHubPage = lazy(() => import('@/pages/AdminHubPage').then((m) => ({ default: m.AdminHubPage })));
 const WhatsAppRouterOptionsPage = lazy(() => import('@/pages/WhatsAppRouterOptionsPage').then((m) => ({ default: m.WhatsAppRouterOptionsPage })));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const OpsStatusPage = lazy(() => import('@/pages/OpsStatusPage').then((m) => ({ default: m.OpsStatusPage })));
 const PromptVariantsPage = lazy(() => import('@/pages/PromptVariantsPage').then((m) => ({ default: m.PromptVariantsPage })));
 const PermissionsHelpPage = lazy(() => import('@/pages/PermissionsHelpPage').then((m) => ({ default: m.PermissionsHelpPage })));
 
@@ -124,6 +125,7 @@ const router = createBrowserRouter([
           { path: '/admin', element: page(<AdminHubPage />, ADMIN) },
           { path: '/admin/whatsapp-router', element: page(<WhatsAppRouterOptionsPage />, ADMIN) },
           { path: '/admin/settings', element: page(<SettingsPage />, ADMIN) },
+          { path: '/admin/status', element: page(<OpsStatusPage />, ADMIN) },
           { path: '/prompts', element: page(<PromptVariantsPage />, ADMIN) },
           { path: '/help/permissions', element: page(<PermissionsHelpPage />) },
           { path: '*', element: <Navigate to="/" replace /> },
