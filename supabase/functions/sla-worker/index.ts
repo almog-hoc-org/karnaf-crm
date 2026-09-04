@@ -420,12 +420,26 @@ Deno.serve(async (req) => {
   }
 
   const ok = queryErrors.length === 0;
-  if (ok) {
-    await supabase.from('system_heartbeats').upsert({
-      name: 'sla_worker',
-      last_ok_at: new Date().toISOString(),
-      last_run_id: correlationId,
-      metadata: { counters },
+  // Written on every completed run, degraded or not. Gating it on zero
+  // query errors meant one transient DB hiccup stopped the heartbeat, and
+  // the dashboard declared the scheduler dead while it kept ticking every
+  // ten minutes. A failing query alerts (below); it does not fake an
+  // outage.
+  await supabase.from('system_heartbeats').upsert({
+    name: 'sla_worker',
+    last_ok_at: new Date().toISOString(),
+    last_run_id: correlationId,
+    metadata: { counters, queryErrors, degraded: !ok },
+  });
+  if (!ok) {
+    await notifyOperator(supabase, {
+      kind: 'sla_worker_degraded',
+      dedupeKey: `sla_worker_degraded:${queryErrors.map((e) => e.stage).sort().join(',')}`,
+      throttleMinutes: 60,
+      severity: 'error',
+      title: 'ניטור ה-SLA רץ אך חלק מהשאילתות נכשלו',
+      lines: queryErrors.map((e) => `${e.stage}: ${e.message.slice(0, 160)}`),
+      correlationId,
     });
   }
   log.info('sla_worker_run', { fn: 'sla-worker', correlationId, counters, queryErrors });

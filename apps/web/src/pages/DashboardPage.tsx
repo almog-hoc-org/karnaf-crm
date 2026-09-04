@@ -40,7 +40,13 @@ export function DashboardPage() {
     { name: 'ai_watchdog', label: 'שומר AI', maxAgeMs: 20 * 60_000 },
     { name: 'nightly_jobs', label: 'עבודות לילה', maxAgeMs: 26 * 60 * 60_000 },
   ];
-  const staleWorkers = heartbeatsQ.data
+  // An EMPTY result is not four dead workers — it is far more likely an RLS
+  // filter or a failed request, and rendering "כל התהליכים לא רצים" over a
+  // perfectly healthy system is worse than saying nothing, because it
+  // teaches the operator to ignore the banner. Distinguish the two.
+  const heartbeatsUnavailable = !!heartbeatsQ.error
+    || (Array.isArray(heartbeatsQ.data) && heartbeatsQ.data.length === 0);
+  const staleWorkers = heartbeatsQ.data && !heartbeatsUnavailable
     ? WATCHED_WORKERS.filter((w) => {
       const hb = heartbeatsQ.data!.find((h) => h.name === w.name);
       if (!hb) return true;
@@ -52,6 +58,15 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {heartbeatsUnavailable ? (
+        <section className="kf-tone-warning rounded-xl p-4 text-sm ring-1 ring-inset" role="status">
+          <strong className="block text-base">מצב התהליכים המתוזמנים לא זמין</strong>
+          <p className="mt-1">
+            לא הצלחנו לקרוא את דיווחי החיים של העובדים. ייתכן שזו תקלת הרשאות או תקלת רשת —
+            זה לא אומר שהתהליכים אינם רצים.
+          </p>
+        </section>
+      ) : null}
       {heartbeatStale ? (
         <section className="kf-tone-danger rounded-xl p-4 text-sm ring-1 ring-inset" role="alert">
           <div className="flex items-baseline justify-between gap-3">

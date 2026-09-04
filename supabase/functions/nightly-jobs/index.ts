@@ -13,6 +13,7 @@ import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { notifyOperator } from '../_shared/operator-alert.ts';
 import { runReengagement } from '../_shared/reengagement.ts';
 
 type SupabaseClientLike = ReturnType<typeof getServiceSupabase>;
@@ -96,13 +97,35 @@ Deno.serve(async (req) => {
   // Surface a non-2xx if any guarded job errored after claiming. Skipped
   // (already-ran-today) is NOT an error — that's the idempotency working.
   const anyErrored = [decay, purge, compact, reengage].some((r) => r.error);
-  if (!anyErrored) {
-    await supabase.from('system_heartbeats').upsert({
-      name: 'nightly_jobs',
-      last_ok_at: new Date().toISOString(),
-      last_run_id: correlationId,
-      metadata: summary,
+
+  // The heartbeat answers "is the scheduler firing and the worker
+  // completing?", so it is written whenever the run finished — errors and
+  // all, recorded in metadata. It used to be written only when all four
+  // jobs succeeded, which meant a single bad night pinned the dashboard's
+  // red "תהליכים מתוזמנים לא רצים" banner permanently, describing a worker
+  // that was in fact running on schedule every night. A job that actually
+  // failed is an alert, not a banner.
+  await supabase.from('system_heartbeats').upsert({
+    name: 'nightly_jobs',
+    last_ok_at: new Date().toISOString(),
+    last_run_id: correlationId,
+    metadata: { ...summary, degraded: anyErrored },
+  });
+
+  if (anyErrored) {
+    const failed = Object.entries(summary)
+      .filter(([, r]) => (r as { error?: unknown }).error)
+      .map(([name, r]) => `${name}: ${String((r as { error?: unknown }).error).slice(0, 160)}`);
+    await notifyOperator(supabase, {
+      kind: 'nightly_jobs_failed',
+      dedupeKey: `nightly_jobs_failed:${failed.map((f) => f.split(':')[0]).join(',')}`,
+      throttleMinutes: 12 * 60,
+      severity: 'error',
+      title: 'עבודות הלילה — חלק מהמשימות נכשלו',
+      lines: failed,
+      correlationId,
     });
   }
+
   return jsonResponse(req, { ok: !anyErrored, correlationId, summary }, anyErrored ? 500 : 200);
 });
