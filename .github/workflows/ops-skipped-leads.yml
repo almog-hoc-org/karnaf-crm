@@ -48,38 +48,26 @@ jobs:
               print('GAVE UP\n')
               return None
 
-          # ── Repair: drain cron.job_run_details ─────────────────────────
-          # Too large for one statement (the migration attempt died on
-          # statement_timeout), so: find the newest row older than 14 days by
-          # walking the primary key backwards from the top — that touches only
-          # the recent ~50k rows — then delete everything at or below it in
-          # PK-ordered batches, each batch its own API call with its own
-          # timeout. Idempotent; once the table is small this is a no-op.
-          cutoff = q('cron history: cutoff runid', """
-              select runid from cron.job_run_details
-              where end_time < now() - interval '14 days'
-              order by runid desc limit 1""",
-            'newest row that is old enough to delete')
-          cutoff_id = (cutoff or [{}])[0].get('runid') if cutoff else None
-          if cutoff_id:
-              total = 0
-              for i in range(400):
-                  rows = q(f'cron history: drain batch {i + 1}', f"""
-                      with d as (
-                        delete from cron.job_run_details
-                        where runid in (
-                          select runid from cron.job_run_details
-                          where runid <= {int(cutoff_id)}
-                          order by runid limit 20000)
-                        returning 1)
-                      select count(*) as deleted from d""", attempts=3)
-                  n = int((rows or [{}])[0].get('deleted') or 0) if rows else 0
-                  total += n
-                  if n == 0:
-                      break
-              print(f'== cron history drained: {total} rows deleted ==\n')
-          else:
-              print('== cron history: nothing older than 14 days ==\n')
+          # ── Repair: drain cron.job_run_details from INSIDE Postgres ────
+          # Every attempt through the Management API dies on its statement
+          # timeout — even the cutoff lookup. pg_cron's own background worker
+          # has no such limit, so schedule the drain as a job: 20k rows a
+          # minute, PK-ordered so each batch is an index walk, until nothing
+          # older than 14 days remains. Scheduling is one cheap statement.
+          # Unscheduled by hand once the table is small (see runbook).
+          q('schedule the in-database drain', """
+              select case
+                when exists (select 1 from cron.job where jobname = 'karnaf_drain_cron_history_once')
+                  then 'already scheduled'
+                else cron.schedule('karnaf_drain_cron_history_once', '* * * * *', $j$
+                  delete from cron.job_run_details
+                  where runid in (
+                    select runid from cron.job_run_details
+                    where end_time < now() - interval '14 days'
+                    order by runid limit 20000)
+                $j$)::text
+              end as drain_job""",
+            'runs inside Postgres, immune to the API timeout', attempts=8)
 
           # ── Repair: pg_net's worker ─────────────────────────────────────
           # Every net.http_post since ~02:30 UTC sits in the queue with no
@@ -94,7 +82,7 @@ jobs:
             'how many requests are stuck')
 
           q('restart pg_net worker', """select net.worker_restart() as restarted""",
-            'pg_net documented remedy for a wedged worker; no data touched')
+            'pg_net documented remedy for a wedged worker; no data touched', attempts=10)
 
           q('cron history size', """
               select count(*) as rows, min(start_time) as oldest, max(start_time) as newest
@@ -168,13 +156,15 @@ jobs:
               select name, last_ok_at, now() - last_ok_at as age from system_heartbeats order by name""",
             'workers writing again = the database is back')
 
-          q('cron run history, last 6h', """
-              select j.jobname, d.status, count(*) as runs, max(d.start_time) as last_run,
-                     left(max(d.return_message), 200) as sample
-              from cron.job_run_details d join cron.job j on j.jobid = d.jobid
-              where d.start_time > now() - interval '6 hours'
-              group by 1,2 order by 1,2""",
-            'which workers actually fire')
+          q('is pg_cron itself firing (newest 300 runs by PK)', """
+              with recent as (
+                select runid, jobid, status, start_time, left(return_message, 120) as msg
+                from cron.job_run_details order by runid desc limit 300)
+              select j.jobname, r.status, count(*) as runs, max(r.start_time) as last_run,
+                     max(r.msg) as sample
+              from recent r join cron.job j on j.jobid = r.jobid
+              group by 1,2 order by 4 desc""",
+            'index walk from the top of the PK — cheap even on a huge table')
 
           q('flood cleanup result', """
               select event_type, count(*) as rows
