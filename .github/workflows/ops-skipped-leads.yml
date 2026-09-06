@@ -48,6 +48,33 @@ jobs:
               print('GAVE UP\n')
               return None
 
+          # ── Repair: pg_net's worker ─────────────────────────────────────
+          # Every net.http_post since ~02:30 UTC sits in the queue with no
+          # response (status_code null). pg_net delivers HTTP from a single
+          # background worker; when it wedges, every cron that calls an edge
+          # function silently stops — which is exactly the heartbeat pattern.
+          # worker_restart() is pg_net's documented remedy and touches no data.
+          q('pg_net queue depth BEFORE restart', """
+              select (select count(*) from net.http_request_queue) as queued,
+                     (select count(*) from net._http_response where status_code is null) as unanswered,
+                     (select extversion from pg_extension where extname = 'pg_net') as pg_net_version""",
+            'how many requests are stuck')
+
+          q('restart pg_net worker', """select net.worker_restart() as restarted""",
+            'pg_net documented remedy for a wedged worker; no data touched')
+
+          q('cron history size', """
+              select count(*) as rows, min(start_time) as oldest, max(start_time) as newest
+              from cron.job_run_details""",
+            'is the unpurged cron log the load on the instance')
+
+          q('enabled time-based rules', """
+              select code, trigger_event, enabled, conditions
+              from automation_rules
+              where source = 'engine' and trigger_event in ('time.elapsed','deal.investor_open')
+              order by code""",
+            'which rules the dry-run evaluated (tally said 3, plan said 5)')
+
           # The decisive question. Calls the deployed meta-template-status
           # function server-side with the WhatsApp token already in the
           # secrets; no credential is echoed back, only Meta's verdict.
@@ -83,8 +110,13 @@ jobs:
               ) as request_id""",
             'asks the tick for its dry-run tally; read back from heartbeats below')
 
-          print('waiting 45s for the tick to finish...')
-          time.sleep(45)
+          print('waiting 75s for the tick to finish...')
+          time.sleep(75)
+
+          q('pg_net queue depth AFTER restart', """
+              select (select count(*) from net.http_request_queue) as queued,
+                     (select count(*) from net._http_response where created > now() - interval '5 minutes' and status_code is not null) as answered_last_5m""",
+            'answered_last_5m > 0 means the worker is delivering again')
 
           q('dry-run tally', """
               select name, last_ok_at, metadata->'dryRun' as dry_run,
