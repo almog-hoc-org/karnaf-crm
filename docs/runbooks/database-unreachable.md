@@ -64,3 +64,39 @@ HTTP 544 — Failed to run sql query: Connection terminated due to connection ti
    בלי חפירה בלוגים.
 3. לוודא ש-`system_heartbeats` מתעדכנים שוב (אמורים להיות בני דקות).
 4. להריץ את הדוח היבש של מנוע הזמן לפני שמדליקים כללי אוטומציה.
+
+
+## עדכון 2026-09-06 — התקלה עדיין פעילה, והתמונה חדה יותר
+
+מדידה ב-06:16–07:03 UTC, אחרי שהבעלים דיווח שטיפל בדיסק/חיבורים:
+
+| ממצא | ראיה |
+|---|---|
+| כל העובדים עצרו ב-**02:30 UTC** | `system_heartbeats`: sla_worker 02:30, automation_tick 02:30, ai_watchdog 02:35 |
+| pg_net לא מוסר בקשות | `net.http_request_queue` = 13 ממתינות, 0 נענו ב-5 דקות; `net._http_response` עם `status_code null` |
+| אפילו `net.worker_restart()` נכשל | 5 ניסיונות, כולם 544 |
+| `cron.job_run_details` לא נגיש | כל שאילתה עליו — 544; ניקוי במיגרציה 125 מת על statement_timeout |
+| טבלאות קטנות עונות | heartbeats, operator_alerts, automation_rules — בניסיון ראשון או שני |
+
+**מסקנה:** זה לא דיסק בלבד ולא שאילתה איטית אחת. עובד הרקע של pg_net תקוע,
+pg_cron כנראה ממשיך לתזמן, והפולר של החיבורים מסרב לסירוגין. אין דרך לתקן את
+זה דרך ה-Management API — כל ניסיון תיקון עצמו נופל על אותה תקלה.
+
+### הפעולה היחידה שנשארה — Restart Project
+
+👉 <https://supabase.com/dashboard/project/svkzkpgccahwmyflobvn/settings/general>
+→ **Restart project** (בתחתית, קטע Danger zone / Restart).
+
+זה מפעיל מחדש את Postgres ואת עובדי הרקע (pg_net, pg_cron) — בדיוק מה שתקוע.
+לוקח 1–3 דקות; האפליקציה לא זמינה בזמן הזה. אין אובדן נתונים.
+
+### אחרי ה-restart, בסדר הזה
+1. להריץ את ה-workflow `ops-skipped-leads.yml` — הוא מתזמן ניקוי של
+   `cron.job_run_details` מבפנים (`karnaf_drain_cron_history_once`, 20k
+   שורות בדקה) ומריץ `net.worker_restart()` ליתר ביטחון.
+2. לוודא ב-`system_heartbeats` שהעובדים חזרו לכתוב (דקות, לא שעות).
+3. כשהניקוי סיים (`select count(*) from cron.job_run_details` קטן) —
+   `select cron.unschedule('karnaf_drain_cron_history_once')` ולהריץ Deploy
+   כדי ש-125 ייצור את האינדקס.
+4. רק אז: אימות ערוצי ההתראה (ה-ledger יראה תוצאה לכל ערוץ מהטיק הבא),
+   תשובת Meta ב-`net._http_response`, והדוח היבש.
