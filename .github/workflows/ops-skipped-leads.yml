@@ -68,6 +68,41 @@ jobs:
               order by created desc limit 3""",
             'subscribed_apps.data empty => the app is no longer subscribed to the WABA')
 
+          # Dry-run report for the restored time engine. The tick is in dry-run
+          # by default (AUTOMATION_TIME_RULES unset), so this executes NO
+          # actions — it counts, per rule, how many leads would match, and
+          # records the tally in system_heartbeats.metadata. Auth: same vault
+          # secret the cron uses.
+          q('trigger the dry-run report', """
+              select net.http_post(
+                url := 'https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/automation-tick?dryRun=true',
+                headers := jsonb_build_object(
+                  'Content-Type','application/json',
+                  'Authorization','Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'sla_worker_secret' order by created_at desc limit 1)),
+                body := jsonb_build_object('trigger','dry_run_report')
+              ) as request_id""",
+            'asks the tick for its dry-run tally; read back from heartbeats below')
+
+          print('waiting 45s for the tick to finish...')
+          time.sleep(45)
+
+          q('dry-run tally', """
+              select name, last_ok_at, metadata->'dryRun' as dry_run,
+                     metadata->'timeRules' as time_rules,
+                     metadata->'investor' as investor,
+                     metadata->'errors' as errors
+              from system_heartbeats where name = 'automation_tick'""",
+            'per rule: how many leads WOULD be touched, with sample ids — nothing was sent')
+
+          q('alert channel ledger', """
+              select kind, title, delivered, channel_results, created_at
+              from operator_alerts order by created_at desc limit 10""",
+            'did the test alert (if the owner clicked it) actually go out, per channel')
+
+          q('heartbeats now', """
+              select name, last_ok_at, now() - last_ok_at as age from system_heartbeats order by name""",
+            'workers writing again = the database is back')
+
           q('cron run history, last 6h', """
               select j.jobname, d.status, count(*) as runs, max(d.start_time) as last_run,
                      left(max(d.return_message), 200) as sample
