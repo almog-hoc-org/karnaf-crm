@@ -2,16 +2,32 @@ import { useEffect, useMemo, useRef } from 'react';
 import clsx from 'clsx';
 import { EmptyState } from '@/components/EmptyState';
 import { formatRelative } from '@/lib/format';
-import type { ActivityRow } from '@/lib/types';
+import type { ConversationRow, MessageRow } from '@/lib/types';
 
 // The conversation pane of the lead screen: customer / bot / rep message
-// bubbles ONLY, in WhatsApp style. Everything else the activities feed
-// mirrors (lead_events, tasks, queue items, meetings, calls, notes) moved
-// to ActivityFeed.tsx behind the "פעילות" tab — the rep reads a clean
-// chat, not the machinery.
+// bubbles ONLY, in WhatsApp style. Everything the system does around the
+// conversation (events, tasks, queue items) lives in ActivityFeed.tsx
+// behind the "פעילות" tab — the rep reads a clean chat, not the machinery.
+//
+// This renders `messages` — the source of truth — NOT the `activities`
+// mirror. It used to read the mirror, and that made the transcript
+// disappear: sla-worker logged an unconditional `sla_breach` event every
+// 10 minutes per stuck lead, each event mirrored into `activities`, and
+// lead-detail returns only the newest 400 activity rows. Within three days
+// a lead's real messages were pushed out of that window and the pane
+// rendered "no messages yet" over a full WhatsApp history. The mirror is
+// a derived, lossy view; the chat now reads the table the messages are
+// actually written to.
 
 interface ChatTimelineProps {
-  activities: ActivityRow[];
+  messages: MessageRow[];
+  // Only used to label bubbles when a lead has more than one channel;
+  // omit for single-conversation leads.
+  conversations?: ConversationRow[];
+  // Set when the last fetch failed. Without it an outage is indistinguishable
+  // from a quiet lead, and "עוד אין הודעות" over a real transcript is exactly
+  // the lie that sent the owner looking for a bug in the wrong place.
+  loadFailed?: boolean;
   className?: string;
 }
 
@@ -26,25 +42,33 @@ const ACTOR_LABELS: Record<string, string> = {
   sales_rep: 'איש מכירות',
   system: 'המערכת',
   admin: 'אדמין',
-  provider: 'ספק',
-  human: 'אנושי',
 };
 
-export function ChatTimeline({ activities, className }: ChatTimelineProps) {
-  const messages = useMemo(
-    () => activities.filter((a) => a.activity_type === 'message'),
-    [activities],
-  );
+const CHANNEL_LABELS: Record<string, string> = {
+  whatsapp: 'וואטסאפ',
+  instagram: 'אינסטגרם',
+  email: 'מייל',
+  sms: 'SMS',
+};
+
+export function ChatTimeline({ messages, conversations, loadFailed = false, className }: ChatTimelineProps) {
+  // A lead can hold both a WhatsApp and an Instagram thread; without a
+  // marker the two interleave into one indistinguishable transcript.
+  const channelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of conversations ?? []) map.set(c.id, c.channel);
+    return map;
+  }, [conversations]);
+  const showChannel = (conversations?.length ?? 0) > 1;
+
   const grouped = useMemo(() => groupByDay(messages), [messages]);
-  const bottomRef = useRef<HTMLLIElement | null>(null);
   const listRef = useRef<HTMLOListElement | null>(null);
 
   // WhatsApp-style "stick to bottom" — but ONLY the chat container.
   // scrollIntoView scrolled every ancestor including the page, so the
   // 5s poll yanked the operator's viewport back to the chat while they
   // were filling forms elsewhere on the card. Also: don't jump when the
-  // operator has deliberately scrolled up into history (>80px from
-  // the bottom).
+  // operator has deliberately scrolled up into history.
   const didInitialScroll = useRef(false);
   useEffect(() => {
     const el = listRef.current;
@@ -57,10 +81,31 @@ export function ChatTimeline({ activities, className }: ChatTimelineProps) {
   }, [messages.length]);
 
   if (messages.length === 0) {
+    // Three genuinely different situations, three different things to do
+    // about them. Collapsing them into one "no messages yet" is what made
+    // a data-loading failure look like an untouched lead.
+    if (loadFailed) {
+      return (
+        <EmptyState
+          icon="⚠️"
+          title="לא הצלחנו לטעון את השיחה"
+          hint="זו תקלת טעינה, לא שיחה ריקה. המערכת ממשיכה לנסות — אפשר גם לרענן את הדף."
+        />
+      );
+    }
+    if ((conversations?.length ?? 0) === 0) {
+      return (
+        <EmptyState
+          icon="📭"
+          title="עוד לא נפתחה שיחה מול הליד"
+          hint="הליד נקלט אך טרם התכתב איתנו. ברגע שתישלח או תתקבל הודעה ראשונה היא תופיע כאן."
+        />
+      );
+    }
     return (
       <EmptyState
         icon="💬"
-        title="עוד אין הודעות בשיחה"
+        title="השיחה פתוחה אך עדיין ריקה"
         hint="הודעות וואטסאפ של הלקוח, הבוט והנציג יופיעו כאן."
       />
     );
@@ -76,50 +121,69 @@ export function ChatTimeline({ activities, className }: ChatTimelineProps) {
             <span className="h-px flex-1 bg-slate-200" />
           </div>
           <ul className="space-y-2">
-            {items.map((activity) => (
-              <MessageBubble key={activity.id} activity={activity} />
+            {items.map((message) => (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                channel={showChannel ? channelById.get(message.conversation_id) ?? null : null}
+              />
             ))}
           </ul>
         </li>
       ))}
-      <li ref={bottomRef} aria-hidden="true" className="h-px" />
     </ol>
   );
 }
 
-function MessageBubble({ activity }: { activity: ActivityRow }) {
-  const providerStatus = (activity.payload as { provider_status?: string } | null)?.provider_status ?? null;
-  const failed = providerStatus === 'failed';
+function MessageBubble({ message, channel }: { message: MessageRow; channel: string | null }) {
+  const failed = message.provider_status === 'failed';
   const base = 'rounded-2xl p-3 max-w-[85%] shadow-sm';
   const ring = failed ? ' ring-1 ring-rose-300' : '';
   const bubble =
-    activity.direction === 'inbound' ? `${base} bg-slate-100 mr-auto${ring}` :
-    activity.actor_type === 'ai' ? `${base} bg-brand-50 ms-auto${ring}` :
+    message.direction === 'inbound' ? `${base} bg-slate-100 mr-auto${ring}` :
+    message.sender_type === 'ai' ? `${base} bg-brand-50 ms-auto${ring}` :
     `${base} bg-amber-50 ms-auto${ring}`;
+
+  // A media message often carries no text at all; without a placeholder
+  // it rendered as an empty bubble that looked like a bug.
+  const text = message.content_text?.trim();
+  const body = text
+    ? text
+    : message.message_type === 'media' ? '📎 קובץ מדיה — לפתוח בוואטסאפ'
+    : message.message_type === 'template' ? '📄 נשלחה תבנית'
+    : '—';
 
   return (
     <li className={bubble}>
-      <div className="flex items-center gap-2 text-xs text-slate-500">
-        <span className="font-medium text-slate-700">{ACTOR_LABELS[activity.actor_type] ?? activity.actor_type}</span>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <span className="font-medium text-slate-700">
+          {ACTOR_LABELS[message.sender_type] ?? message.sender_type}
+        </span>
         <span>·</span>
-        <span title={activity.occurred_at}>{formatRelative(activity.occurred_at)}</span>
-        {providerStatus ? <span className="text-[10px] uppercase tracking-wide text-slate-400">{providerStatus}</span> : null}
+        <span title={message.created_at}>{formatRelative(message.created_at)}</span>
+        {channel ? (
+          <span className="rounded bg-white/70 px-1.5 text-[10px]">{CHANNEL_LABELS[channel] ?? channel}</span>
+        ) : null}
+        {message.provider_status ? (
+          <span className="text-[10px] uppercase tracking-wide text-slate-400">{message.provider_status}</span>
+        ) : null}
       </div>
-      <div className="mt-1 whitespace-pre-wrap text-sm">
-        {activity.body || '—'}
-      </div>
+      <div className={clsx('mt-1 whitespace-pre-wrap text-sm', !text && 'text-slate-500')}>{body}</div>
+      {failed && message.provider_error ? (
+        <div className="mt-1 text-[11px] text-rose-700">שגיאת שליחה: {message.provider_error}</div>
+      ) : null}
     </li>
   );
 }
 
-function groupByDay(activities: ActivityRow[]): Array<{ day: string; items: ActivityRow[] }> {
-  const sorted = [...activities].sort((a, b) => Date.parse(a.occurred_at) - Date.parse(b.occurred_at));
-  const groups = new Map<string, ActivityRow[]>();
-  for (const activity of sorted) {
-    const ts = Date.parse(activity.occurred_at);
+function groupByDay(messages: MessageRow[]): Array<{ day: string; items: MessageRow[] }> {
+  const sorted = [...messages].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+  const groups = new Map<string, MessageRow[]>();
+  for (const message of sorted) {
+    const ts = Date.parse(message.created_at);
     const key = Number.isFinite(ts) ? DAY_FORMATTER.format(new Date(ts)) : '—';
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(activity);
+    groups.get(key)!.push(message);
   }
   return Array.from(groups.entries()).map(([day, items]) => ({ day, items }));
 }

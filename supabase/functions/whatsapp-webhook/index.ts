@@ -10,8 +10,9 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { pendingReplyDecision } from '../_shared/pending-reply-policy.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
-import { maybeAlertHumanInbound } from '../_shared/inbound-alert.ts';
+import { alertInboundWindowOpened, maybeAlertHumanInbound } from '../_shared/inbound-alert.ts';
 import { archiveWhatsAppMedia } from '../_shared/media-fetch.ts';
+import { finalizeWebhookInbox, persistWebhookInbox } from '../_shared/webhook-inbox.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { buildHumanHandoffSchedule } from '../_shared/handoff-schedule.ts';
 import { getMemberConciergeConfig, handleMemberConcierge, type MemberRow } from '../_shared/member-concierge.ts';
@@ -62,17 +63,38 @@ Deno.serve(async (req) => {
     }
   }
 
+  const supabase = getServiceSupabase();
+
+  // Record the delivery itself, before we interpret it. `webhook_inbox` had
+  // no writer at all, so nothing in the system could answer "did Meta call
+  // us, and when?" — and an unrecognised payload returned 200 with no log
+  // and no row, meaning a whole category of failure was indistinguishable
+  // from no traffic. Now every signed delivery leaves a trace, with its
+  // outcome recorded on every exit path below.
+  const inboxId = await persistWebhookInbox(supabase, {
+    source: 'whatsapp-webhook', req, rawBody, correlationId,
+  });
+
   let body: Record<string, unknown>;
   try { body = JSON.parse(rawBody); } catch {
+    await finalizeWebhookInbox(supabase, inboxId, 'client_error', 'invalid JSON');
     return jsonResponse(req, { error: 'Invalid JSON' }, 400);
   }
 
   const normalized = normalizeProviderInbound(body);
   if (!normalized) {
+    // Statuses, template callbacks and account updates all land here
+    // legitimately, so this is not an error — but it must be visible, since
+    // "Meta is delivering nothing but statuses" and "Meta has stopped
+    // delivering" used to look identical from outside.
+    await finalizeWebhookInbox(supabase, inboxId, 'success', 'unsupported_payload');
+    log.info('whatsapp_unsupported_payload', {
+      fn: 'whatsapp-webhook', correlationId,
+      field: (((body.entry as Array<Record<string, unknown>> | undefined)?.[0]
+        ?.changes as Array<Record<string, unknown>> | undefined)?.[0]?.field) ?? null,
+    });
     return jsonResponse(req, { ok: true, skipped: true, reason: 'unsupported_payload' });
   }
-
-  const supabase = getServiceSupabase();
 
   const allowed = await checkRateLimit(supabase, {
     key: `whatsapp:${clientIdentifier(req)}`,
@@ -81,10 +103,12 @@ Deno.serve(async (req) => {
   });
   if (!allowed) {
     log.warn('rate_limited', { fn: 'whatsapp-webhook', correlationId, ip: clientIdentifier(req) });
+    await finalizeWebhookInbox(supabase, inboxId, 'rate_limited');
     return jsonResponse(req, { error: 'Rate limit exceeded' }, 429);
   }
 
   if (await messageAlreadyLogged(supabase, normalized.providerMessageId)) {
+    await finalizeWebhookInbox(supabase, inboxId, 'duplicate');
     return jsonResponse(req, { ok: true, skipped: true, reason: 'duplicate_provider_message_id' });
   }
 
@@ -116,8 +140,30 @@ Deno.serve(async (req) => {
   // our pre-check. Treat as no-op success.
   if (msgErr && !String(msgErr.message || '').includes('duplicate key value')) {
     log.error('inbound_insert_failed', { fn: 'whatsapp-webhook', correlationId, err: String(msgErr) });
+    await finalizeWebhookInbox(supabase, inboxId, 'server_error', String(msgErr.message ?? msgErr));
     return jsonResponse(req, { error: 'Failed to log inbound message' }, 500);
   }
+  // The message is durably stored. Everything below is routing — which
+  // branch answers, and how — so the delivery itself has succeeded here.
+  // Marking it once at this point rather than on each of the five later
+  // return paths means the two can never drift apart.
+  await finalizeWebhookInbox(supabase, inboxId, 'success');
+
+  // A closed 24-hour window just reopened? Tell the operator now — this is
+  // the perishable part. `lead` was read before the insert, so
+  // `last_inbound_at` here is still the PREVIOUS inbound. Deliberately
+  // ahead of every routing branch (concierge, router, AI, human handoff):
+  // the window opens regardless of who ends up answering.
+  await alertInboundWindowOpened(supabase, {
+    leadId: lead.id,
+    leadName: (lead.full_name as string | null) ?? normalized.senderName ?? null,
+    phone,
+    snippet: normalized.text,
+    channel: 'whatsapp',
+    ownershipMode: lead.ownership_mode as string | null,
+    previousInboundAt: lead.last_inbound_at as string | null,
+    correlationId,
+  });
 
   // Archive WhatsApp media (image/audio/video/document) to private storage
   // out-of-band. Failures are logged but never break the webhook contract.

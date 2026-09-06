@@ -169,6 +169,25 @@ karnaf-crm/
 
 ## 5. מה לא מוכן עדיין — סדור לפי דחיפות
 
+### 🔴 סבב השיקום 2026-09-04 — PR #84 (ענף `claude/campaign-broadcasts-handoff-elew7z`)
+
+מה שנמצא ותוקן, בקצרה (פירוט מלא בהודעות הקומיטים):
+
+| בעיה | שורש | תיקון |
+|---|---|---|
+| מסך השיחה ריק | `sla_breach` נכתב כל 10 דק' (2,219 שורות/3 לידים ב-30 יום) → `activities` → תקרת 400 | הצ'אט מ-`messages`; גייטינג על `created`; מיגרציה 123 מנקה |
+| אפס התראות | טלגרם בלבד, מעולם לא הוגדר | `_shared/operator-alert.ts`: וואטסאפ + Resend + טלגרם, ledger `operator_alerts`, throttle |
+| אוטומציות זמן מתות | מיזוג 72854e7 מחק 201 שורות מ-`automation-tick` | שוחזר **במצב יבש** — `AUTOMATION_TIME_RULES=live` רק אחרי אישור לכל כלל |
+| קליטה שקטה מ-27.8 | לא מהקוד — Meta | `webhook_inbox` מחווט; `meta-template-status action=subscription`; watchdog לשקט |
+| באנר אדום שקרי | heartbeat רק בהצלחה מלאה; `[]` מ-RLS = "כולם מתים" | heartbeat על כל ריצה; מצב "לא זמין" נפרד |
+
+**עדיין פתוח:**
+- **מסד הנתונים** — ב-4.9 מ-16:20 UTC המסד סירב חיבורים (544). ראו `docs/runbooks/database-unreachable.md`. הבעלים דיווח שטיפל; אימות בתהליך.
+- **כללי הזמן** — כבויים (dry-run). דוח: `system_heartbeats.metadata.timeRules.matches`. להדליק אחד-אחד.
+- **`active_hours` נאכף עכשיו** ב-`dispatch-outbound` (דחייה, לא ביטול): שליחה יזומה בשישי תמתין ליום ראשון.
+- מדריך לבעלים: `docs/runbooks/owner-step-by-step.md`.
+
+
 ### ⏳ ממתין למיזוג — סבב "מינימום לחיצות" (ענף `claude/campaign-broadcasts-handoff-elew7z`)
 
 הסבב הוסיף מענה אינליין מהאינבוקס, סיווג מהיר, קיצורי מקלדת ומיון ברשימת הלידים.

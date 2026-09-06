@@ -6,7 +6,7 @@ import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
-import { notifyTelegram } from '../_shared/notify-telegram.ts';
+import { notifyOperator } from '../_shared/operator-alert.ts';
 import { logAutomationRun } from '../_shared/automation-log.ts';
 import { runMatchingRules } from '../_shared/automation-engine.ts';
 import { buildLeadContext } from '../_shared/event-context.ts';
@@ -20,6 +20,20 @@ import { buildLeadContext } from '../_shared/event-context.ts';
 // destructured only .data and silently skipped leads when the query failed
 // — meaning a temporary DB hiccup would mask SLA breaches. Now any query
 // error makes the response non-2xx so alerting can fire.
+
+// Statuses that can never legitimately breach a first-response SLA: the
+// conversation is over (won/lost/duplicate), the lead asked us to stop, or
+// it has already been parked as dormant. Before this filter the breach scan
+// re-selected such leads on every 10-minute tick, forever.
+const SLA_INACTIVE_STATUSES = [
+  'won', 'lost', 'dormant', 'do_not_contact', 'removed_by_request', 'duplicate',
+];
+
+// Hard ceiling on how many leads a single tick will act on. Without it a
+// backlog of thousands of quiet leads turned every tick into thousands of
+// writes. The oldest breaches are the ones that matter, so order by
+// last_inbound_at ascending and take the head.
+const SLA_SCAN_LIMIT = 500;
 
 function stillNeedsResponse(lead: { last_inbound_at?: string | null; last_outbound_at?: string | null }): boolean {
   if (!lead.last_inbound_at) return false;
@@ -60,7 +74,7 @@ Deno.serve(async (req) => {
   const stuck = new Date(now - stuckMinutes * 60 * 1000).toISOString();
 
   const counters: Record<string, number> = {
-    sla_risk: 0, sla_breach: 0, payment_pending: 0, dormant: 0, ai_stuck: 0,
+    sla_risk: 0, sla_breach: 0, sla_breach_new: 0, payment_pending: 0, dormant: 0, ai_stuck: 0,
     deal_stalled: 0, meeting_outcome_pending: 0, phone_overdue: 0, handoff_stale: 0,
   };
   const queryErrors: Array<{ stage: string; message: string }> = [];
@@ -70,7 +84,10 @@ Deno.serve(async (req) => {
     .select('id, last_inbound_at, last_outbound_at')
     .lt('last_inbound_at', warn)
     .eq('do_not_contact', false)
-    .eq('removed_by_request', false);
+    .eq('removed_by_request', false)
+    .not('lead_status', 'in', `(${SLA_INACTIVE_STATUSES.join(',')})`)
+    .order('last_inbound_at', { ascending: true })
+    .limit(SLA_SCAN_LIMIT);
   if (slaRiskErr) {
     queryErrors.push({ stage: 'sla_risk_query', message: slaRiskErr.message });
     log.error('sla_risk_query_failed', { fn: 'sla-worker', correlationId, err: slaRiskErr.message });
@@ -90,20 +107,32 @@ Deno.serve(async (req) => {
     .select('id, last_inbound_at, last_outbound_at')
     .lt('last_inbound_at', breach)
     .eq('do_not_contact', false)
-    .eq('removed_by_request', false);
+    .eq('removed_by_request', false)
+    .not('lead_status', 'in', `(${SLA_INACTIVE_STATUSES.join(',')})`)
+    .order('last_inbound_at', { ascending: true })
+    .limit(SLA_SCAN_LIMIT);
   if (breachErr) {
     queryErrors.push({ stage: 'sla_breach_query', message: breachErr.message });
     log.error('sla_breach_query_failed', { fn: 'sla-worker', correlationId, err: breachErr.message });
   }
   const breachLeads = (breachRows ?? []).filter(stillNeedsResponse);
   for (const lead of breachLeads) {
-    await ensurePendingQueueItem(supabase, {
+    // `created` is the whole point here. ensurePendingQueueItem is idempotent,
+    // but logLeadEvent is not: the old code wrote an `sla_breach` event on
+    // every tick, i.e. 144 rows/day for one stuck lead. Each of those mirrors
+    // into `activities` (migration 054), and lead-detail only returns the
+    // newest 400 activities — so within days the real conversation was pushed
+    // out of the window and the lead's chat screen rendered empty. One event
+    // per breach, when the queue item is actually new.
+    const queued = await ensurePendingQueueItem(supabase, {
       leadId: lead.id, queueType: 'human_handoff', priorityLevel: 1,
       reason: `SLA breach: > ${config.slaThresholds.firstResponseBreachHours}h without response`,
       payloadJson: { correlationId, threshold: 'breach' },
     });
-    await logLeadEvent(supabase, lead.id, 'sla_breach', 'system', { correlationId });
     counters.sla_breach++;
+    if (!queued.created) continue;
+    await logLeadEvent(supabase, lead.id, 'sla_breach', 'system', { correlationId });
+    counters.sla_breach_new++;
   }
 
   const { data: paymentStuck, error: paymentErr } = await supabase
@@ -356,14 +385,18 @@ Deno.serve(async (req) => {
   }
   counters.dispatch_dlq = dlqCount ?? 0;
 
-  const hasUrgent = counters.dispatch_dlq > 0 || counters.sla_breach > 0 || counters.payment_pending > 0
+  // Alert on what CHANGED this tick, not on the standing backlog. Keying the
+  // alert off counters.sla_breach meant one unresolved lead produced 144
+  // identical "critical" messages a day until someone touched it — which is
+  // exactly how an alert channel becomes background noise nobody reads.
+  const hasUrgent = counters.dispatch_dlq > 0 || counters.sla_breach_new > 0 || counters.payment_pending > 0
     || counters.ai_stuck > 0 || counters.deal_stalled > 0
     || counters.meeting_outcome_pending > 0 || counters.phone_overdue > 0
     || counters.handoff_stale > 0;
   if (hasUrgent) {
     const lines: string[] = [];
     if (counters.dispatch_dlq > 0) lines.push(`• הודעות שנכשלו סופית (DLQ): ${counters.dispatch_dlq} בשבוע האחרון`);
-    if (counters.sla_breach > 0) lines.push(`• פריצת SLA: ${counters.sla_breach} לידים ללא מענה`);
+    if (counters.sla_breach > 0) lines.push(`• פריצת SLA: ${counters.sla_breach} לידים ללא מענה (${counters.sla_breach_new} חדשים)`);
     if (counters.phone_overdue > 0) lines.push(`• שיחת טלפון באיחור: ${counters.phone_overdue} לידים מעל 24ש׳`);
     if (counters.handoff_stale > 0) lines.push(`• העברה לנציג לא טופלה: ${counters.handoff_stale} לידים מעל ${HANDOFF_STALE_HOURS}ש׳`);
     if (counters.deal_stalled > 0) lines.push(`• עסקאות תקועות: ${counters.deal_stalled}`);
@@ -372,10 +405,14 @@ Deno.serve(async (req) => {
     if (counters.payment_pending > 0) lines.push(`• תשלום תקוע: ${counters.payment_pending} לידים`);
     if (counters.sla_risk > 0) lines.push(`• סיכון SLA: ${counters.sla_risk} לידים מתקרבים לסף`);
     if (counters.dormant > 0) lines.push(`• הועברו ל-dormant: ${counters.dormant}`);
-    await notifyTelegram({
-      source: 'sla-worker',
-      severity: counters.sla_breach > 0 || counters.phone_overdue > 0 || counters.handoff_stale > 0 || counters.dispatch_dlq > 0 ? 'error' : 'warn',
-      title: 'Karnaf CRM — SLA tick',
+    await notifyOperator(supabase, {
+      kind: 'sla_tick',
+      // Same reasoning as ai-watchdog: key on the shape of the backlog, not
+      // on "something is non-zero", so a steady state is reported once.
+      dedupeKey: `sla_tick:${counters.sla_breach_new}:${counters.phone_overdue}:${counters.handoff_stale}:${counters.dispatch_dlq}:${counters.ai_stuck}`,
+      throttleMinutes: 60,
+      severity: counters.sla_breach_new > 0 || counters.phone_overdue > 0 || counters.handoff_stale > 0 || counters.dispatch_dlq > 0 ? 'error' : 'warn',
+      title: 'מצב SLA — לידים שממתינים',
       lines,
       link: 'https://karnaf-crm.vercel.app/inbox',
       correlationId,
@@ -383,12 +420,26 @@ Deno.serve(async (req) => {
   }
 
   const ok = queryErrors.length === 0;
-  if (ok) {
-    await supabase.from('system_heartbeats').upsert({
-      name: 'sla_worker',
-      last_ok_at: new Date().toISOString(),
-      last_run_id: correlationId,
-      metadata: { counters },
+  // Written on every completed run, degraded or not. Gating it on zero
+  // query errors meant one transient DB hiccup stopped the heartbeat, and
+  // the dashboard declared the scheduler dead while it kept ticking every
+  // ten minutes. A failing query alerts (below); it does not fake an
+  // outage.
+  await supabase.from('system_heartbeats').upsert({
+    name: 'sla_worker',
+    last_ok_at: new Date().toISOString(),
+    last_run_id: correlationId,
+    metadata: { counters, queryErrors, degraded: !ok },
+  });
+  if (!ok) {
+    await notifyOperator(supabase, {
+      kind: 'sla_worker_degraded',
+      dedupeKey: `sla_worker_degraded:${queryErrors.map((e) => e.stage).sort().join(',')}`,
+      throttleMinutes: 60,
+      severity: 'error',
+      title: 'ניטור ה-SLA רץ אך חלק מהשאילתות נכשלו',
+      lines: queryErrors.map((e) => `${e.stage}: ${e.message.slice(0, 160)}`),
+      correlationId,
     });
   }
   log.info('sla_worker_run', { fn: 'sla-worker', correlationId, counters, queryErrors });

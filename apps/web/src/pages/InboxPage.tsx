@@ -9,9 +9,10 @@ import { SnoozePopover } from '@/components/SnoozePopover';
 import { useAuth } from '@/auth/auth-context';
 import { HeatBadge, MemberBadge, OwnershipBadge, StatusBadge } from '@/components/Badge';
 import { EmptyState } from '@/components/EmptyState';
+import { LoadFailed } from '@/components/LoadFailed';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
-import { describeLeadOrigin, formatRelative, PRODUCT_LABELS } from '@/lib/format';
+import { describeLeadOrigin, formatRelative, PRODUCT_LABELS, whatsappHref } from '@/lib/format';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import type { AttentionRow, IntakeSegment, LeadHeat } from '@/lib/types';
 
@@ -407,6 +408,10 @@ export function InboxPage() {
       <section className="space-y-3">
         {q.isLoading ? (
           <div className="kf-card p-10 text-center text-slate-500">טוען משימות...</div>
+        ) : q.error && rows.length === 0 ? (
+          // A failed fetch is not an empty inbox. Showing "🎉 אין טיפול
+          // פתוח" over a 500 tells the operator to go home while leads wait.
+          <LoadFailed error={q.error} onRetry={() => void refetchInbox()} retrying={q.isFetching} />
         ) : rows.length === 0 ? (
           <EmptyState
             icon="🎉"
@@ -949,19 +954,7 @@ function isWhatsAppRelevant(row: AttentionRow) {
 
 function whatsappConversationUrl(row: AttentionRow): string | null {
   if (!row.lead_phone || !isWhatsAppRelevant(row)) return null;
-  const normalized = normalizePhoneForWhatsApp(row.lead_phone);
-  return normalized ? `https://wa.me/${normalized}` : null;
-}
-
-function normalizePhoneForWhatsApp(phone: string): string | null {
-  const compact = phone.replace(/[^\d+]/g, '');
-  if (compact.startsWith('+')) return compact.slice(1).replace(/\D/g, '') || null;
-  const digits = compact.replace(/\D/g, '');
-  if (!digits) return null;
-  if (digits.startsWith('00')) return digits.slice(2) || null;
-  if (digits.startsWith('972')) return digits;
-  if (digits.startsWith('0')) return `972${digits.slice(1)}`;
-  return digits;
+  return whatsappHref(row.lead_phone);
 }
 
 function formatDuration(minutes: number) {

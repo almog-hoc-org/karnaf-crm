@@ -2,7 +2,7 @@ import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { createLeadTask } from '../_shared/task-service.ts';
-import { notifyTelegram } from '../_shared/notify-telegram.ts';
+import { notifyOperator } from '../_shared/operator-alert.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
@@ -138,14 +138,21 @@ Deno.serve(async (req) => {
 
   const total = counters.ai_no_response + counters.handoff_no_response + counters.model_disabled;
   if (total > 0) {
-    await notifyTelegram({
-      source: 'ai-watchdog',
+    // This runs every 5 minutes. Keyed only on "total > 0", one lead stuck
+    // overnight produced 288 identical `critical` alerts — which is how a
+    // channel stops being read. The dedupe key is the SHAPE of the problem,
+    // so the counts changing re-alerts and a steady state stays quiet, and
+    // the module's throttle caps even a flapping shape at one an hour.
+    await notifyOperator(supabase, {
+      kind: 'ai_watchdog',
+      dedupeKey: `ai_watchdog:${counters.ai_no_response}:${counters.handoff_no_response}:${counters.model_disabled}`,
+      throttleMinutes: 60,
       severity: counters.ai_no_response > 0 || counters.model_disabled > 0 ? 'critical' : 'error',
-      title: 'Karnaf CRM AI watchdog',
+      title: 'שומר ה-AI — לידים ללא מענה',
       lines: [
-        `AI no-response: ${counters.ai_no_response}`,
-        `Handoff no-response: ${counters.handoff_no_response}`,
-        `Model disabled: ${counters.model_disabled}`,
+        `AI לא הגיב: ${counters.ai_no_response}`,
+        `הועבר לנציג ללא מענה: ${counters.handoff_no_response}`,
+        `מודל מושבת: ${counters.model_disabled}`,
       ],
       link: 'https://karnaf-crm.vercel.app/queue',
       correlationId,

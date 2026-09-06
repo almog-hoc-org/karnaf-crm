@@ -2,6 +2,7 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { logLeadEvent, type LeadRow } from './lead-service.ts';
 import { canContactLead, type ContactChannel } from './contact-guard.ts';
 import { enqueueTemplateDispatch, releaseOnceClaim } from './outbound-enqueue.ts';
+import { dispatchAction } from './automation-engine.ts';
 
 export interface EngineContext {
   lead: LeadRow;
@@ -185,7 +186,13 @@ export async function sendTemplateAction(
   }
   if (!template) {
     if (action.once) await releaseOnceClaim(supabase, ctx.lead.id as string, key, channel);
-    return { type: 'send_template', status: 'failed', reason: 'template_missing', payload: { key } };
+    // A SKIP, not a failure. The journey runner marks a run permanently
+    // `failed` on any failed action, so one template being disabled or
+    // renamed used to kill every run of that journey forever, for every
+    // lead in it — including the later steps that had nothing to do with
+    // that template. The step is skipped, the run carries on, and the
+    // reason is recorded on the run's metadata.
+    return { type: 'send_template', status: 'skipped', reason: 'template_missing_or_inactive', payload: { key } };
   }
 
   const row = template as MessageTemplate;
@@ -240,7 +247,29 @@ export async function runActions(
     } else if (action.type === 'journey_start' && action.code) {
       results.push(await startJourney(supabase, action.code, ctx));
     } else {
-      results.push({ type: action.type, status: 'skipped', reason: 'unsupported_action' });
+      // Everything else goes to the engine's dispatcher, which already
+      // implements create_task, set_field, assign_partner, notify_internal,
+      // add_to_email_list and transition_status. This branch used to return
+      // 'unsupported_action' for all of them, so a journey step that was
+      // supposed to open a task, stamp a field or assign a partner did
+      // nothing at all — and the run was recorded as having completed.
+      const dispatched = await dispatchAction(
+        action as unknown as Record<string, unknown>,
+        {
+          supabase,
+          context: { lead: ctx.lead, ...(ctx.data ?? {}) },
+          contactId: (ctx.lead.id as string | undefined) ?? null,
+          correlationId: ctx.correlationId,
+        },
+      );
+      results.push({
+        type: dispatched.type,
+        status: dispatched.status === 'ok' ? 'success' : dispatched.status,
+        reason: typeof dispatched.detail === 'string' ? dispatched.detail : undefined,
+        payload: typeof dispatched.detail === 'object' && dispatched.detail !== null
+          ? dispatched.detail as Record<string, unknown>
+          : undefined,
+      });
     }
   }
   return results;

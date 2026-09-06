@@ -1,70 +1,182 @@
-# TEMPORARY read-only diagnostic — broadcast + Meta-template health
-# snapshot: sync state per template, recent broadcasts and their
-# failure/skip breakdown. Dispatch manually when something looks off.
-name: Ops - Skipped Leads
+name: Ops diagnostic (read-only)
 
+# Temporary, manually-dispatched production diagnostic. Read-only.
 on:
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Broadcast + template health snapshot
+      - name: Ask Meta whether it is still delivering to us
         env:
           SUPABASE_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
           PROJECT_REF: svkzkpgccahwmyflobvn
         run: |
           python3 - <<'EOF'
-          import json, os, urllib.request
+          import json, os, time, urllib.error, urllib.request
 
           token = os.environ['SUPABASE_TOKEN']
           ref = os.environ['PROJECT_REF']
 
-          def q(label, sql):
-              req = urllib.request.Request(
-                  f'https://api.supabase.com/v1/projects/{ref}/database/query',
-                  data=json.dumps({'query': sql}).encode(),
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Content-Type': 'application/json',
-                      'User-Agent': 'karnaf-ops/1.0',
-                  }, method='POST')
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as r:
-                      rows = json.loads(r.read().decode())
-              except Exception as e:
-                  print(f'== {label} ==\nERROR: {e}\n')
-                  return
+          def q(label, sql, proves='', attempts=5):
               print(f'== {label} ==')
-              print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
-              print()
+              if proves:
+                  print(f'-- proves: {proves}')
+              for i in range(attempts):
+                  req = urllib.request.Request(
+                      f'https://api.supabase.com/v1/projects/{ref}/database/query',
+                      data=json.dumps({'query': sql}).encode(),
+                      headers={'Authorization': f'Bearer {token}',
+                               'Content-Type': 'application/json',
+                               'User-Agent': 'karnaf-ops/1.0'}, method='POST')
+                  try:
+                      with urllib.request.urlopen(req, timeout=90) as r:
+                          rows = json.loads(r.read().decode())
+                      print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
+                      print()
+                      return rows
+                  except Exception as e:
+                      body = ''
+                      try:
+                          body = e.read().decode(errors='replace')[:200]
+                      except Exception:
+                          pass
+                      print(f'-- attempt {i + 1}/{attempts}: {e} {body}')
+                      if i < attempts - 1:
+                          time.sleep(8 * (i + 1))
+              print('GAVE UP\n')
+              return None
 
-          q('whatsapp templates - meta sync state', """
-              select key, status,
-                     metadata->'meta'->>'status' as meta_status,
-                     metadata->'meta'->>'language' as meta_lang,
-                     metadata->'meta'->>'synced_at' as synced_at
-              from message_templates where channel = 'whatsapp'
-              order by (metadata->'meta'->>'status') nulls last, key""")
-          q('last 5 broadcasts', """
-              select left(id::text, 8) as id, name, channel, template_key,
-                     meta_template, status, recipients_count, sent_count,
-                     failed_count, skipped_count, scheduled_at
-              from broadcasts order by created_at desc limit 5""")
-          q('recipient error breakdown (last 7 days)', """
-              select left(r.broadcast_id::text, 8) as broadcast, r.status,
-                     left(coalesce(r.error, ''), 250) as error, count(*)
-              from broadcast_recipients r
-              where r.broadcast_id in (
-                select id from broadcasts where created_at > now() - interval '7 days')
-              group by 1, 2, 3 order by 1, 4 desc limit 30""")
-          q('dlq dispatches last 7 days grouped', """
-              select left(coalesce(last_error, ''), 250) as err, count(*)
-              from outbound_dispatch
-              where status = 'dlq' and created_at > now() - interval '7 days'
-              group by 1 order by 2 desc limit 10""")
+          # ── Repair: drain cron.job_run_details from INSIDE Postgres ────
+          # Every attempt through the Management API dies on its statement
+          # timeout — even the cutoff lookup. pg_cron's own background worker
+          # has no such limit, so schedule the drain as a job: 20k rows a
+          # minute, PK-ordered so each batch is an index walk, until nothing
+          # older than 14 days remains. Scheduling is one cheap statement.
+          # Unscheduled by hand once the table is small (see runbook).
+          q('schedule the in-database drain', """
+              select case
+                when exists (select 1 from cron.job where jobname = 'karnaf_drain_cron_history_once')
+                  then 'already scheduled'
+                else cron.schedule('karnaf_drain_cron_history_once', '* * * * *', $j$
+                  delete from cron.job_run_details
+                  where runid in (
+                    select runid from cron.job_run_details
+                    where end_time < now() - interval '14 days'
+                    order by runid limit 20000)
+                $j$)::text
+              end as drain_job""",
+            'runs inside Postgres, immune to the API timeout', attempts=8)
+
+          # ── Repair: pg_net's worker ─────────────────────────────────────
+          # Every net.http_post since ~02:30 UTC sits in the queue with no
+          # response (status_code null). pg_net delivers HTTP from a single
+          # background worker; when it wedges, every cron that calls an edge
+          # function silently stops — which is exactly the heartbeat pattern.
+          # worker_restart() is pg_net's documented remedy and touches no data.
+          q('pg_net queue depth BEFORE restart', """
+              select (select count(*) from net.http_request_queue) as queued,
+                     (select count(*) from net._http_response where status_code is null) as unanswered,
+                     (select extversion from pg_extension where extname = 'pg_net') as pg_net_version""",
+            'how many requests are stuck')
+
+          q('restart pg_net worker', """select net.worker_restart() as restarted""",
+            'pg_net documented remedy for a wedged worker; no data touched', attempts=10)
+
+          q('cron history size', """
+              select count(*) as rows, min(start_time) as oldest, max(start_time) as newest
+              from cron.job_run_details""",
+            'is the unpurged cron log the load on the instance')
+
+          q('enabled time-based rules', """
+              select code, trigger_event, enabled, conditions
+              from automation_rules
+              where source = 'engine' and trigger_event in ('time.elapsed','deal.investor_open')
+              order by code""",
+            'which rules the dry-run evaluated (tally said 3, plan said 5)')
+
+          # The decisive question. Calls the deployed meta-template-status
+          # function server-side with the WhatsApp token already in the
+          # secrets; no credential is echoed back, only Meta's verdict.
+          q('Meta subscription + phone number state', """
+              select net.http_post(
+                url := 'https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/meta-template-status',
+                headers := jsonb_build_object('Content-Type','application/json'),
+                body := jsonb_build_object('action','subscription')
+              ) as request_id""",
+            'kicks off the async call; the response lands in net._http_response')
+
+          print('waiting 20s for the async HTTP response to land...')
+          time.sleep(20)
+
+          q('the Meta answer', """
+              select status_code, left(content, 1500) as content, created
+              from net._http_response
+              order by created desc limit 3""",
+            'subscribed_apps.data empty => the app is no longer subscribed to the WABA')
+
+          # Dry-run report for the restored time engine. The tick is in dry-run
+          # by default (AUTOMATION_TIME_RULES unset), so this executes NO
+          # actions — it counts, per rule, how many leads would match, and
+          # records the tally in system_heartbeats.metadata. Auth: same vault
+          # secret the cron uses.
+          q('trigger the dry-run report', """
+              select net.http_post(
+                url := 'https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/automation-tick?dryRun=true',
+                headers := jsonb_build_object(
+                  'Content-Type','application/json',
+                  'Authorization','Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'sla_worker_secret' order by created_at desc limit 1)),
+                body := jsonb_build_object('trigger','dry_run_report')
+              ) as request_id""",
+            'asks the tick for its dry-run tally; read back from heartbeats below')
+
+          print('waiting 75s for the tick to finish...')
+          time.sleep(75)
+
+          q('pg_net queue depth AFTER restart', """
+              select (select count(*) from net.http_request_queue) as queued,
+                     (select count(*) from net._http_response where created > now() - interval '5 minutes' and status_code is not null) as answered_last_5m""",
+            'answered_last_5m > 0 means the worker is delivering again')
+
+          q('dry-run tally', """
+              select name, last_ok_at, metadata->'dryRun' as dry_run,
+                     metadata->'timeRules' as time_rules,
+                     metadata->'investor' as investor,
+                     metadata->'errors' as errors
+              from system_heartbeats where name = 'automation_tick'""",
+            'per rule: how many leads WOULD be touched, with sample ids — nothing was sent')
+
+          q('alert channel ledger', """
+              select kind, title, delivered, channel_results, created_at
+              from operator_alerts order by created_at desc limit 10""",
+            'did the test alert (if the owner clicked it) actually go out, per channel')
+
+          q('heartbeats now', """
+              select name, last_ok_at, now() - last_ok_at as age from system_heartbeats order by name""",
+            'workers writing again = the database is back')
+
+          q('is pg_cron itself firing (newest 300 runs by PK)', """
+              with recent as (
+                select runid, jobid, status, start_time, left(return_message, 120) as msg
+                from cron.job_run_details order by runid desc limit 300)
+              select j.jobname, r.status, count(*) as runs, max(r.start_time) as last_run,
+                     max(r.msg) as sample
+              from recent r join cron.job j on j.jobid = r.jobid
+              group by 1,2 order by 4 desc""",
+            'index walk from the top of the PK — cheap even on a huge table')
+
+          q('flood cleanup result', """
+              select event_type, count(*) as rows
+              from lead_events
+              where event_type in ('sla_breach','state_transition_rejected','manual_return_to_ai')
+              group by 1 order by 2 desc""",
+            'migration 123 should have cut these to at most 5 per lead')
+
+          q('activities for the reported lead', """
+              select activity_type, count(*) as rows
+              from activities
+              where contact_id = '3a4ead6c-a1a7-438b-96c3-b107fd30668f'
+              group by 1 order by 2 desc""",
+            'the chat should now fit inside the 400-row window')
           EOF

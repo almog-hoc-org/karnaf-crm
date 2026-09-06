@@ -56,6 +56,30 @@ describe('InboxPage', () => {
     vi.useRealTimers();
   });
 
+  // A failed fetch and an empty inbox produced the same "🎉 אין כרגע טיפול
+  // פתוח" screen, which tells the operator to stop working while leads are
+  // waiting. The two must never render the same way again.
+  it('shows a load failure as a failure, not as an empty inbox', async () => {
+    mockedFetchAttentionInbox.mockRejectedValue(new Error('boom 500'));
+    renderInbox();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('לא הצלחנו לטעון את הנתונים');
+    // The distinction the operator actually needs, and the error itself.
+    expect(alert).toHaveTextContent('לא אומר שאין עבודה');
+    expect(alert).toHaveTextContent('boom 500');
+    expect(screen.getByRole('button', { name: 'נסה שוב' })).toBeInTheDocument();
+    expect(screen.queryByText('אין כרגע טיפול פתוח בקטגוריה הזו')).not.toBeInTheDocument();
+  });
+
+  it('still shows the celebratory empty state when the inbox is genuinely clear', async () => {
+    mockedFetchAttentionInbox.mockResolvedValue([]);
+    renderInbox();
+
+    expect(await screen.findByText('אין כרגע טיפול פתוח בקטגוריה הזו')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('shows first-day operating guidance for employees', async () => {
     renderInbox();
 

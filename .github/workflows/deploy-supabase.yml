@@ -51,7 +51,7 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
         run: |
           python3 - <<'PYEOF'
-          import json, os, re, sys, urllib.error, urllib.request
+          import json, os, re, sys, time, urllib.error, urllib.request
 
           ref = os.environ['PROJECT_REF']
           # Tolerate common paste mistakes in the secret: surrounding
@@ -61,7 +61,13 @@ jobs:
               tok = tok.split('=', 1)[1].strip().strip('"\'')
           print(f'token check: {len(tok)} chars, sbp_ prefix: {tok.startswith("sbp_")}')
 
-          def call(method, path, body=None):
+          # Raised for errors worth retrying (5xx, Supabase's 544, network
+          # drops) so the caller can back off instead of aborting the deploy.
+          class TransientApiError(Exception):
+              pass
+
+
+          def call(method, path, body=None, fatal=True):
               req = urllib.request.Request(
                   f'https://api.supabase.com{path}',
                   data=json.dumps(body).encode() if body is not None else None,
@@ -73,10 +79,19 @@ jobs:
                            'Content-Type': 'application/json',
                            'User-Agent': 'curl/8.5.0'})
               try:
-                  with urllib.request.urlopen(req) as r:
+                  with urllib.request.urlopen(req, timeout=180) as r:
                       return json.loads(r.read().decode() or 'null')
-              except urllib.error.HTTPError as e:
+              except urllib.error.URLError as e:
+                  if not isinstance(e, urllib.error.HTTPError):
+                      if not fatal:
+                          raise TransientApiError(str(e))
+                      print(f'::error::Supabase API network error on {method} {path}: {e}')
+                      sys.exit(1)
                   detail = e.read().decode(errors='replace')[:300]
+                  # 5xx (and Supabase's non-standard 544) mean "try again",
+                  # not "the request was wrong".
+                  if not fatal and e.code >= 500:
+                      raise TransientApiError(f'{e.code}: {detail}')
                   print(f'::error::Supabase API {e.code} on {method} {path}: {detail}')
                   if e.code in (401, 403):
                       print('::error::The token was rejected. Regenerate at '
@@ -100,8 +115,28 @@ jobs:
               sys.exit(1)
           print(f'preflight ok: token sees project {ref}')
 
-          def q(sql):
-              return call('POST', f'/v1/projects/{ref}/database/query', {'query': sql})
+          def q(sql, attempts=5):
+              # The Management API's SQL endpoint returns 544 "Connection
+              # terminated due to connection timeout" when the project's
+              # pooler is saturated — which production is doing right now,
+              # intermittently, for minutes at a time. Without a retry a
+              # single bad moment aborts the deploy midway through the
+              # migration list, which is a far worse state than waiting.
+              # Every migration in this repo is written to be idempotent
+              # (create ... if not exists / create or replace / guarded
+              # cron.schedule), so a retried statement is safe.
+              last = None
+              for i in range(attempts):
+                  try:
+                      return call('POST', f'/v1/projects/{ref}/database/query',
+                                  {'query': sql}, fatal=False)
+                  except TransientApiError as e:
+                      last = e
+                      wait = 10 * (i + 1)
+                      print(f'  transient API error ({e}); retry {i + 1}/{attempts} in {wait}s')
+                      time.sleep(wait)
+              print(f'::error::Supabase API kept failing after {attempts} attempts: {last}')
+              sys.exit(1)
 
           applied = {row['version'] for row in
                      (q('select version from supabase_migrations.schema_migrations') or [])}

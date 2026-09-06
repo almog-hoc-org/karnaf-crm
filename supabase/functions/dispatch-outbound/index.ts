@@ -18,6 +18,7 @@ import { isFreeformAllowed } from '../_shared/conversation-window.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { fallbackTemplateParams } from '../_shared/provider-errors.ts';
 import { canContactLead, type ContactChannel } from '../_shared/contact-guard.ts';
+import { findNextOpening, isWithinWorkingHours } from '../_shared/handoff-schedule.ts';
 
 interface DispatchRow {
   id: string;
@@ -41,7 +42,7 @@ async function deliverTemplateRow(
   supabase: SupabaseClient,
   row: DispatchRow,
   correlationId: string,
-): Promise<'sent' | 'skipped'> {
+): Promise<'sent' | 'skipped' | 'deferred'> {
   const payload = row.payload as {
     channel?: string;
     text?: string;
@@ -98,9 +99,34 @@ async function deliverTemplateRow(
     return 'skipped';
   }
 
-  const conversation = await ensureConversation(supabase, row.lead_id, channel, activeProvider());
-
   const config = await getRuntimeConfig(supabase);
+
+  // active_hours (09:00-21:00 Asia/Jerusalem by default) was configurable,
+  // displayed in the admin UI, and enforced nowhere: it only shaped the
+  // "we'll get back to you at…" wording in handoff messages. A campaign or
+  // an automation firing at 03:00 sent at 03:00. Every proactive template
+  // funnels through here, so this is where it belongs.
+  //
+  // DEFERRED, not skipped: the row goes back to pending with
+  // next_attempt_at at the next opening and its attempt count untouched, so
+  // a quiet-hours send is delayed rather than lost. Replies to a customer
+  // are unaffected — those are not template dispatches.
+  const now = new Date();
+  if (!isWithinWorkingHours(now, config.activeHours)) {
+    const nextOpen = findNextOpening(now, config.activeHours);
+    const { error: deferErr } = await supabase
+      .from('outbound_dispatch')
+      .update({ status: 'pending', next_attempt_at: nextOpen.toISOString() })
+      .eq('id', row.id);
+    if (deferErr) throw deferErr;
+    log.info('template_dispatch_deferred_quiet_hours', {
+      fn: 'dispatch-outbound', correlationId, dispatchId: row.id,
+      leadId: row.lead_id, nextAttemptAt: nextOpen.toISOString(),
+    });
+    return 'deferred';
+  }
+
+  const conversation = await ensureConversation(supabase, row.lead_id, channel, activeProvider());
   const withinWindow = isFreeformAllowed(
     lead.last_inbound_at as string | null,
     config.whatsappSession.freeformWindowHours,
@@ -219,12 +245,20 @@ Deno.serve(async (req) => {
 
   let succeeded = 0;
   let failed = 0;
+  let deferred = 0;
 
   for (const row of rows) {
     const rowCorrelationId = row.correlation_id ?? newCorrelationId();
     try {
       if (row.payload?.kind === 'template') {
-        await deliverTemplateRow(supabase, row, rowCorrelationId);
+        const outcome = await deliverTemplateRow(supabase, row, rowCorrelationId);
+        // A deferred row already rewrote its own status back to pending
+        // with a later next_attempt_at; completing it here would mark the
+        // send done without ever having sent it.
+        if (outcome === 'deferred') {
+          deferred += 1;
+          continue;
+        }
         await supabase.rpc('complete_outbound_dispatch', { p_id: row.id });
         succeeded += 1;
         continue;
@@ -308,9 +342,9 @@ Deno.serve(async (req) => {
   }
 
   log.info('dispatch_batch_done', {
-    fn: 'dispatch-outbound', correlationId, processed: rows.length, succeeded, failed,
+    fn: 'dispatch-outbound', correlationId, processed: rows.length, succeeded, failed, deferred,
   });
-  return jsonResponse(req, { ok: true, processed: rows.length, succeeded, failed });
+  return jsonResponse(req, { ok: true, processed: rows.length, succeeded, failed, deferred });
 });
 
 // Meta error codes that never succeed on retry: 131009 invalid parameter

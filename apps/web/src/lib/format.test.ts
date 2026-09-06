@@ -9,6 +9,7 @@ import {
   describeLeadOrigin,
   formatDateTime,
   formatRelative,
+  whatsappHref,
   heatBadgeClass,
 } from './format';
 
@@ -126,6 +127,36 @@ describe('formatRelative', () => {
   it('returns days for older deltas', () => {
     const twoDaysAgo = new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString();
     expect(formatRelative(twoDaysAgo, NOW)).toBe('לפני 2 ימים');
+  });
+
+  // Scheduled follow-ups, meetings and snooze-until are all in the future.
+  // These used to render as 'הרגע' because the delta went negative.
+  it('renders future timestamps forwards, not as "הרגע"', () => {
+    expect(formatRelative(new Date(NOW + 20 * 60 * 1000).toISOString(), NOW)).toBe('בעוד 20 ד׳');
+    expect(formatRelative(new Date(NOW + 3 * 3600 * 1000).toISOString(), NOW)).toBe('בעוד 3 שעות');
+    expect(formatRelative(new Date(NOW + 3 * 86400 * 1000).toISOString(), NOW)).toBe('בעוד 3 ימים');
+  });
+});
+
+// wa.me only resolves full international numbers with no plus. Two of the
+// three screens used to hand it a bare Israeli 0-prefixed number, producing
+// a link that opened WhatsApp on an unknown contact.
+describe('whatsappHref', () => {
+  it('converts every shape an Israeli number is typed in', () => {
+    expect(whatsappHref('050-123-4567')).toBe('https://wa.me/972501234567');
+    expect(whatsappHref('+972 50 123 4567')).toBe('https://wa.me/972501234567');
+    expect(whatsappHref('00972501234567')).toBe('https://wa.me/972501234567');
+    expect(whatsappHref('972501234567')).toBe('https://wa.me/972501234567');
+  });
+
+  it('leaves an already-international foreign number alone', () => {
+    expect(whatsappHref('+1 415 555 0100')).toBe('https://wa.me/14155550100');
+  });
+
+  it('returns null when there is nothing dialable', () => {
+    expect(whatsappHref(null)).toBeNull();
+    expect(whatsappHref('')).toBeNull();
+    expect(whatsappHref('לא ידוע')).toBeNull();
   });
 });
 

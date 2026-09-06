@@ -292,6 +292,38 @@ export interface SystemHeartbeat {
   metadata: Record<string, unknown>;
 }
 
+export interface OpsStatus {
+  verdicts: Array<{ key: string; level: 'ok' | 'warn' | 'error'; text: string }>;
+  intake: {
+    lastInboundAt: string | null;
+    lastOutboundAt: string | null;
+    lastWebhookAt: string | null;
+    inbound24h: number | null;
+    outbound24h: number | null;
+  };
+  alerts: {
+    channels: Record<string, boolean>;
+    recent: Array<{
+      kind: string; title: string; delivered: boolean;
+      channel_results: Record<string, { ok: boolean; skipped?: string; detail?: string }>;
+      created_at: string;
+    }> | null;
+  };
+  workers: Array<{ name: string; last_ok_at: string; metadata: unknown }> | null;
+  queue: { pending: number | null; dlq: number | null };
+}
+
+export async function fetchOpsStatus() {
+  return getJson<{ ok: true } & OpsStatus>('/ops-status');
+}
+
+export async function postTestAlertChannels() {
+  return postJson<{
+    ok: true; configured: Record<string, boolean>; delivered: boolean;
+    channels: Record<string, { ok: boolean; skipped?: string; detail?: string }>;
+  }>('/admin-actions', { action: 'test_alert_channels' });
+}
+
 export async function fetchHeartbeats() {
   // Reads via the authed supabase client; RLS gates the read to staff.
   const { supabase } = await import('./supabase');

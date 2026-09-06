@@ -61,6 +61,7 @@ const SECTIONS: HubSection[] = [
       { to: '/admin/landing-pages',   title: 'דפי נחיתה',        blurb: 'דפים ציבוריים שמזינים לידים עם קמפיין' },
       { to: '/admin/whatsapp-router', title: 'WhatsApp Router',  blurb: 'תפריט הסינון של הבוט בכניסה' },
       { to: '/admin/settings',        title: 'הגדרות',           blurb: 'שעות פעילות, SLA, רכיב AI פעיל' },
+      { to: '/admin/status',   title: 'מצב המערכת',      blurb: 'האם הקליטה עובדת, האם ההתראות מוגדרות, מתי כל תהליך רץ לאחרונה' },
       { to: '/users',                 title: 'משתמשים',          blurb: 'יוזרים והרשאות כלל-מערכת' },
     ],
   },
