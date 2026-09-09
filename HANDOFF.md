@@ -182,7 +182,8 @@ karnaf-crm/
 | באנר אדום שקרי | heartbeat רק בהצלחה מלאה; `[]` מ-RLS = "כולם מתים" | heartbeat על כל ריצה; מצב "לא זמין" נפרד |
 
 **עדיין פתוח:**
-- **מסד הנתונים** — ב-4.9 מ-16:20 UTC המסד סירב חיבורים (544). ראו `docs/runbooks/database-unreachable.md`. הבעלים דיווח שטיפל; אימות בתהליך.
+- **מסד הנתונים** — ב-4.9 מ-16:20 UTC המסד סירב חיבורים (544). ראו `docs/runbooks/database-unreachable.md`. **נפתר 9.9** אחרי Restart project: המסד עונה, כל ה-heartbeats בדקות, וואטסאפ להתראות מגיע (`operator_alerts.channel_results.whatsapp.ok=true`). מייל עדיין מדולג — חסר `ALERT_EMAIL_FROM`.
+- **"לא מצליח להתחבר" (9.9)** — לא בעיית חשבון: `auth.users` תקין, `profiles.role=owner`, `is_active=true`. הסימפטום היה `AuthProvider` שבלע את שגיאת שאילתת הפרופיל בזמן שהמסד היה תקוע והציג "אין פרופיל פעיל". תוקן: `profileError` + ניסיון חוזר + "נסו שוב"/"יציאה" במסך הכניסה, ריפוי עצמי על `TOKEN_REFRESHED`. אבחון: `ops-skipped-leads.yml` (Actions → Run workflow).
 - **כללי הזמן** — כבויים (dry-run). דוח: `system_heartbeats.metadata.timeRules.matches`. להדליק אחד-אחד.
 - **`active_hours` נאכף עכשיו** ב-`dispatch-outbound` (דחייה, לא ביטול): שליחה יזומה בשישי תמתין ליום ראשון.
 - מדריך לבעלים: `docs/runbooks/owner-step-by-step.md`.

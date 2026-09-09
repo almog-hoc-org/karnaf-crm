@@ -15,6 +15,8 @@ const authStub: AuthState = {
   signInWithGoogle: vi.fn(),
   signUp: vi.fn(),
   signOut: vi.fn(),
+  profileError: null,
+  reloadProfile: vi.fn(),
 };
 
 vi.mock('@/lib/api', () => ({

@@ -7,6 +7,10 @@ import { LoginPage } from './LoginPage';
 interface RenderOpts {
   session?: AuthState['session'];
   role?: Role | null;
+  loading?: boolean;
+  profileError?: string | null;
+  reloadProfile?: AuthState['reloadProfile'];
+  signOut?: AuthState['signOut'];
   signIn?: AuthState['signIn'];
   signInWithGoogle?: AuthState['signInWithGoogle'];
   signUp?: AuthState['signUp'];
@@ -15,6 +19,10 @@ interface RenderOpts {
 function makeAuth({
   session = null,
   role = null,
+  loading = false,
+  profileError = null,
+  reloadProfile = async () => {},
+  signOut = async () => {},
   signIn = async () => ({ error: null }),
   signInWithGoogle = async () => ({ error: null }),
   signUp = async () => ({ error: null, needsEmailConfirmation: true }),
@@ -23,11 +31,13 @@ function makeAuth({
     session,
     user: session?.user ?? null,
     role,
-    loading: false,
+    loading,
     signIn,
     signInWithGoogle,
     signUp,
-    signOut: async () => {},
+    signOut,
+    profileError,
+    reloadProfile,
   };
 }
 
@@ -67,6 +77,33 @@ describe('LoginPage', () => {
     renderLogin({ session: fakeSession, role: null });
     expect(screen.getByRole('button', { name: 'התחברות' })).toBeInTheDocument();
     expect(screen.getByText(/אין לו פרופיל פעיל/)).toBeInTheDocument();
+  });
+
+  it('says nothing about the profile while the lookup is still running', () => {
+    const fakeSession = { user: { id: 'u1' } } as unknown as AuthState['session'];
+    renderLogin({ session: fakeSession, role: null, loading: true });
+    expect(screen.queryByText(/אין לו פרופיל פעיל/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows a server-error box with retry when the profile lookup failed, not the "inactive" warning', async () => {
+    const fakeSession = { user: { id: 'u1' } } as unknown as AuthState['session'];
+    const reloadProfile = vi.fn(async () => {});
+    renderLogin({ session: fakeSession, role: null, profileError: 'connection timeout', reloadProfile });
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(/לא הצלחנו לטעון את הפרופיל/);
+    expect(alert).toHaveTextContent('connection timeout');
+    expect(screen.queryByText(/אין לו פרופיל פעיל/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'נסו שוב' }));
+    await waitFor(() => expect(reloadProfile).toHaveBeenCalledTimes(1));
+  });
+
+  it('offers sign-out to a signed-in user who is stuck on the login screen', async () => {
+    const fakeSession = { user: { id: 'u1' } } as unknown as AuthState['session'];
+    const signOut = vi.fn(async () => {});
+    renderLogin({ session: fakeSession, role: null, signOut });
+    fireEvent.click(screen.getByRole('button', { name: 'יציאה' }));
+    await waitFor(() => expect(signOut).toHaveBeenCalledTimes(1));
   });
 
   it('calls signIn with the entered credentials on submit', async () => {

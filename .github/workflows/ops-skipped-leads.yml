@@ -82,17 +82,20 @@ jobs:
               where role in ('owner','admin') order by role, email""",
             'context: is there any working admin account')
 
-          # 4. Repair, limited to this one address: promote to owner and
-          #    activate. Idempotent. If there is no auth user at all, nothing
-          #    to repair — the owner has to sign up first (or reset password).
-          q('repair owner profile', f"""
-              with u as (select id, email from auth.users where lower(email) = '{email}')
-              insert into public.profiles (id, email, role, is_active)
-              select id, email, 'owner', true from u
-              on conflict (id) do update
-                set role = 'owner', is_active = true, updated_at = now()
-              returning id, email, role, is_active""",
-            'after this, the app accepts the login as owner (if the auth account exists and the DB answers)')
+          # 4. What the auth service actually recorded for this account —
+          #    a `login` row is a password accepted; `token_refreshed` is an
+          #    open tab renewing itself. Tells whether last_sign_in_at above
+          #    was the owner at the keyboard or a background refresh.
+          q('auth audit trail (newest 15)', f"""
+              select created_at,
+                     payload->>'action' as action,
+                     payload->>'error' as error,
+                     ip_address
+              from auth.audit_log_entries
+              where lower(payload->>'actor_username') = '{email}'
+                 or payload->>'actor_id' in (select id::text from auth.users where lower(email) = '{email}')
+              order by created_at desc limit 15""",
+            'login = password accepted; token_refreshed = an open tab; nothing recent = the owner never reached the auth service')
 
           # 5. While we are here: did the workers come back?
           q('heartbeats', """
