@@ -23,7 +23,8 @@ do $$ begin
   end if;
 end $$;
 
--- Without this every "recent runs" question is a sequential scan of the
--- whole history. Built after the drain so it is cheap.
-create index if not exists job_run_details_start_time_idx
-  on cron.job_run_details (start_time desc);
+-- No index: cron.job_run_details is owned by supabase_admin, and the
+-- migration runner (postgres, via the Management API) may delete from it
+-- but not alter it — the first deploy of this file died on exactly
+-- "42501: must be owner of table job_run_details". With the table held to
+-- 14 days (~50k rows) the "recent runs" queries are cheap without one.

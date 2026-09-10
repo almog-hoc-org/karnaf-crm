@@ -409,8 +409,19 @@ Deno.serve(async (req) => {
       kind: 'sla_tick',
       // Same reasoning as ai-watchdog: key on the shape of the backlog, not
       // on "something is non-zero", so a steady state is reported once.
-      dedupeKey: `sla_tick:${counters.sla_breach_new}:${counters.phone_overdue}:${counters.handoff_stale}:${counters.dispatch_dlq}:${counters.ai_stuck}`,
-      throttleMinutes: 60,
+      // Every counter that can make `hasUrgent` true is part of the shape;
+      // leaving payment_pending / deal_stalled / meeting_outcome_pending out
+      // of it, with a 60-minute throttle, produced one identical WhatsApp
+      // every 70 minutes around the clock for a backlog nobody had touched
+      // (production, 2026-09-10). A shape that has not changed is repeated
+      // once every six hours; a changed shape is a new key and goes out at
+      // once. The hourly digest carries "what is new" in between.
+      dedupeKey: [
+        'sla_tick', counters.sla_breach_new, counters.sla_breach, counters.phone_overdue,
+        counters.handoff_stale, counters.dispatch_dlq, counters.ai_stuck,
+        counters.payment_pending, counters.deal_stalled, counters.meeting_outcome_pending,
+      ].join(':'),
+      throttleMinutes: 6 * 60,
       severity: counters.sla_breach_new > 0 || counters.phone_overdue > 0 || counters.handoff_stale > 0 || counters.dispatch_dlq > 0 ? 'error' : 'warn',
       title: 'מצב SLA — לידים שממתינים',
       lines,
