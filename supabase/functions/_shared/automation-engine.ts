@@ -14,7 +14,7 @@
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { logAutomationRun } from './automation-log.ts';
-import { notifyTelegram } from './notify-telegram.ts';
+import { notifyOperator } from './operator-alert.ts';
 import { log } from './logger.ts';
 import { canContactLead, type ContactChannel, type ContactGuardLead } from './contact-guard.ts';
 
@@ -113,6 +113,7 @@ export async function dispatchAction(action: Record<string, unknown>, ctx: Actio
       case 'journey_start': return await actionJourneyStart(action, ctx);
       case 'assign_partner': return await actionAssignPartner(action, ctx);
       case 'add_to_email_list': return await actionAddToEmailList(action, ctx);
+      case 'transition_status': return await actionTransitionStatus(action, ctx);
       default:
         return { type, status: 'skipped', detail: `unknown action type: ${type}` };
     }
@@ -285,26 +286,56 @@ async function actionNotifyInternal(action: Record<string, unknown>, ctx: Action
     auditWritten = true;
   }
 
-  // Tier 4.D.3 — forward to Telegram if configured. The notifier
-  // silently no-ops when env vars are missing (NotifyResult.sent=false,
-  // skipped='no_token' / 'no_chat'), so this is safe-by-default.
-  const tg = await notifyTelegram({
-    source: 'automation_engine',
+  // Forward to whichever operator channels are configured. This used to be
+  // Telegram-only, and Telegram was never configured in production, so a
+  // rule whose whole purpose was "tell a human" reliably told nobody.
+  const tg = await notifyOperator(ctx.supabase, {
+    kind: 'automation_notify',
+    // Same rendered text within the hour is the same notice.
+    dedupeKey: `automation_notify:${ctx.contactId ?? 'global'}:${rendered.slice(0, 120)}`,
+    throttleMinutes: 60,
     severity: 'info',
     title: rendered,
+    link: ctx.contactId ? `https://karnaf-crm.vercel.app/leads/${ctx.contactId}` : undefined,
     correlationId: ctx.correlationId,
   });
 
   return {
     type: 'notify_internal',
-    status: auditWritten || tg.sent ? 'ok' : 'skipped',
+    status: auditWritten || tg.delivered ? 'ok' : 'skipped',
     detail: {
       chars: rendered.length,
       audit_written: auditWritten,
-      telegram_sent: tg.sent,
-      telegram_skipped: tg.skipped ?? null,
+      alert_delivered: tg.delivered,
+      alert_throttled: tg.throttled,
+      alert_channels: tg.channels,
     },
   };
+}
+
+// Documented in migration 065's schema comment as a supported action type
+// ({"type":"transition_status","to":"...","reason":"..."}) but never
+// implemented — a rule using it dispatched to `default` and was silently
+// skipped, which reads in the audit log as "the rule ran fine".
+async function actionTransitionStatus(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const to = action.to as string | undefined;
+  if (!to) return { type: 'transition_status', status: 'skipped', detail: 'missing to' };
+  if (!ctx.contactId) return { type: 'transition_status', status: 'skipped', detail: 'no contactId' };
+
+  // The RPC enforces the state machine and returns NULL for an illegal
+  // transition — that is a skip, not a failure: the rule asked for
+  // something the lead's current status does not allow.
+  const { data, error } = await ctx.supabase.rpc('transition_lead_status', {
+    p_lead_id: ctx.contactId,
+    p_target: to,
+    p_actor_type: 'system',
+    p_reason: (action.reason as string | undefined) ?? 'automation_rule',
+  });
+  if (error) return { type: 'transition_status', status: 'failed', detail: error.message };
+  if (!data) {
+    return { type: 'transition_status', status: 'skipped', detail: `illegal transition to ${to}` };
+  }
+  return { type: 'transition_status', status: 'ok', detail: { to } };
 }
 
 async function actionCreateTask(action: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
@@ -514,12 +545,27 @@ export interface RunRulesInput {
   context: Record<string, unknown>;
   contactId?: string | null;
   correlationId?: string;
+  /**
+   * Evaluate conditions and report what WOULD happen, executing no actions
+   * and writing no audit rows. The point is to be able to answer "how many
+   * leads does this rule touch, and which ones?" before switching a rule on
+   * against a pipeline that has been accumulating for months — a naive
+   * restore of the time-based scan would have sent hundreds of messages to
+   * a backlog of stale leads on its first tick.
+   */
+  dryRun?: boolean;
+}
+
+export interface RuleMatch {
+  ruleCode: string;
+  contactId?: string | null;
+  actionKinds: string[];
 }
 
 export async function runMatchingRules(
   supabase: SupabaseClient,
   input: RunRulesInput,
-): Promise<void> {
+): Promise<RuleMatch[]> {
   const { data: rules, error } = await supabase
     .from('automation_rules')
     .select('id, code, enabled, source, conditions, actions')
@@ -528,12 +574,23 @@ export async function runMatchingRules(
     .eq('trigger_event', input.triggerEvent);
   if (error) {
     log.warn('engine_load_rules_failed', { triggerEvent: input.triggerEvent, err: error.message });
-    return;
+    return [];
   }
 
+  const matches: RuleMatch[] = [];
   for (const rule of rules ?? []) {
     const start = Date.now();
     const passes = evaluateConditions(rule.conditions, input.context);
+    if (passes && input.dryRun) {
+      matches.push({
+        ruleCode: rule.code,
+        contactId: input.contactId,
+        actionKinds: (Array.isArray(rule.actions) ? rule.actions : [])
+          .map((a) => String((a as Record<string, unknown>).type ?? 'unknown')),
+      });
+      continue;
+    }
+    if (input.dryRun) continue;
     if (!passes) {
       await logAutomationRun(supabase, {
         ruleCode: rule.code,
@@ -571,5 +628,11 @@ export async function runMatchingRules(
       durationMs: Date.now() - start,
       correlationId: input.correlationId,
     });
+    matches.push({
+      ruleCode: rule.code,
+      contactId: input.contactId,
+      actionKinds: results.map((r) => r.type),
+    });
   }
+  return matches;
 }

@@ -254,13 +254,18 @@ export async function runLeadJourneyManager(
     return counters;
   }
 
+  // Ordered by the scan cursor, not by updated_at. A lead whose
+  // classification does not change is never written to, so its updated_at
+  // never moves — the old ordering returned the same 200 oldest-updated
+  // leads on every tick, forever, and lead 201 onwards was never
+  // classified at all. NULLS FIRST puts never-scanned leads at the front.
   const { data: leads, error } = await supabase
     .from('leads')
     .select('*')
     .in('lead_status', OPEN_STATUSES)
     .eq('do_not_contact', false)
     .eq('removed_by_request', false)
-    .order('updated_at', { ascending: true })
+    .order('journey_scanned_at', { ascending: true, nullsFirst: true })
     .limit(limit);
 
   if (error) {
@@ -285,6 +290,21 @@ export async function runLeadJourneyManager(
       }
     } catch (err) {
       counters.errors.push({ leadId: lead.id, stage: 'apply_rule', message: String(err) });
+    }
+  }
+
+  // Advance the cursor for everything this pass looked at, including the
+  // leads that errored — otherwise one permanently-failing lead pins the
+  // window and starves the rest all over again. The error is recorded in
+  // `counters.errors` and surfaces in the tick's response either way.
+  const scannedIds = ((leads ?? []) as LeadRow[]).map((l) => l.id as string);
+  if (scannedIds.length > 0) {
+    const { error: cursorErr } = await supabase
+      .from('leads')
+      .update({ journey_scanned_at: new Date().toISOString() })
+      .in('id', scannedIds);
+    if (cursorErr) {
+      counters.errors.push({ leadId: 'cursor', stage: 'scan_cursor', message: cursorErr.message });
     }
   }
 

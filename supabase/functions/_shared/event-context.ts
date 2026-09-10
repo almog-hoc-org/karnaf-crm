@@ -66,6 +66,14 @@ export interface LeadRowForContext {
   created_at?: string | null;
   last_inbound_at?: string | null;
   last_outbound_at?: string | null;
+  // The contact guard reads these four. They were already in
+  // LEAD_SELECT_COLUMNS but declared nowhere and copied nowhere, so the
+  // guard saw `undefined` for all of them on the engine path and blocked
+  // nothing — a snoozed lead still received engine templates.
+  snoozed_until?: string | null;
+  no_proactive_contact?: boolean | null;
+  ig_user_id?: string | null;
+  consent_email?: boolean | null;
 }
 
 export interface LeadContextOptions {
@@ -98,6 +106,12 @@ export interface LeadContext {
   hours_since_intake: number | null;
   hours_since_last_inbound: number | null;
   hours_since_last_outbound: number | null;
+  // Contact-guard inputs. Carried on the context because the engine's send
+  // action guards off this object, not off the database row.
+  snoozed_until: string | null;
+  no_proactive_contact: boolean;
+  ig_user_id: string | null;
+  consent_email: boolean | null;
   // Derived (null when includeDerived=false).
   has_won_program: boolean | null;
   is_program_member: boolean | null;
@@ -163,6 +177,10 @@ export async function buildLeadContextFromRow(
     hours_since_intake: hoursSince(row.created_at),
     hours_since_last_inbound: hoursSince(row.last_inbound_at),
     hours_since_last_outbound: hoursSince(row.last_outbound_at),
+    snoozed_until: row.snoozed_until ?? null,
+    no_proactive_contact: !!row.no_proactive_contact,
+    ig_user_id: row.ig_user_id ?? null,
+    consent_email: row.consent_email ?? null,
     has_won_program: null,
     is_program_member: null,
     days_since_program_join: null,

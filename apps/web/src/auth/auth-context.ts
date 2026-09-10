@@ -13,6 +13,16 @@ export interface AuthState {
   user: User | null;
   role: Role | null;
   loading: boolean;
+  /**
+   * Set when the profile lookup itself failed (database down, timeout,
+   * network) — as opposed to succeeding and finding no active row. The two
+   * used to be indistinguishable, so a database outage read as "your
+   * profile is not active", which sent the owner hunting for a permissions
+   * problem that did not exist.
+   */
+  profileError: string | null;
+  /** Re-run the profile lookup for the current session. */
+  reloadProfile: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
   signUp: (email: string, password: string) => Promise<SignUpResult>;

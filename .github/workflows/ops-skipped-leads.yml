@@ -1,70 +1,190 @@
-# TEMPORARY read-only diagnostic — broadcast + Meta-template health
-# snapshot: sync state per template, recent broadcasts and their
-# failure/skip breakdown. Dispatch manually when something looks off.
-name: Ops - Skipped Leads
+name: Ops diagnostic (read-only)
 
+# Manually-dispatched production health report for the round after the
+# 2026-09 database incident. Every query is read-only except one, which
+# only runs when the `finish_drain` input is set: unscheduling the one-off
+# cron-history drain job once it has nothing left to delete.
 on:
   workflow_dispatch:
-
-permissions:
-  contents: read
+    inputs:
+      finish_drain:
+        description: 'Unschedule karnaf_drain_cron_history_once (only when the report shows the drain is done)'
+        type: boolean
+        default: false
 
 jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Broadcast + template health snapshot
+      - name: Post-restart health report
         env:
           SUPABASE_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
           PROJECT_REF: svkzkpgccahwmyflobvn
+          OWNER_EMAIL: karnaf.yazamut@gmail.com
+          FINISH_DRAIN: ${{ inputs.finish_drain }}
         run: |
           python3 - <<'EOF'
-          import json, os, urllib.request
+          import json, os, time, urllib.error, urllib.request
 
           token = os.environ['SUPABASE_TOKEN']
           ref = os.environ['PROJECT_REF']
+          email = os.environ['OWNER_EMAIL'].lower()
+          finish_drain = os.environ.get('FINISH_DRAIN', 'false') == 'true'
 
-          def q(label, sql):
-              req = urllib.request.Request(
-                  f'https://api.supabase.com/v1/projects/{ref}/database/query',
-                  data=json.dumps({'query': sql}).encode(),
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Content-Type': 'application/json',
-                      'User-Agent': 'karnaf-ops/1.0',
-                  }, method='POST')
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as r:
-                      rows = json.loads(r.read().decode())
-              except Exception as e:
-                  print(f'== {label} ==\nERROR: {e}\n')
-                  return
+          def q(label, sql, proves='', attempts=6):
               print(f'== {label} ==')
-              print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
-              print()
+              if proves:
+                  print(f'-- proves: {proves}')
+              for i in range(attempts):
+                  req = urllib.request.Request(
+                      f'https://api.supabase.com/v1/projects/{ref}/database/query',
+                      data=json.dumps({'query': sql}).encode(),
+                      headers={'Authorization': f'Bearer {token}',
+                               'Content-Type': 'application/json',
+                               'User-Agent': 'karnaf-ops/1.0'}, method='POST')
+                  try:
+                      with urllib.request.urlopen(req, timeout=60) as r:
+                          rows = json.loads(r.read().decode())
+                      print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
+                      print()
+                      return rows
+                  except Exception as e:
+                      body = ''
+                      try:
+                          body = e.read().decode(errors='replace')[:200]
+                      except Exception:
+                          pass
+                      print(f'-- attempt {i + 1}/{attempts}: {e} {body}')
+                      if i < attempts - 1:
+                          time.sleep(6 * (i + 1))
+              print('GAVE UP\n')
+              return None
 
-          q('whatsapp templates - meta sync state', """
-              select key, status,
-                     metadata->'meta'->>'status' as meta_status,
-                     metadata->'meta'->>'language' as meta_lang,
-                     metadata->'meta'->>'synced_at' as synced_at
-              from message_templates where channel = 'whatsapp'
-              order by (metadata->'meta'->>'status') nulls last, key""")
-          q('last 5 broadcasts', """
-              select left(id::text, 8) as id, name, channel, template_key,
-                     meta_template, status, recipients_count, sent_count,
-                     failed_count, skipped_count, scheduled_at
-              from broadcasts order by created_at desc limit 5""")
-          q('recipient error breakdown (last 7 days)', """
-              select left(r.broadcast_id::text, 8) as broadcast, r.status,
-                     left(coalesce(r.error, ''), 250) as error, count(*)
-              from broadcast_recipients r
-              where r.broadcast_id in (
-                select id from broadcasts where created_at > now() - interval '7 days')
-              group by 1, 2, 3 order by 1, 4 desc limit 30""")
-          q('dlq dispatches last 7 days grouped', """
-              select left(coalesce(last_error, ''), 250) as err, count(*)
-              from outbound_dispatch
-              where status = 'dlq' and created_at > now() - interval '7 days'
-              group by 1 order by 2 desc limit 10""")
+          # ── 1. Alive? ────────────────────────────────────────────────
+          q('database liveness', 'select now() as db_time, version() as pg',
+            'if this fails nothing below matters')
+
+          q('heartbeats', """
+              select name, last_ok_at, now() - last_ok_at as age,
+                     (metadata->>'degraded') as degraded
+              from system_heartbeats order by name""",
+            'ages in minutes = scheduler + pg_net + edge functions all working')
+
+          # ── 2. The dry-run report the restored time engine produces ──
+          q('dry-run report (automation_tick heartbeat)', """
+              select last_ok_at,
+                     metadata->'timeRules' as time_rules,
+                     metadata->'investor' as investor,
+                     metadata->'errors' as errors,
+                     metadata->'capBreaches' as cap_breaches
+              from system_heartbeats where name = 'automation_tick'""",
+            'matches per rule + sample lead ids; nothing was sent (dryRun=true)')
+
+          q('time rules on the books', """
+              select code, name_he, trigger_event, enabled
+              from automation_rules
+              where trigger_event in ('time.elapsed', 'deal.investor_open')
+              order by enabled desc, code""",
+            'which rules the report is about')
+
+          # ── 3. Cron and the history drain ────────────────────────────
+          q('cron jobs', """
+              select jobid, jobname, schedule, active from cron.job order by jobid""",
+            'karnaf_drain_cron_history_once present = drain still scheduled; karnaf_purge_cron_history present = migration 125 applied')
+
+          q('cron history size (estimate, no scan)', """
+              select reltuples::bigint as est_rows,
+                     pg_size_pretty(pg_total_relation_size('cron.job_run_details')) as total_size
+              from pg_class where oid = 'cron.job_run_details'::regclass""",
+            'was tens of millions on 09-06; drain done when this is a few thousand')
+
+          q('drain job recent runs', """
+              select d.status, d.start_time, d.end_time,
+                     left(d.return_message, 120) as message
+              from cron.job_run_details d
+              join cron.job j on j.jobid = d.jobid
+              where j.jobname = 'karnaf_drain_cron_history_once'
+              order by d.start_time desc limit 5""",
+            'each run deletes up to 20k rows; "DELETE 0" = nothing left', attempts=2)
+
+          q('pg_net queue depth', 'select count(*) as queued from net.http_request_queue',
+            'was 13 stuck on 09-06; should be 0-2 now')
+
+          # ── 4. Intake: are leads reaching us? ────────────────────────
+          q('newest inbound message', """
+              select max(created_at) as last_inbound,
+                     now() - max(created_at) as silence
+              from messages where direction = 'inbound'""",
+            'silence in hours during the day = webhook still not delivering')
+
+          q('webhook_inbox newest 5', """
+              select received_at, source, processed_status,
+                     left(coalesce(error_message, ''), 100) as error
+              from webhook_inbox order by received_at desc limit 5""",
+            'rows here = Meta is calling the webhook at all')
+
+          # The digest is the only thing that would have said "no inbound for
+          # 3 days". Did its cron fire, and what did the gateway answer?
+          q('operator digest cron runs (newest 5)', """
+              select d.status, d.start_time, left(d.return_message, 120) as message
+              from cron.job_run_details d
+              join cron.job j on j.jobid = d.jobid
+              where j.jobname = 'karnaf_operator_digest'
+              order by d.start_time desc limit 5""",
+            'succeeded = net.http_post was queued; the HTTP answer is below', attempts=2)
+
+          q('edge-function answers seen by pg_net (last 6h)', """
+              select created, status_code, left(content::text, 160) as body
+              from net._http_response
+              where content::text like '%%nothing_new%%'
+                 or content::text like '%%silenceAlerted%%'
+                 or content::text like '%%Unauthorized%%'
+                 or content::text like '%%Invalid JWT%%'
+                 or status_code >= 400
+              order by created desc limit 8""",
+            '401/Invalid JWT on the digest = gateway verify_jwt rejected the worker bearer')
+
+          q('intake alerts', """
+              select kind, delivered, created_at, left(title, 80) as title
+              from operator_alerts
+              where kind in ('intake_silence', 'inbound_window_opened', 'human_inbound')
+              order by created_at desc limit 5""",
+            'intake_silence rows = the watchdog noticed; inbound rows = a lead wrote')
+
+          # ── 5. Alert channels ────────────────────────────────────────
+          q('alert ledger (newest 5)', """
+              select kind, delivered, channel_results, created_at
+              from operator_alerts order by created_at desc limit 5""",
+            'email.skipped=no_alert_email_from until ALERT_EMAIL_FROM is added')
+
+          # ── 6. Loose ends ────────────────────────────────────────────
+          q('auth audit log sanity', """
+              select count(*) as rows_7d,
+                     max(created_at) as newest
+              from auth.audit_log_entries
+              where created_at > now() - interval '7 days'""",
+            'zero here means Supabase is not writing audit rows at all (then the empty owner lookup is explained)')
+
+          q('auth audit newest 3', """
+              select created_at, payload->>'action' as action,
+                     payload->>'actor_username' as who
+              from auth.audit_log_entries
+              order by created_at desc limit 3""",
+            'what an audit row looks like on this instance', attempts=2)
+
+          q('event tables after the flood cleanup', """
+              select schemaname, relname, n_live_tup, n_dead_tup
+              from pg_stat_user_tables
+              where relname in ('lead_events', 'activities', 'messages', 'operator_alerts')
+              order by schemaname, relname""",
+            'lead_events should stay a few thousand; dead tuples shrink after autovacuum')
+
+          # ── 7. The one write, opt-in ─────────────────────────────────
+          if finish_drain:
+              q('unschedule the finished drain job', """
+                  select cron.unschedule('karnaf_drain_cron_history_once') as unscheduled
+                  where exists (select 1 from cron.job where jobname = 'karnaf_drain_cron_history_once')""",
+                'after this, Deploy Supabase can apply migration 125 (index + nightly purge)')
+          else:
+              print('== finish_drain not set; no writes performed ==')
           EOF

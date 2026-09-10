@@ -2,8 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    # Feature branches too: `deno check` is the only gate that catches a
+    # type error in an Edge Function, and waiting for a PR meant the
+    # branch could be deployed to production unverified.
+    branches: [master, main, 'claude/**']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

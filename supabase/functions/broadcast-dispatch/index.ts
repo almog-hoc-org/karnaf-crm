@@ -20,7 +20,7 @@ import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
 import { enqueueAllowance, resolvePacing, shouldPauseBroadcast } from '../_shared/broadcast-pacing.ts';
-import { notifyTelegram } from '../_shared/notify-telegram.ts';
+import { notifyOperator } from '../_shared/operator-alert.ts';
 import {
   addSubscriberToList,
   createRavmesserList,
@@ -182,8 +182,12 @@ Deno.serve(async (req) => {
           failed_count: progress.failed,
           skipped_count: progress.skipped,
         }).eq('id', b.id);
-        await notifyTelegram({
-          source: 'broadcast-dispatch',
+        await notifyOperator(supabase, {
+          kind: 'broadcast_paused',
+          // Per broadcast: a paused campaign is announced once, not on every
+          // dispatch tick that re-reads it.
+          dedupeKey: `broadcast_paused:${b.id}`,
+          throttleMinutes: 24 * 60,
           severity: 'warn',
           title: 'תפוצה הושהתה אוטומטית',
           lines: [
@@ -447,8 +451,10 @@ async function failEmailBroadcast(
   reason: string,
 ): Promise<void> {
   await supabase.from('broadcasts').update({ status: 'failed' }).eq('id', broadcastId);
-  await notifyTelegram({
-    source: 'broadcast-dispatch',
+  await notifyOperator(supabase, {
+    kind: 'broadcast_email_failed',
+    dedupeKey: `broadcast_email_failed:${broadcastId}`,
+    throttleMinutes: 24 * 60,
     severity: 'warn',
     title: 'תפוצת מייל נכשלה',
     lines: [reason],

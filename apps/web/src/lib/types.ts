@@ -686,6 +686,8 @@ export interface DashboardSummary {
   // True inbound>outbound counter computed in dashboard-summary (any
   // ownership, no aging floor) — matches the inbox reply lane.
   awaitingReplyNow?: number;
+  /** True when awaitingReplyNow hit the RPC's row cap and is a floor, not a total. */
+  awaitingReplyCapped?: boolean;
   hotLeadsNow: number;
   paymentPendingNow: number;
   slaRiskCount: number;

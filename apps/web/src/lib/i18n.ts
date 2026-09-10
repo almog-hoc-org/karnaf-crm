@@ -145,6 +145,8 @@ const HE = {
   account_created_pending_admin: 'המשתמש נוצר. ממתין להפעלת פרופיל על ידי מנהל המערכת.',
   password_too_short: 'הסיסמה חייבת לכלול לפחות 8 תווים',
   user_no_active_profile: 'המשתמש מחובר אך אין לו פרופיל פעיל. צרו קשר עם מנהל המערכת.',
+  profile_load_failed: 'לא הצלחנו לטעון את הפרופיל שלך מהשרת. זו תקלה זמנית בצד השרת, לא בעיית הרשאות — נסו שוב בעוד רגע.',
+  retry: 'נסו שוב',
 
   // Dashboard
   dashboard_title: 'מסך מצב',
@@ -308,6 +310,8 @@ const EN: Partial<Record<keyof typeof HE, string>> = {
   account_created_pending_admin: 'Account created. Waiting for an admin to activate the profile.',
   password_too_short: 'Password must be at least 8 characters',
   user_no_active_profile: 'You are signed in but your profile is not active. Contact an admin.',
+  profile_load_failed: 'We could not load your profile from the server. This is a temporary server problem, not a permissions one — try again in a moment.',
+  retry: 'Try again',
   dashboard_title: 'Dashboard',
   kpi_leads_today: 'Leads today',
   kpi_unanswered: 'Unanswered',

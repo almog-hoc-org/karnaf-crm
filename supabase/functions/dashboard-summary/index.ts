@@ -20,10 +20,18 @@ Deno.serve(async (req) => {
   // renders. The old hand-rolled predicate silently disagreed with the
   // inbox (different exclusions, 2000-row cap), so the KPI and the
   // "לענות עכשיו" lane showed different numbers.
-  const { data: inboxRows } = await supabase.rpc('attention_inbox', { p_limit: 500 });
-  const awaitingReplyNow = ((inboxRows ?? []) as Array<{ kind: string }>)
+  const INBOX_LIMIT = 500;
+  const { data: inboxRows } = await supabase.rpc('attention_inbox', { p_limit: INBOX_LIMIT });
+  const rows = (inboxRows ?? []) as Array<{ kind: string }>;
+  const awaitingReplyNow = rows
     .filter((r) => r.kind === 'awaiting_reply' || r.kind === 'mia_reply').length;
+  // The RPC is capped, so this is a count of the first 500 attention rows,
+  // not of everything. When the cap is hit the number is a floor and the UI
+  // must say so — rendering a hard "500" for an unknown larger backlog is
+  // the kind of quiet inaccuracy that makes an operator distrust the whole
+  // dashboard once they notice it.
+  const awaitingReplyCapped = rows.length >= INBOX_LIMIT;
 
-  const summary = { ...(data as Record<string, unknown>), awaitingReplyNow };
+  const summary = { ...(data as Record<string, unknown>), awaitingReplyNow, awaitingReplyCapped };
   return jsonResponse(req, { ok: true, summary });
 });

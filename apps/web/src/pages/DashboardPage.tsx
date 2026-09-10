@@ -40,7 +40,13 @@ export function DashboardPage() {
     { name: 'ai_watchdog', label: 'שומר AI', maxAgeMs: 20 * 60_000 },
     { name: 'nightly_jobs', label: 'עבודות לילה', maxAgeMs: 26 * 60 * 60_000 },
   ];
-  const staleWorkers = heartbeatsQ.data
+  // An EMPTY result is not four dead workers — it is far more likely an RLS
+  // filter or a failed request, and rendering "כל התהליכים לא רצים" over a
+  // perfectly healthy system is worse than saying nothing, because it
+  // teaches the operator to ignore the banner. Distinguish the two.
+  const heartbeatsUnavailable = !!heartbeatsQ.error
+    || (Array.isArray(heartbeatsQ.data) && heartbeatsQ.data.length === 0);
+  const staleWorkers = heartbeatsQ.data && !heartbeatsUnavailable
     ? WATCHED_WORKERS.filter((w) => {
       const hb = heartbeatsQ.data!.find((h) => h.name === w.name);
       if (!hb) return true;
@@ -52,6 +58,15 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {heartbeatsUnavailable ? (
+        <section className="kf-tone-warning rounded-xl p-4 text-sm ring-1 ring-inset" role="status">
+          <strong className="block text-base">מצב התהליכים המתוזמנים לא זמין</strong>
+          <p className="mt-1">
+            לא הצלחנו לקרוא את דיווחי החיים של העובדים. ייתכן שזו תקלת הרשאות או תקלת רשת —
+            זה לא אומר שהתהליכים אינם רצים.
+          </p>
+        </section>
+      ) : null}
       {heartbeatStale ? (
         <section className="kf-tone-danger rounded-xl p-4 text-sm ring-1 ring-inset" role="alert">
           <div className="flex items-baseline justify-between gap-3">
@@ -106,6 +121,7 @@ export function DashboardPage() {
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard label="ממתינים לתשובה" value={s.awaitingReplyNow ?? s.unansweredNow}
                  tone={(s.awaitingReplyNow ?? s.unansweredNow) > 0 ? 'warn' : 'normal'}
+                 atLeast={s.awaitingReplyCapped === true}
                  to="/leads?awaiting=true" icon={<IconClock />} />
         <KpiCard label={t('kpi_hot_leads')} value={s.hotLeadsNow} tone={s.hotLeadsNow > 0 ? 'hot' : 'normal'}
                  to="/leads?heat=hot" icon={<IconFlame />} />
@@ -288,10 +304,12 @@ function SourceHealthSection({
 }
 
 function KpiCard({
-  label, value, tone = 'normal', to, icon,
+  label, value, tone = 'normal', to, icon, atLeast = false,
 }: {
   label: string; value: number; tone?: 'normal' | 'warn' | 'hot';
   to?: string; icon?: React.ReactNode;
+  /** The number is a floor (a capped query), not a total — renders "500+". */
+  atLeast?: boolean;
 }) {
   const toneClass = tone === 'hot' ? 'text-rose-700' : tone === 'warn' ? 'text-amber-700' : 'text-slate-900';
   const accent = tone === 'hot' ? 'bg-rose-50 text-rose-600'
@@ -301,7 +319,12 @@ function KpiCard({
     <div className="kf-card flex items-start justify-between gap-3 p-4 transition group-hover:shadow-md">
       <div>
         <div className="text-xs text-slate-500">{label}</div>
-        <div className={`mt-1 text-3xl font-semibold tabular-nums ${toneClass}`}>{value}</div>
+        <div
+          className={`mt-1 text-3xl font-semibold tabular-nums ${toneClass}`}
+          title={atLeast ? 'המספר האמיתי עשוי להיות גבוה יותר — השאילתה מוגבלת' : undefined}
+        >
+          {value}{atLeast ? '+' : ''}
+        </div>
       </div>
       {icon ? (
         <span aria-hidden="true" className={`grid h-9 w-9 place-items-center rounded-lg ${accent}`}>{icon}</span>

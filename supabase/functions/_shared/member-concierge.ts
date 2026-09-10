@@ -12,7 +12,7 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { logLeadEvent, transitionLeadStatus, updateLeadFields, type LeadRow } from './lead-service.ts';
 import { ensurePendingQueueItem } from './queue-service.ts';
 import { sendWhatsAppText } from './whatsapp-provider.ts';
-import { notifyTelegram } from './notify-telegram.ts';
+import { notifyOperator } from './operator-alert.ts';
 import { canTransition } from './state-machine.ts';
 import { log } from './logger.ts';
 
@@ -247,14 +247,17 @@ export async function handleMemberConcierge(
     await logLeadEvent(supabase, input.lead.id, 'member_expert_requested', 'system', {
       correlation_id: input.correlationId,
     }, input.conversationId);
-    await notifyTelegram({
-      source: 'member-concierge',
+    await notifyOperator(supabase, {
+      kind: 'member_expert_requested',
+      dedupeKey: `member_expert:${input.lead.id}`,
+      throttleMinutes: config.expertSlaHours * 60,
       severity: 'warn',
       title: 'חבר תוכנית מבקש מומחה',
       lines: [
         `ליד: ${input.lead.full_name ?? input.phone}`,
         `SLA: ${config.expertSlaHours} שעות`,
       ],
+      link: `https://karnaf-crm.vercel.app/leads/${input.lead.id}`,
       correlationId: input.correlationId,
     });
     return { handled: true, action };

@@ -63,6 +63,13 @@ verify_jwt = false
 [functions.sla-worker]
 verify_jwt = false
 
+# Called by pg_cron (run_operator_digest, migration 122) with the worker
+# secret as bearer — not a JWT. Without this entry the gateway rejected every
+# call with 401 before the function ran, so the hourly digest and the
+# intake-silence watchdog were silent from the day they shipped.
+[functions.operator-digest]
+verify_jwt = false
+
 [functions.daily-sales-inbox]
 verify_jwt = false
 

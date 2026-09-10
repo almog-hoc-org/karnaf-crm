@@ -200,10 +200,33 @@ export function LoginPage() {
           )}
         </p>
 
-        {auth.session && !auth.role ? (
-          <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            {t('user_no_active_profile')}
-          </p>
+        {/* A session with no role is one of two very different things: the
+            profile lookup failed (server problem — retry), or it succeeded
+            and found no active row (permissions — talk to an admin). While
+            the lookup is still running, say nothing rather than flash the
+            wrong one. */}
+        {auth.session && !auth.loading ? (
+          auth.profileError ? (
+            <div role="alert" className="space-y-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-800">
+              <p>{t('profile_load_failed')}</p>
+              <p dir="ltr" className="break-all font-mono text-[11px] text-red-700/80">{auth.profileError}</p>
+              <div className="flex gap-4">
+                <button type="button" className="font-medium underline" onClick={() => void auth.reloadProfile()}>
+                  {t('retry')}
+                </button>
+                <button type="button" className="font-medium underline" onClick={() => void auth.signOut()}>
+                  {t('sign_out')}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <p>{t('user_no_active_profile')}</p>
+              <button type="button" className="font-medium underline" onClick={() => void auth.signOut()}>
+                {t('sign_out')}
+              </button>
+            </div>
+          )
         ) : null}
       </form>
     </main>

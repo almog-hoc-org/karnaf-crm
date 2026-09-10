@@ -39,6 +39,7 @@ import {
   SOURCE_LABELS,
   labelOr,
   formatDateTime, formatRelative,
+  whatsappHref,
 } from '@/lib/format';
 import type {
   DealRow,
@@ -290,13 +291,22 @@ export function LeadDetailPage() {
   const canEditMeta = auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia';
 
   if (detailQ.isLoading) return <LeadDetailSkeleton />;
-  if (detailQ.error)
-    return (
-      <p className="text-rose-600">
-        {t('error_prefix')}: {(detailQ.error as Error).message}
-      </p>
-    );
-  if (!detailQ.data) return null;
+  // Data before error, deliberately. This page polls every 5 seconds, so
+  // checking `error` first meant a single transient 500 blanked a screen
+  // whose lead, chat and history were still in memory — the operator lost
+  // their place mid-task. A failed refetch now shows a banner over the
+  // last good data; only a failure with nothing to show takes the page.
+  if (!detailQ.data) {
+    if (detailQ.error) {
+      return (
+        <p className="text-rose-600">
+          {t('error_prefix')}: {(detailQ.error as Error).message}
+        </p>
+      );
+    }
+    return null;
+  }
+  const refreshFailed = !!detailQ.error;
 
   // Tier 5.C — tasks + events are now rendered exclusively in the
   // ActivityFeed tab (Tier 0.F merged them into the activities feed). The detail
@@ -330,6 +340,12 @@ export function LeadDetailPage() {
       <Link to="/leads" className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline">
         ← חזרה לרשימה
       </Link>
+
+      {refreshFailed ? (
+        <div className="kf-tone-warning rounded-lg px-3 py-2 text-sm ring-1 ring-inset" role="status">
+          הרענון האחרון נכשל — המידע שמוצג עשוי להיות לא עדכני. המערכת ממשיכה לנסות.
+        </div>
+      ) : null}
 
       {/* Tier 6.B — header pass two. The previous header had THREE
           places saying "AI is handling this lead" (CurrentOwnerLine
@@ -615,7 +631,7 @@ export function LeadDetailPage() {
             </button>
           </div>
           {conversationTab === 'chat' ? (
-            <ChatTimeline activities={activities} />
+            <ChatTimeline messages={messages} conversations={conversations} loadFailed={refreshFailed} />
           ) : (
             <ActivityFeed activities={activities} />
           )}
@@ -687,20 +703,20 @@ export function LeadDetailPage() {
                 k="שם מלא"
                 v={lead.full_name}
                 editable={canEditMeta}
-                onSave={(next) => updateMeta.mutate({ full_name: next })}
+                onSave={(next) => updateMeta.mutateAsync({ full_name: next })}
               />
               <EditableRow
                 k="אימייל"
                 v={lead.email}
                 editable={canEditMeta}
                 dir="ltr"
-                onSave={(next) => updateMeta.mutate({ email: next })}
+                onSave={(next) => updateMeta.mutateAsync({ email: next })}
               />
               <EditableRow
                 k="עיר"
                 v={lead.city}
                 editable={canEditMeta}
-                onSave={(next) => updateMeta.mutate({ city: next })}
+                onSave={(next) => updateMeta.mutateAsync({ city: next })}
               />
               <Row k="טלפון" v={lead.phone} />
             </dl>
@@ -728,7 +744,7 @@ export function LeadDetailPage() {
                   { value: 'presale', label: 'פריסייל / חתימה' },
                   { value: 'investor_mentorship', label: 'ליווי משקיעים' },
                 ]}
-                onSave={(next) => updateMeta.mutate({ primary_track: next as 'program' | 'presale' | 'investor_mentorship' | null })}
+                onSave={(next) => updateMeta.mutateAsync({ primary_track: next as 'program' | 'presale' | 'investor_mentorship' | null })}
               />
               <EditableEnumRow
                 k="חום"
@@ -740,7 +756,7 @@ export function LeadDetailPage() {
                   { value: 'cool', label: 'צונן' },
                   { value: 'cold', label: 'קר' },
                 ]}
-                onSave={(next) => updateMeta.mutate({ lead_heat: next as LeadHeat | null })}
+                onSave={(next) => updateMeta.mutateAsync({ lead_heat: next as LeadHeat | null })}
               />
               <EditableEnumRow
                 k="התאמה"
@@ -751,7 +767,7 @@ export function LeadDetailPage() {
                   { value: 'medium', label: 'בינונית' },
                   { value: 'low', label: 'נמוכה' },
                 ]}
-                onSave={(next) => updateMeta.mutate({ lead_fit: next as LeadFit | null })}
+                onSave={(next) => updateMeta.mutateAsync({ lead_fit: next as LeadFit | null })}
               />
               <EditableEnumRow
                 k="בשלות"
@@ -763,7 +779,7 @@ export function LeadDetailPage() {
                   { value: 'considering', label: 'שוקל' },
                   { value: 'exploring', label: 'מתעניין' },
                 ]}
-                onSave={(next) => updateMeta.mutate({ readiness_level: next as ReadinessLevel | null })}
+                onSave={(next) => updateMeta.mutateAsync({ readiness_level: next as ReadinessLevel | null })}
               />
             </dl>
 
@@ -775,21 +791,21 @@ export function LeadDetailPage() {
                   v={lead.inquiry_type}
                   editable={canEditMeta}
                   options={INQUIRY_OPTIONS}
-                  onSave={(next) => updateMeta.mutate({ inquiry_type: next as InquiryType | null })}
+                  onSave={(next) => updateMeta.mutateAsync({ inquiry_type: next as InquiryType | null })}
                 />
                 <EditableEnumRow
                   k="מוצר"
                   v={lead.product_interest}
                   editable={canEditMeta}
                   options={PRODUCT_OPTIONS}
-                  onSave={(next) => updateMeta.mutate({ product_interest: next as ProductInterest | null })}
+                  onSave={(next) => updateMeta.mutateAsync({ product_interest: next as ProductInterest | null })}
                 />
                 <EditableEnumRow
                   k="מסלול טיפול"
                   v={lead.intake_segment}
                   editable={canEditMeta}
                   options={SEGMENT_OPTIONS}
-                  onSave={(next) => updateMeta.mutate({ intake_segment: next as IntakeSegment | null })}
+                  onSave={(next) => updateMeta.mutateAsync({ intake_segment: next as IntakeSegment | null })}
                 />
                 <Row
                   k="ביטחון סיווג"
@@ -818,7 +834,7 @@ export function LeadDetailPage() {
                   editable={canEditMeta}
                   saving={updateMeta.isPending && 'goal_summary' in (updateMeta.variables ?? {})}
                   maxLength={600}
-                  onSave={(next) => updateMeta.mutate({ goal_summary: next })}
+                  onSave={(next) => updateMeta.mutateAsync({ goal_summary: next })}
                 />
                 <EditableRow
                   k="כאב מרכזי"
@@ -826,7 +842,7 @@ export function LeadDetailPage() {
                   editable={canEditMeta}
                   saving={updateMeta.isPending && 'pain_point_summary' in (updateMeta.variables ?? {})}
                   maxLength={600}
-                  onSave={(next) => updateMeta.mutate({ pain_point_summary: next })}
+                  onSave={(next) => updateMeta.mutateAsync({ pain_point_summary: next })}
                 />
                 <EditableRow
                   k="חסם עיקרי"
@@ -834,21 +850,21 @@ export function LeadDetailPage() {
                   editable={canEditMeta}
                   saving={updateMeta.isPending && 'main_blocker' in (updateMeta.variables ?? {})}
                   maxLength={600}
-                  onSave={(next) => updateMeta.mutate({ main_blocker: next })}
+                  onSave={(next) => updateMeta.mutateAsync({ main_blocker: next })}
                 />
                 <EditableRow
                   k="הקשר החלטה"
                   v={lead.decision_context}
                   editable={canEditMeta}
                   maxLength={600}
-                  onSave={(next) => updateMeta.mutate({ decision_context: next })}
+                  onSave={(next) => updateMeta.mutateAsync({ decision_context: next })}
                 />
                 <EditableRow
                   k="פעולה הבאה"
                   v={lead.next_action_type}
                   editable={canEditMeta}
                   saving={updateMeta.isPending && 'next_action_type' in (updateMeta.variables ?? {})}
-                  onSave={(next) => updateMeta.mutate({ next_action_type: next })}
+                  onSave={(next) => updateMeta.mutateAsync({ next_action_type: next })}
                 />
                 <Row k="עד" v={lead.next_action_due_at ? formatDateTime(lead.next_action_due_at) : null} />
                 <Row k="סטטוס תשלום" v={lead.payment_status} />
@@ -858,7 +874,7 @@ export function LeadDetailPage() {
                     v={lead.lost_reason}
                     editable={canEditMeta}
                     maxLength={600}
-                  onSave={(next) => updateMeta.mutate({ lost_reason: next })}
+                  onSave={(next) => updateMeta.mutateAsync({ lost_reason: next })}
                   />
                 ) : null}
               </dl>
@@ -2154,7 +2170,7 @@ function EditableRow({
   saving?: boolean;
   maxLength?: number;
   dir?: 'ltr' | 'rtl';
-  onSave: (next: string | null) => void;
+  onSave: (next: string | null) => void | Promise<unknown>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(v ?? '');
@@ -2175,7 +2191,13 @@ function EditableRow({
     const next = draft.trim();
     setPending(next);
     setEditing(false);
-    onSave(next.length ? next : null);
+    // Same failure mode as EditableEnumRow: `pending` used to clear only when
+    // the server prop changed, so a rejected save left the row stuck showing
+    // "שומר..." with no edit button and no way back short of a reload.
+    void Promise.resolve(onSave(next.length ? next : null)).catch(() => {
+      setPending(null);
+      setEditing(true);
+    });
   }
 
   if (!editable) return <Row k={k} v={v} />;
@@ -2258,11 +2280,16 @@ function EditableEnumRow({
   v: string | null | undefined;
   editable: boolean;
   options: Array<{ value: string; label: string }>;
-  onSave: (next: string | null) => void;
+  onSave: (next: string | null) => void | Promise<unknown>;
 }) {
   // Optimistic: show the picked value immediately instead of snapping
   // back to the stale server prop until the refetch lands; disable the
   // select while the write is in flight to prevent racing double writes.
+  //
+  // The lock has to be released on failure too. It used to clear only when
+  // the server prop `v` changed — so a rejected save (offline, 403, 500)
+  // left the select disabled forever and the only way out was a page
+  // reload, on the exact screen where an operator is triaging fastest.
   const [pending, setPending] = useState<string | null>(null);
   useEffect(() => {
     setPending(null);
@@ -2285,7 +2312,11 @@ function EditableEnumRow({
           onChange={(e) => {
             const next = e.target.value;
             setPending(next);
-            onSave(next.length ? next : null);
+            void Promise.resolve(onSave(next.length ? next : null)).catch(() => {
+              // The mutation surfaces its own toast; here we only undo the
+              // optimistic value so the operator can retry or pick again.
+              setPending(null);
+            });
           }}
         >
           <option value="">— ללא —</option>
@@ -2391,8 +2422,10 @@ const CLASSIFICATION_CONFIDENCE_LABELS: Record<'high' | 'medium' | 'low', string
 
 
 function waLink(phone: string): string {
-  const digits = phone.replace(/[^\d+]/g, '').replace(/^\+/, '');
-  return `https://wa.me/${digits}`;
+  // Delegates to the shared normalizer so 050… becomes 97250…; the old local
+  // version only stripped the plus, so every locally-formatted number produced
+  // a dead wa.me link.
+  return whatsappHref(phone) ?? `https://wa.me/${phone.replace(/\D/g, '')}`;
 }
 
 function CallLogForm({

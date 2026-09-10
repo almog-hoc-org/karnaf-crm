@@ -1,5 +1,6 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { runActions, type EngineContext } from './journey-actions.ts';
+import { evaluateConditions } from './automation-engine.ts';
 import type { LeadRow } from './lead-service.ts';
 
 interface JourneyRunRow {
@@ -18,6 +19,9 @@ interface JourneyDefinitionRow {
   steps: Array<{
     name?: string;
     delay_hours?: number;
+    // Documented in migration 067 as "optional; if it doesn't match, step
+    // is skipped (logged) and runner moves to the next" — and never read.
+    conditions?: Record<string, unknown>;
     actions?: Array<Record<string, unknown>>;
   }>;
   metadata?: Record<string, unknown> | null;
@@ -105,7 +109,22 @@ export async function advanceDueJourneys(
       correlationId,
       data: { journey_run_id: run.id, journey_code: def.code, step_name: step.name ?? null },
     };
-    const results = await runActions(supabase, (step.actions ?? []) as unknown as Parameters<typeof runActions>[1], ctx);
+
+    // Per-step conditions, evaluated at last. Every seeded journey step in
+    // migrations 067 and 068 carries {lead.do_not_contact eq false} — a DNC
+    // gate that was never read, so the flag on the step did nothing and a
+    // journey kept stepping through a lead who had asked us to stop. (The
+    // dispatch guard catches the send itself; this stops the step running
+    // at all, which is what the definition says it should do.)
+    // A non-matching step is skipped and the run advances, per migration
+    // 067's schema comment.
+    const conditionsPass = evaluateConditions(step.conditions, {
+      lead: lead as unknown as Record<string, unknown>,
+      journey: { code: def.code, step: run.current_step },
+    });
+    const results = conditionsPass
+      ? await runActions(supabase, (step.actions ?? []) as unknown as Parameters<typeof runActions>[1], ctx)
+      : [{ type: 'step', status: 'skipped' as const, reason: 'step_conditions_not_met' }];
     const failed = results.some((r) => r.status === 'failed');
     if (failed) {
       await supabase.from('journey_runs').update({
