@@ -181,11 +181,16 @@ karnaf-crm/
 | קליטה שקטה מ-27.8 | לא מהקוד — Meta | `webhook_inbox` מחווט; `meta-template-status action=subscription`; watchdog לשקט |
 | באנר אדום שקרי | heartbeat רק בהצלחה מלאה; `[]` מ-RLS = "כולם מתים" | heartbeat על כל ריצה; מצב "לא זמין" נפרד |
 
-**עדיין פתוח:**
-- **מסד הנתונים** — ב-4.9 מ-16:20 UTC המסד סירב חיבורים (544). ראו `docs/runbooks/database-unreachable.md`. **נפתר 9.9** אחרי Restart project: המסד עונה, כל ה-heartbeats בדקות, וואטסאפ להתראות מגיע (`operator_alerts.channel_results.whatsapp.ok=true`). מייל עדיין מדולג — חסר `ALERT_EMAIL_FROM`.
-- **"לא מצליח להתחבר" (9.9)** — לא בעיית חשבון: `auth.users` תקין, `profiles.role=owner`, `is_active=true`. הסימפטום היה `AuthProvider` שבלע את שגיאת שאילתת הפרופיל בזמן שהמסד היה תקוע והציג "אין פרופיל פעיל". תוקן: `profileError` + ניסיון חוזר + "נסו שוב"/"יציאה" במסך הכניסה, ריפוי עצמי על `TOKEN_REFRESHED`. אבחון: `ops-skipped-leads.yml` (Actions → Run workflow).
-- **כללי הזמן** — כבויים (dry-run). דוח: `system_heartbeats.metadata.timeRules.matches`. להדליק אחד-אחד.
-- **`active_hours` נאכף עכשיו** ב-`dispatch-outbound` (דחייה, לא ביטול): שליחה יזומה בשישי תמתין ליום ראשון.
+**מצב 2026-09-10 (אחרי ה-Restart):**
+- **מסד הנתונים** — נפתר 9.9 אחרי Restart project. כל ה-heartbeats בדקות, תור pg_net ריק, `lead_events` ≈5k שורות.
+- **היסטוריית pg_cron** — ה-drain (job 14) סיים; בוטל ב-10.9. מיגרציה 125 הוחלה (Deploy #43): ניקוי לילי ל-14 יום. **בלי אינדקס** — `cron.job_run_details` בבעלות supabase_admin ו-postgres לא רשאי ליצור עליו אינדקס (42501).
+- **הדייג'סט השעתי מעולם לא רץ** — ל-`operator-digest` לא הייתה כניסה ב-`supabase/config.toml`, כלומר `verify_jwt=true`, וה-gateway דחה את ה-bearer של pg_cron ב-401 `UNAUTHORIZED_INVALID_JWT_FORMAT` בכל שעה (מתועד ב-`net._http_response`). תוקן ב-10.9 ונפרס. זה גם למה לא הייתה התראת `intake_silence` על 3 ימים בלי הודעה נכנסת (האחרונה 7.9 05:01 UTC).
+- **`sla_tick` שלח וואטסאפ זהה כל 70 דק'** — מונים עומדים (payment_pending, deal_stalled, meeting_outcome_pending) הפעילו את ההתראה בכל טיק אבל לא היו במפתח ה-dedupe, וה-throttle היה 60 דק'. עכשיו: כל המונים במפתח, צורה זהה חוזרת פעם ב-6 שעות.
+- **דוח ה-dry-run (10.9 14:00 UTC):** 297 לידים נסרקו, **0 התאמות** בכל הכללים המופעלים (b5, b6, b7, b14 על `time.elapsed`; b3 על `deal.investor_open`). `AUTOMATION_TIME_RULES=live` עדיין לא הוגדר — ממתין לאישור הבעלים כלל-כלל.
+- **התראות** — וואטסאפ מגיע ✅. מייל מדולג: חסר `ALERT_EMAIL_FROM`.
+- **Meta מגיע ל-webhook** — `webhook_inbox` מקבל callbacks של סטטוס אחרי כל התראה יוצאת (`unsupported_payload` = עדכון סטטוס, לא הודעה). כלומר החיבור תקין; פשוט אין הודעות נכנסות מלקוחות מאז 7.9.
+- **`auth.audit_log_entries` ריק** (0 שורות ב-7 ימים) — Supabase לא כותב לשם במופע הזה. לא תקלה שלנו.
+- **PR #84 חסום למיזוג** — כל ה-checks ירוקים, אבל הגנת הענף דורשת review מאשר, והמחבר (חשבון הבעלים) לא יכול לאשר את עצמו. הבעלים: Settings → Branches → כלל `master` → לבטל "Require approvals" (או Bypass במסך ה-PR). אחרי המיזוג Vercel פורס את הפרונט (תיקון הכניסה, `/admin/status`).
 - מדריך לבעלים: `docs/runbooks/owner-step-by-step.md`.
 
 

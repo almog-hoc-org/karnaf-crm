@@ -210,6 +210,27 @@ vacuum (full, analyze) activities;
 
 ---
 
+## בעיה 6 — 🔀 PR #84 לא נותן למזג
+
+### מה קרה, במילה אחת
+כל הבדיקות ירוקות, אבל ההגנה על הענף `master` דורשת "אישור" של מישהו אחר — ואתה המחבר, אז אתה לא יכול לאשר את עצמך. בלי המיזוג, תיקון מסך הכניסה ומסך `/admin/status` לא מגיעים לאתר.
+
+### שלב 6.1 — לבטל את דרישת האישור (פעם אחת)
+👉 <https://github.com/almog-hoc-org/karnaf-crm/settings/branches>
+1. ליד הכלל של `master` לחץ **Edit**.
+2. בטל את הסימון **Require approvals** (או שנה ל-0). השאר את "Require status checks" מסומן.
+3. **Save changes**.
+
+### שלב 6.2 — למזג
+👉 <https://github.com/almog-hoc-org/karnaf-crm/pull/84> → **Merge pull request** → **Confirm merge**.
+
+> חלופה בלי לשנות הגדרות: באותו מסך PR, סמן **"Merge without waiting for requirements to be met"** (מופיע רק למנהל).
+
+### ✅ איך יודעים שנפתר?
+תוך ~3 דקות Vercel מפרסם. פתח <https://karnaf-crm.vercel.app/admin/status> — אם המסך נטען, המיזוג הגיע לאתר.
+
+---
+
 ## 📋 סיכום — סדר הפעולות
 
 ```
@@ -223,6 +244,7 @@ vacuum (full, analyze) activities;
 [ ] 3.5      השב לוואטסאפ
 [ ] 4        חכה לטבלה ממני
 [ ] 5.1      כניסה בחלון גלישה בסתר → נכנסת?
+[ ] 6        GitHub: למזג PR #84 (ראה בעיה 6)
 ```
 
 ---
