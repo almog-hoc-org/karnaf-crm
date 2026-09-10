@@ -118,9 +118,31 @@ jobs:
             'silence in hours during the day = webhook still not delivering')
 
           q('webhook_inbox newest 5', """
-              select received_at, status, left(coalesce(error, ''), 100) as error
+              select received_at, source, processed_status,
+                     left(coalesce(error_message, ''), 100) as error
               from webhook_inbox order by received_at desc limit 5""",
             'rows here = Meta is calling the webhook at all')
+
+          # The digest is the only thing that would have said "no inbound for
+          # 3 days". Did its cron fire, and what did the gateway answer?
+          q('operator digest cron runs (newest 5)', """
+              select d.status, d.start_time, left(d.return_message, 120) as message
+              from cron.job_run_details d
+              join cron.job j on j.jobid = d.jobid
+              where j.jobname = 'karnaf_operator_digest'
+              order by d.start_time desc limit 5""",
+            'succeeded = net.http_post was queued; the HTTP answer is below', attempts=2)
+
+          q('edge-function answers seen by pg_net (last 6h)', """
+              select created, status_code, left(content::text, 160) as body
+              from net._http_response
+              where content::text like '%%nothing_new%%'
+                 or content::text like '%%silenceAlerted%%'
+                 or content::text like '%%Unauthorized%%'
+                 or content::text like '%%Invalid JWT%%'
+                 or status_code >= 400
+              order by created desc limit 8""",
+            '401/Invalid JWT on the digest = gateway verify_jwt rejected the worker bearer')
 
           q('intake alerts', """
               select kind, delivered, created_at, left(title, 80) as title
@@ -151,10 +173,10 @@ jobs:
             'what an audit row looks like on this instance', attempts=2)
 
           q('event tables after the flood cleanup', """
-              select relname, n_live_tup, n_dead_tup
+              select schemaname, relname, n_live_tup, n_dead_tup
               from pg_stat_user_tables
               where relname in ('lead_events', 'activities', 'messages', 'operator_alerts')
-              order by relname""",
+              order by schemaname, relname""",
             'lead_events should stay a few thousand; dead tuples shrink after autovacuum')
 
           # ── 7. The one write, opt-in ─────────────────────────────────
