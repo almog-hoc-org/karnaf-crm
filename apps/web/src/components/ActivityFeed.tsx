@@ -64,6 +64,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   lead_journey_classified: 'הליד סווג למסע',
   engine_internal_note: 'הערת מנוע אוטומציה',
   email_list_added: 'נוסף לרשימת דיוור',
+  consent_granted: 'נרשם אישור דיוור',
   // Lifecycle / manual actions
   lead_created: 'ליד נוצר',
   lead_manual_created: 'ליד נוצר ידנית',

@@ -151,6 +151,20 @@ jobs:
               order by created_at desc limit 5""",
             'intake_silence rows = the watchdog noticed; inbound rows = a lead wrote')
 
+          q('email consent coverage (landing-page leads)', """
+              select coalesce(consent_email::text, 'null') as consent_email, count(*) as leads
+              from leads
+              where source = 'landing_page'
+                 or source_detail in (select slug from landing_pages)
+              group by 1 order by 1""",
+            'after migration 126: null should be 0; false = explicit refusals, left alone')
+
+          q('consent_granted events', """
+              select (event_payload->>'backfill')::boolean as backfill, count(*)
+              from lead_events where event_type = 'consent_granted'
+              group by 1 order by 1""",
+            'backfill=true rows = migration 126; backfill=false = trigger on new leads')
+
           # ── 5. Alert channels ────────────────────────────────────────
           q('alert ledger (newest 5)', """
               select kind, delivered, channel_results, created_at

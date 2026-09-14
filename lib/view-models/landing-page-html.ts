@@ -88,7 +88,7 @@ ${lp.subheadline ? `<meta property="og:description" content="${esc(lp.subheadlin
       <p id="form-status" style="margin:12px 0 0; font-size:14px; text-align:center; color:#475569;"></p>
     </form>
   </div>
-  <p style="text-align:center; margin-top:16px; font-size:12px; color:#94a3b8;">בשליחת הטופס אני מאשר/ת יצירת קשר מצוות קרנף נדל"ן</p>
+  <p style="text-align:center; margin-top:16px; font-size:12px; color:#94a3b8;">בשליחת הטופס אני מאשר/ת יצירת קשר מצוות קרנף נדל"ן וקבלת דיוור במייל. ניתן להסיר בכל עת.</p>
 </div>
 <script>
 (function () {
