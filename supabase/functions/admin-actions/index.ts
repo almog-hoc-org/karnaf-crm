@@ -104,6 +104,8 @@ interface ActionPayload {
     intake_segment?: string | null;
     primary_track?: string | null;
     interest_topic?: string | null;
+    consent_email?: boolean | null;
+    consent_whatsapp?: boolean | null;
   };
 }
 
@@ -161,6 +163,12 @@ const META_ENUM_FIELDS: Record<string, Set<string>> = {
   ]),
   primary_track: new Set(['program', 'presale', 'investor_mentorship']),
 };
+// Consent flags. Tri-state: true = opted in, false = refused, null = never
+// asked. Editable here so an operator can record a consent given by phone
+// or in person — until 2026-09-14 no sanctioned path could write these at
+// all, and the only way to fix a wrong value was a migration. Every change
+// is logged as consent_granted / consent_revoked with basis 'manual'.
+const META_BOOL_FIELDS = new Set(['consent_email', 'consent_whatsapp']);
 // Per-field caps. The old blanket 280 silently amputated operator notes
 // and long AI-written summaries (open row + save = data loss); free-prose
 // fields now get room to breathe while label-ish fields stay short.
@@ -174,11 +182,15 @@ const META_FIELD_MAX: Record<string, number> = {
   lost_reason: 600,
 };
 
-function sanitiseMetaUpdates(input: ActionPayload['metaUpdates']): Record<string, string | null> | null {
+type MetaValue = string | boolean | null;
+
+function sanitiseMetaUpdates(input: ActionPayload['metaUpdates']): Record<string, MetaValue> | null {
   if (!input || typeof input !== 'object') return null;
-  const out: Record<string, string | null> = {};
+  const out: Record<string, MetaValue> = {};
   for (const [k, v] of Object.entries(input)) {
-    if (META_TEXT_FIELDS.has(k)) {
+    if (META_BOOL_FIELDS.has(k)) {
+      if (v === null || typeof v === 'boolean') out[k] = v;
+    } else if (META_TEXT_FIELDS.has(k)) {
       if (v === null) {
         out[k] = null;
       } else if (typeof v === 'string') {
@@ -609,13 +621,30 @@ Deno.serve(async (req) => {
     case 'update_lead_meta': {
       const sanitised = sanitiseMetaUpdates(body.metaUpdates);
       if (!sanitised) return jsonResponse(req, { error: 'No meta fields to update' }, 400);
-      if (sanitised.primary_track) {
+      const primaryTrack = sanitised.primary_track;
+      if (typeof primaryTrack === 'string') {
         const { data: current } = await supabase.from('leads').select('active_tracks').eq('id', leadId).maybeSingle();
         const currentTracks = Array.isArray(current?.active_tracks)
           ? current.active_tracks.filter((t) => typeof t === 'string') as string[]
           : [];
-        (sanitised as Record<string, unknown>).active_tracks = [...new Set([...currentTracks, sanitised.primary_track])];
+        (sanitised as Record<string, unknown>).active_tracks = [...new Set([...currentTracks, primaryTrack])];
       }
+
+      // Consent changes stamp consent_updated_at and get their own audit
+      // event on top of lead_meta_updated, so "who granted this and when"
+      // is answerable from the timeline alone.
+      const consentKeys = ['consent_email', 'consent_whatsapp'].filter((k) => k in sanitised);
+      let previousConsent: Record<string, boolean | null> = {};
+      if (consentKeys.length) {
+        const { data: before } = await supabase
+          .from('leads').select('consent_email, consent_whatsapp').eq('id', leadId).maybeSingle();
+        previousConsent = {
+          consent_email: (before?.consent_email as boolean | null) ?? null,
+          consent_whatsapp: (before?.consent_whatsapp as boolean | null) ?? null,
+        };
+        (sanitised as Record<string, unknown>).consent_updated_at = new Date().toISOString();
+      }
+
       await updateLeadFields(supabase, leadId, sanitised);
       await logLeadEvent(
         supabase,
@@ -626,6 +655,27 @@ Deno.serve(async (req) => {
         conversationId ?? undefined,
         staff.userId,
       );
+      for (const key of consentKeys) {
+        const next = sanitised[key] as boolean | null;
+        const previous = previousConsent[key];
+        if (next === previous) continue;
+        await logLeadEvent(
+          supabase,
+          leadId,
+          next === true ? 'consent_granted' : 'consent_revoked',
+          staff.role,
+          {
+            channel: key === 'consent_email' ? 'email' : 'whatsapp',
+            basis: 'manual',
+            previous,
+            value: next,
+            actor_user_id: staff.userId,
+            correlation_id: meta.correlation_id,
+          },
+          conversationId ?? undefined,
+          staff.userId,
+        );
+      }
       break;
     }
     case 'advance_deal_stage': {

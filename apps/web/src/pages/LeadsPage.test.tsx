@@ -186,6 +186,25 @@ describe('LeadsPage', () => {
     });
   });
 
+  it('bulk-sets email consent for the selected leads', async () => {
+    renderLeads();
+    await screen.findByRole('link', { name: 'דנה כהן' });
+
+    const checkbox = screen.getByLabelText('בחירת דנה כהן') as HTMLInputElement;
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(checkbox.checked).toBe(true));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'הסכמת דיוור' }));
+    const select = await screen.findByRole('combobox', { name: 'בחר הסכמת דיוור' }) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'email:true' } });
+    fireEvent.click(screen.getByRole('button', { name: 'עדכן' }));
+
+    await waitFor(() => expect(vi.mocked(postBulkLeadAction)).toHaveBeenCalled());
+    expect(vi.mocked(postBulkLeadAction).mock.calls[0]?.[0]).toMatchObject({
+      action: 'set_consent', leadIds: ['lead-1'], channel: 'email', value: true,
+    });
+  });
+
   it('forwards the chosen sort to fetchLeadsList and persists it in the URL', async () => {
     renderLeads();
     await screen.findByRole('link', { name: 'דנה כהן' });
