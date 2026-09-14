@@ -174,17 +174,12 @@ jobs:
               select slug, campaign, source, active from landing_pages order by slug""",
             'the in-system landing pages')
 
-          q('intake contracts', """
-              select contract_key, source, active from intake_contracts order by contract_key""",
-            'external forms (Rav Messer etc.) and the source they stamp', attempts=2)
-
-          q('email consent coverage (landing-page leads)', """
-              select coalesce(consent_email::text, 'null') as consent_email, count(*) as leads
+          q('email consent coverage (form-source leads)', """
+              select source, coalesce(consent_email::text, 'null') as consent_email, count(*) as leads
               from leads
-              where source = 'landing_page'
-                 or source_detail in (select slug from landing_pages)
-              group by 1 order by 1""",
-            'after migration 126: null should be 0; false = explicit refusals, left alone')
+              where public.is_form_source(source)
+              group by 1, 2 order by 1, 2""",
+            'after migration 127: null should be 0 for every form source; false = explicit refusals, left alone')
 
           q('consent_granted events', """
               select (event_payload->>'backfill')::boolean as backfill, count(*)
