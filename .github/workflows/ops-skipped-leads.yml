@@ -151,6 +151,33 @@ jobs:
               order by created_at desc limit 5""",
             'intake_silence rows = the watchdog noticed; inbound rows = a lead wrote')
 
+          q('lead sources — where do leads actually come from', """
+              select source,
+                     count(*) as leads,
+                     count(*) filter (where consent_email is true) as consent_true,
+                     count(*) filter (where consent_email is false) as consent_false,
+                     count(*) filter (where consent_email is null) as consent_null,
+                     count(*) filter (where email is not null) as with_email,
+                     count(*) filter (where landing_page is not null or utm_source is not null) as with_attribution
+              from leads
+              group by source order by leads desc""",
+            'the migration matched only source=landing_page; this shows which other sources are really landing pages')
+
+          q('source_detail top 20', """
+              select source, source_detail, count(*) as leads
+              from leads
+              group by source, source_detail
+              order by leads desc limit 20""",
+            'slugs / form names that identify landing pages inside other sources')
+
+          q('landing_pages registry', """
+              select slug, campaign, source, active from landing_pages order by slug""",
+            'the in-system landing pages')
+
+          q('intake contracts', """
+              select contract_key, source, active from intake_contracts order by contract_key""",
+            'external forms (Rav Messer etc.) and the source they stamp', attempts=2)
+
           q('email consent coverage (landing-page leads)', """
               select coalesce(consent_email::text, 'null') as consent_email, count(*) as leads
               from leads
