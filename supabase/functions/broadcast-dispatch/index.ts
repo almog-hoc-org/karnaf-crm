@@ -28,6 +28,7 @@ import {
   sendRavmesserMessage,
 } from '../_shared/ravmesser.ts';
 import { sanitizeEmailHtml, wrapEmailShell } from '../_shared/email-html.ts';
+import { isRavmesserConfigured } from '../_shared/ravmesser.ts';
 
 // How many broadcasts to advance per tick. The per-tick enqueue rate and
 // the rolling-24h cap come from crm_config 'broadcast_pacing' (see
@@ -127,7 +128,7 @@ Deno.serve(async (req) => {
           );
         }
         await supabase.from('broadcasts')
-          .update({ status: 'sending', recipients_count: leads.length })
+          .update({ status: 'sending', recipients_count: leads.length, started_at: new Date().toISOString(), last_error: null })
           .eq('id', b.id);
       }
 
@@ -276,6 +277,16 @@ Deno.serve(async (req) => {
   log.info('broadcast_dispatch_done', {
     fn: 'broadcast-dispatch', correlationId, broadcasts: broadcasts.length, enqueued: totalEnqueued,
   });
+  // Heartbeat on every tick, so "is the broadcast worker running at all"
+  // is answerable from the ops screen — the question nobody could answer
+  // on 2026-09-14.
+  await supabase.from('system_heartbeats').upsert({
+    name: 'broadcast_dispatch',
+    last_ok_at: new Date().toISOString(),
+    last_run_id: correlationId,
+    metadata: { broadcasts: broadcasts.length, enqueued: totalEnqueued },
+  }, { onConflict: 'name' });
+
   return jsonResponse(req, { ok: true, broadcasts: broadcasts.length, enqueued: totalEnqueued });
 });
 
@@ -323,13 +334,18 @@ async function advanceEmailBroadcast(
       );
     }
     await supabase.from('broadcasts')
-      .update({ status: 'sending', recipients_count: leads.length })
+      .update({ status: 'sending', recipients_count: leads.length, started_at: new Date().toISOString(), last_error: null })
       .eq('id', broadcastId);
   }
 
   const providerRef = { ...((b.provider_ref ?? {}) as Record<string, unknown>) };
 
   if (!providerRef.listId) {
+    if (!isRavmesserConfigured()) {
+      await failEmailBroadcast(supabase, broadcastId, correlationId,
+        'רב מסר לא מוגדר: חסרים RAVMESSER_C_KEY / RAVMESSER_C_SECRET / RAVMESSER_U_KEY / RAVMESSER_U_SECRET ב-Supabase Edge Function secrets');
+      return 0;
+    }
     if (!emailCfg.fromEmail) {
       await failEmailBroadcast(supabase, broadcastId, correlationId, 'חסר fromEmail בהגדרת email_channel');
       return 0;
@@ -407,6 +423,8 @@ async function advanceEmailBroadcast(
       await supabase.from('broadcasts').update({
         status: counts.failed > 0 ? 'failed' : 'sent',
         sent_count: 0, failed_count: counts.failed, skipped_count: counts.skipped,
+        finished_at: new Date().toISOString(),
+        last_error: counts.failed > 0 ? 'אף נמען לא נכנס לרשימה ברב מסר (כתובות לא תקינות)' : null,
       }).eq('id', broadcastId);
       return pushed;
     }
@@ -434,6 +452,8 @@ async function advanceEmailBroadcast(
       sent_count: counts.sent,
       failed_count: counts.failed,
       skipped_count: counts.skipped,
+      finished_at: new Date().toISOString(),
+      last_error: null,
     }).eq('id', broadcastId);
     log.info('broadcast_email_campaign_sent', {
       fn: 'broadcast-dispatch', correlationId, broadcastId,
@@ -450,7 +470,10 @@ async function failEmailBroadcast(
   correlationId: string,
   reason: string,
 ): Promise<void> {
-  await supabase.from('broadcasts').update({ status: 'failed' }).eq('id', broadcastId);
+  await supabase.from('broadcasts')
+    .update({ status: 'failed', last_error: reason.slice(0, 500), finished_at: new Date().toISOString() })
+    .eq('id', broadcastId);
+  log.error('broadcast_email_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId, reason });
   await notifyOperator(supabase, {
     kind: 'broadcast_email_failed',
     dedupeKey: `broadcast_email_failed:${broadcastId}`,

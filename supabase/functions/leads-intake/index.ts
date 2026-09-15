@@ -11,6 +11,7 @@ import {
 } from '../_shared/idempotency.ts';
 import { env, optional, safeEqual } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
+import { applyOptOut } from '../_shared/opt-out.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
 import { classifyLeadIntake } from '../_shared/lead-classifier.ts';
@@ -41,6 +42,7 @@ const FALLBACK_ALLOWED_SOURCES = new Set([
 ]);
 
 interface IntakeContract {
+  action: 'upsert_lead' | 'revoke_consent';
   contract_key: string;
   source_slug: string;
   display_name: string;
@@ -88,7 +90,7 @@ async function loadIntakeContract(
       : null;
   let query = supabase
     .from('intake_source_contracts')
-    .select('contract_key, source_slug, display_name, required_fields, field_aliases, default_track, default_stage, default_interest_topic, default_tags')
+    .select('contract_key, source_slug, display_name, required_fields, field_aliases, default_track, default_stage, default_interest_topic, default_tags, action')
     .eq('is_active', true);
   if (requestedKey) query = query.eq('contract_key', requestedKey);
   else query = query.eq('source_slug', source).order('contract_key', { ascending: true }).limit(1);
@@ -107,6 +109,7 @@ async function loadIntakeContract(
     contract_key: data.contract_key as string,
     source_slug: data.source_slug as string,
     display_name: data.display_name as string,
+    action: data.action === 'revoke_consent' ? 'revoke_consent' : 'upsert_lead',
     required_fields: Array.isArray(data.required_fields) ? data.required_fields.filter((f): f is string => typeof f === 'string') : [],
     field_aliases: normaliseAliases(data.field_aliases),
     default_track: typeof data.default_track === 'string' ? data.default_track : null,
@@ -275,6 +278,34 @@ Deno.serve(async (req) => {
       contractKey: contract?.contract_key,
       missingFields: missingContractFields,
     }, 400);
+  }
+
+  // A suppression contract (Rav Messer "unsubscribed" webhook) never
+  // creates a lead: it finds the person by email or phone and revokes
+  // email consent. An address we do not know is a no-op, not an error.
+  if (contract?.action === 'revoke_consent') {
+    let found: { id: string } | null = null;
+    if (email) {
+      const { data } = await supabase.from('leads').select('id').ilike('email', email).limit(1).maybeSingle();
+      found = (data as { id: string } | null) ?? null;
+    }
+    if (!found && phone) {
+      const { data } = await supabase.from('leads').select('id').eq('phone', phone).limit(1).maybeSingle();
+      found = (data as { id: string } | null) ?? null;
+    }
+    if (found) {
+      await applyOptOut(supabase, {
+        leadId: found.id, channel: 'email', basis: 'provider_unsubscribe', scope: 'email',
+        text: typeof normalisedPayload.campaign_name === 'string' ? normalisedPayload.campaign_name : null,
+        correlationId, actorType: 'provider',
+      });
+    }
+    log.info('intake_consent_revoked', {
+      fn: 'leads-intake', correlationId, contractKey: contract.contract_key, found: !!found,
+    });
+    const revokeResponse = { ok: true, revoked: !!found, contractKey: contract.contract_key, correlationId };
+    await storeWebhookIdempotencyResponse(supabase, idempotencyKey, 'intake', revokeResponse);
+    return jsonResponse(req, revokeResponse);
   }
 
   const lead = await upsertLead(supabase, {

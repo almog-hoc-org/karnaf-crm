@@ -10,13 +10,18 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 const MAX_BATCH_SIZE = 200;
 const ALLOWED_HEATS = new Set(['hot', 'warm', 'cool', 'cold']);
 
+const CONSENT_CHANNELS = new Set(['email', 'whatsapp']);
+
 interface BulkPayload {
-  action: 'assign_owner' | 'change_heat' | 'snooze';
+  action: 'assign_owner' | 'change_heat' | 'snooze' | 'set_consent';
   leadIds: string[];
   assigneeUserId?: string;
   heat?: string;
   snoozeUntil?: string;
   note?: string | null;
+  /** set_consent: which consent flag, and the new tri-state value. */
+  channel?: string;
+  value?: boolean | null;
 }
 
 Deno.serve(async (req) => {
@@ -138,6 +143,47 @@ Deno.serve(async (req) => {
     }
     log.info('bulk_snooze', {
       fn: 'bulk-lead-actions', correlationId, by: staff.userId, count: ids.length, until: untilIso,
+    });
+    return jsonResponse(req, { ok: true, updated: ids.length });
+  }
+
+  // Record a consent the operator obtained outside the system (phone, in
+  // person, a Rav Messer list export) for a whole selection at once. Each
+  // lead gets its own consent_granted / consent_revoked event so the grant
+  // is auditable per person, not per batch.
+  if (action === 'set_consent') {
+    const channel = typeof body.channel === 'string' ? body.channel : '';
+    if (!CONSENT_CHANNELS.has(channel)) return jsonResponse(req, { error: 'Invalid channel' }, 400);
+    if (body.value !== null && typeof body.value !== 'boolean') {
+      return jsonResponse(req, { error: 'value must be true, false or null' }, 400);
+    }
+    const value = body.value ?? null;
+    const column = channel === 'email' ? 'consent_email' : 'consent_whatsapp';
+    const nowIso = new Date().toISOString();
+    const { data: updatedRows, error } = await supabase
+      .from('leads')
+      .update({ [column]: value, consent_updated_at: nowIso })
+      .in('id', leadIds)
+      .select('id');
+    if (error) return jsonResponse(req, { error: error.message }, 500);
+    const ids = (updatedRows ?? []).map((r) => r.id as string);
+    if (ids.length) {
+      await supabase.from('lead_events').insert(ids.map((id) => ({
+        lead_id: id,
+        event_type: value === true ? 'consent_granted' : 'consent_revoked',
+        actor_type: staff.role,
+        event_payload: {
+          channel,
+          basis: 'manual',
+          value,
+          bulk: true,
+          actor_user_id: staff.userId,
+          correlation_id: correlationId,
+        },
+      })));
+    }
+    log.info('bulk_set_consent', {
+      fn: 'bulk-lead-actions', correlationId, by: staff.userId, channel, value, count: ids.length,
     });
     return jsonResponse(req, { ok: true, updated: ids.length });
   }

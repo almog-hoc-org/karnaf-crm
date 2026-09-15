@@ -423,6 +423,9 @@ export interface LeadMetaUpdates {
   primary_track?: 'program' | 'presale' | 'investor_mentorship' | null;
   interest_topic?: string | null;
   notes_internal?: string | null;
+  // Tri-state consent flags: true / false / null (never asked).
+  consent_email?: boolean | null;
+  consent_whatsapp?: boolean | null;
 }
 
 export async function postAdminAction(payload: {
@@ -521,7 +524,8 @@ export async function postImportLeads(payload: {
   return postJson<ImportLeadsResult>('/leads-manage', { action: 'import', ...payload });
 }
 
-export type BulkLeadAction = 'assign_owner' | 'change_heat' | 'snooze';
+export type BulkLeadAction = 'assign_owner' | 'change_heat' | 'snooze' | 'set_consent';
+export type ConsentChannel = 'email' | 'whatsapp';
 
 export interface BulkLeadActionPayload {
   action: BulkLeadAction;
@@ -530,6 +534,8 @@ export interface BulkLeadActionPayload {
   heat?: 'hot' | 'warm' | 'cool' | 'cold';
   snoozeUntil?: string;
   note?: string | null;
+  channel?: ConsentChannel;
+  value?: boolean | null;
 }
 
 export async function postBulkLeadAction(payload: BulkLeadActionPayload) {
@@ -987,6 +993,7 @@ export type BroadcastAction =
   | { action: 'update'; id: string; name?: string; channel?: BroadcastChannel; template_key?: string | null;
       meta_template?: BroadcastMetaTemplate | null; segment?: BroadcastSegment; scheduled_at?: string | null }
   | { action: 'schedule'; id: string }
+  | { action: 'retry'; id: string; scheduled_at?: string | null }
   | { action: 'cancel'; id: string }
   | { action: 'delete'; id: string };
 

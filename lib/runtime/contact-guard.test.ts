@@ -67,6 +67,17 @@ describe('canContactLead', () => {
       .toEqual({ ok: false, reason: 'no_consent' });
   });
 
+  it('blocks proactive WhatsApp after a removal request, but never a reply', () => {
+    const removed = lead({ consent_whatsapp: false });
+    expect(canContactLead(removed, { channel: 'whatsapp', kind: 'proactive', now: NOW }))
+      .toEqual({ ok: false, reason: 'no_consent' });
+    expect(canContactLead(removed, { channel: 'whatsapp', kind: 'reply', now: NOW }))
+      .toEqual({ ok: true });
+    // Never asked (pre-migration-128 rows) is not a refusal on WhatsApp.
+    expect(canContactLead(lead({ consent_whatsapp: null }), { channel: 'whatsapp', kind: 'proactive', now: NOW }))
+      .toEqual({ ok: true });
+  });
+
   it('reports hard suppression before anything else', () => {
     const worst = lead({ do_not_contact: true, snoozed_until: new Date(NOW.getTime() + HOUR).toISOString(), phone: null });
     expect(canContactLead(worst, { channel: 'whatsapp', kind: 'proactive', now: NOW }))

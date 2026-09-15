@@ -151,6 +151,89 @@ jobs:
               order by created_at desc limit 5""",
             'intake_silence rows = the watchdog noticed; inbound rows = a lead wrote')
 
+          q('lead sources — where do leads actually come from', """
+              select source,
+                     count(*) as leads,
+                     count(*) filter (where consent_email is true) as consent_true,
+                     count(*) filter (where consent_email is false) as consent_false,
+                     count(*) filter (where consent_email is null) as consent_null,
+                     count(*) filter (where email is not null) as with_email,
+                     count(*) filter (where landing_page is not null or utm_source is not null) as with_attribution
+              from leads
+              group by source order by leads desc""",
+            'the migration matched only source=landing_page; this shows which other sources are really landing pages')
+
+          q('source_detail top 20', """
+              select source, source_detail, count(*) as leads
+              from leads
+              group by source, source_detail
+              order by leads desc limit 20""",
+            'slugs / form names that identify landing pages inside other sources')
+
+          q('landing_pages registry', """
+              select slug, campaign, source, active from landing_pages order by slug""",
+            'the in-system landing pages')
+
+          q('email consent coverage (form-source leads)', """
+              select source, coalesce(consent_email::text, 'null') as consent_email, count(*) as leads
+              from leads
+              where public.is_form_source(source)
+              group by 1, 2 order by 1, 2""",
+            'after migration 127: null should be 0 for every form source; false = explicit refusals, left alone')
+
+          q('consent_granted events', """
+              select (event_payload->>'backfill')::boolean as backfill, count(*)
+              from lead_events where event_type = 'consent_granted'
+              group by 1 order by 1""",
+            'backfill=true rows = migration 126; backfill=false = trigger on new leads')
+
+          q('opt-outs (last 30 days) by basis', """
+              select event_payload->>'basis' as basis, event_payload->>'channel' as channel, count(*)
+              from lead_events
+              where event_type = 'consent_revoked' and created_at > now() - interval '30 days'
+              group by 1, 2 order by 3 desc""",
+            'inbound_keyword = the lead wrote הסר; provider_unsubscribe = Rav Messer link; manual = operator')
+
+          q('marketing templates without an opt-out route', """
+              select key, status, metadata->'meta'->>'category' as category,
+                     metadata->'meta'->>'footer' as footer,
+                     metadata->'meta'->>'has_opt_out' as has_opt_out
+              from message_templates
+              where channel = 'whatsapp'
+                and metadata->'meta'->>'category' = 'MARKETING'
+              order by key""",
+            'has_opt_out=false after the next template sync = resubmit that template to Meta with a footer', attempts=2)
+
+          # ── 4b. Broadcast (email campaign) diagnosis ─────────────────
+          q('broadcasts newest 5', """
+              select id, name, channel, status, scheduled_at, recipients_count,
+                     sent_count, failed_count, skipped_count, provider_ref,
+                     created_at, updated_at
+              from broadcasts order by created_at desc limit 5""",
+            'the 311-recipient email campaign: status + provider_ref (listId/messageId) tell how far it got')
+
+          q('broadcast recipients by status (newest broadcast)', """
+              select r.status, r.error, count(*)
+              from broadcast_recipients r
+              join broadcasts b on b.id = r.broadcast_id
+              where b.id = (select id from broadcasts order by created_at desc limit 1)
+              group by 1, 2 order by 3 desc""",
+            'pending = never pushed to Rav Messer; skipped/failed carry a reason')
+
+          q('broadcast failure alerts', """
+              select created_at, delivered, title, body
+              from operator_alerts
+              where kind in ('broadcast_email_failed', 'broadcast_failed')
+              order by created_at desc limit 5""",
+            'failEmailBroadcast writes the reason here (and only here)')
+
+          q('broadcast dispatch cron + gateway (last 6h)', """
+              select created, status_code, left(content::text, 200) as body
+              from net._http_response
+              where content::text like '%%broadcast%%' or content::text like '%%enqueued%%'
+              order by created desc limit 5""",
+            'is the every-minute broadcast-dispatch call answered 200', attempts=2)
+
           # ── 5. Alert channels ────────────────────────────────────────
           q('alert ledger (newest 5)', """
               select kind, delivered, channel_results, created_at

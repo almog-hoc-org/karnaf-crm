@@ -16,6 +16,8 @@
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { ensureConversation, logLeadEvent } from '../_shared/lead-service.ts';
+import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { applyOptOut, detectOptOut } from '../_shared/opt-out.ts';
 import { messageAlreadyLogged } from '../_shared/idempotency.ts';
 import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
@@ -104,7 +106,7 @@ Deno.serve(async (req) => {
   if (!allowed) return jsonResponse(req, { error: 'Rate limit exceeded' }, 429);
 
   // ---- 4. Process each message item -------------------------------------
-  const results: Array<{ leadId: string; conversationId: string; messageId: string; isNewLead: boolean }> = [];
+  const results: Array<{ leadId: string; conversationId: string; messageId: string; isNewLead?: boolean; optOut?: boolean }> = [];
 
   for (const entry of body.entry ?? []) {
     for (const m of entry.messaging ?? []) {
@@ -182,6 +184,19 @@ Deno.serve(async (req) => {
         provider: 'meta_cloud_api', channel: 'instagram',
         provider_message_id: providerMid, correlation_id: correlationId,
       }, conv.id);
+
+      // Removal request: record it and do not wake the orchestrator. The
+      // confirmation is left to the human queue here — this function has
+      // no send helper, and Instagram has no template fallback anyway.
+      const { messaging } = await getRuntimeConfig(supabase);
+      if (detectOptOut(inboundText, messaging.optOutKeywords)) {
+        await applyOptOut(supabase, {
+          leadId, channel: 'instagram', basis: 'inbound_keyword', text: inboundText,
+          correlationId, conversationId: conv.id,
+        });
+        results.push({ leadId, conversationId: conv.id, messageId: inserted.data!.id, optOut: true });
+        continue;
+      }
 
       if (isNewLead) {
         await ensurePendingQueueItem(supabase, {

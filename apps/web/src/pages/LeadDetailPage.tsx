@@ -898,6 +898,10 @@ export function LeadDetailPage() {
             updatingMeeting={updateMeetingStatus.isPending}
             onSchedule={(input) => scheduleMeeting.mutate(input)}
             onUpdateMeetingStatus={(input) => updateMeetingStatus.mutate(input)}
+            canEditConsent={canEditMeta}
+            onSetConsent={(channel, value) =>
+              updateMeta.mutateAsync(channel === 'email' ? { consent_email: value } : { consent_whatsapp: value })
+            }
             onAdvance={(deal, targetStage) =>
               action.mutate({
                 action: 'advance_deal_stage',
@@ -1294,6 +1298,8 @@ function PipelineOverviewCard({
   onSchedule,
   onUpdateMeetingStatus,
   onAdvance,
+  canEditConsent,
+  onSetConsent,
 }: {
   lead: LeadDetailType;
   deals: DealRow[];
@@ -1314,6 +1320,8 @@ function PipelineOverviewCard({
   }) => void;
   onUpdateMeetingStatus: (input: { meetingId: string; status: MeetingRow['status']; note: string | null }) => void;
   onAdvance: (deal: DealRow, targetStage: string) => void;
+  canEditConsent: boolean;
+  onSetConsent: (channel: 'email' | 'whatsapp', value: boolean | null) => Promise<unknown>;
 }) {
   const nextMeeting = [...meetings]
     .filter((m) => m.status === 'scheduled')
@@ -1329,8 +1337,20 @@ function PipelineOverviewCard({
         <Row k="מסלול ראשי" v={lead.primary_track ? PRD_TRACK_LABELS[lead.primary_track] ?? lead.primary_track : null} />
         <Row k="נושא עניין" v={lead.interest_topic} />
         <Row k="תגיות" v={lead.tags?.length ? lead.tags.join(', ') : null} />
-        <Row k="הסכמת WhatsApp" v={formatConsent(lead.consent_whatsapp)} />
-        <Row k="הסכמת מייל" v={formatConsent(lead.consent_email)} />
+        <EditableEnumRow
+          k="הסכמת WhatsApp"
+          v={consentToString(lead.consent_whatsapp)}
+          editable={canEditConsent}
+          options={CONSENT_OPTIONS}
+          onSave={(next) => onSetConsent('whatsapp', consentFromString(next))}
+        />
+        <EditableEnumRow
+          k="הסכמת מייל"
+          v={consentToString(lead.consent_email)}
+          editable={canEditConsent}
+          options={CONSENT_OPTIONS}
+          onSave={(next) => onSetConsent('email', consentFromString(next))}
+        />
         <Row
           k="חבר תכנית"
           v={programMember ? `${PROGRAM_PROGRESS_LABELS[programMember.progress_stage] ?? programMember.progress_stage} · ${formatDateTime(programMember.joined_at)}` : null}
@@ -1605,9 +1625,20 @@ const NEXT_DEAL_STAGES: Record<string, Record<string, string[]>> = {
 // LeadDetailPage was the largest offender, with 5 local maps duplicating
 // values used in PartnersPage, ProjectsPage, CommissionsPage, etc.
 
-function formatConsent(value: boolean | null | undefined) {
-  if (value === true) return 'כן';
-  if (value === false) return 'לא';
+// Consent is tri-state; the enum row speaks strings, with its empty
+// option meaning "never asked" (null).
+const CONSENT_OPTIONS = [
+  { value: 'true', label: 'כן' },
+  { value: 'false', label: 'לא' },
+];
+function consentToString(value: boolean | null | undefined): string | null {
+  if (value === true) return 'true';
+  if (value === false) return 'false';
+  return null;
+}
+function consentFromString(value: string | null): boolean | null {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
   return null;
 }
 
@@ -2306,6 +2337,7 @@ function EditableEnumRow({
             mobile a lot, and native pickers behave correctly with the OS
             keyboard + screen reader without extra a11y wiring. */}
         <select
+          aria-label={k}
           value={effective}
           disabled={pending !== null}
           className="kf-input text-sm disabled:opacity-60"

@@ -190,17 +190,23 @@ karnaf-crm/
 - **התראות** — וואטסאפ מגיע ✅. מייל מדולג: חסר `ALERT_EMAIL_FROM`.
 - **Meta מגיע ל-webhook** — `webhook_inbox` מקבל callbacks של סטטוס אחרי כל התראה יוצאת (`unsupported_payload` = עדכון סטטוס, לא הודעה). כלומר החיבור תקין; פשוט אין הודעות נכנסות מלקוחות מאז 7.9.
 - **`auth.audit_log_entries` ריק** (0 שורות ב-7 ימים) — Supabase לא כותב לשם במופע הזה. לא תקלה שלנו.
-- **PR #84 חסום למיזוג** — כל ה-checks ירוקים, אבל הגנת הענף דורשת review מאשר, והמחבר (חשבון הבעלים) לא יכול לאשר את עצמו. הבעלים: Settings → Branches → כלל `master` → לבטל "Require approvals" (או Bypass במסך ה-PR). אחרי המיזוג Vercel פורס את הפרונט (תיקון הכניסה, `/admin/status`).
+- **PR #84 מוזג 2026-09-10** אחרי שהבעלים הסיר את דרישת ה-review מהגנת הענף (המחבר לא יכול לאשר את עצמו). Deploy Supabase #44 על master ירוק.
+- **אישור דיוור ללידים מדפי נחיתה (14.9)** — החלטת הבעלים: כל מי שמגיע מדף נחיתה מאשר דיוור. מיגרציה 126 תפסה רק `source='landing_page'` (ליד אחד); בפועל 314 מתוך 337 הלידים הם `responder_form` (טפסי רב מסר — שם דפי הנחיתה). מיגרציה 127: הפרדיקט `public.is_form_source(source)` (landing_page, responder_form, lead_magnet, presale_form, webinar, webinar_registration, investor_mentorship_form) — backfill של `consent_email=true` לכל ליד כזה בלי ערך, אירוע `consent_granted` לכל ליד, וטריגר על insert ללידים חדשים. וואטסאפ/אינסטגרם/ידני/פייסבוק לא נכללים. `false` מפורש לא נדרס; `consent_whatsapp` לא נגעו. טקסט הטופס בדף הנחיתה עודכן ("...וקבלת דיוור במייל"). כלל רב מסר `b20` עדיין כבוי וללא list_id — הסכמה לבד לא מוסיפה לרשימה.
+- **הסכמה ניתנת לעריכה דרך ה-CRM (14.9)** — עד עכשיו אף מסלול ניהול לא קיבל את שדות ההסכמה (`update_lead_meta` ענה "No meta fields to update"). עכשיו: `admin-actions` `update_lead_meta` מקבל `consent_email` / `consent_whatsapp` (true/false/null), חותם `consent_updated_at` ורושם `consent_granted` / `consent_revoked` עם `basis:'manual'`; `bulk-lead-actions` קיבל פעולה `set_consent` (channel + value, עד 200 לידים, אירוע לכל ליד); במסך הליד שורות ההסכמה הפכו לנפתחות (owner/admin/mia), ובסרגל הפעולות המרובות נוסף "הסכמת דיוור". הפרונט מגיע לפרודקשן רק אחרי מיזוג ל-master.
+- **הסכמה כברירת מחדל + הסרה בכל הודעה (15.9, מיגרציה 128)** — כל ליד חדש מכל מקור מקבל `consent_email`/`consent_whatsapp=true` בכניסה (basis `default_opt_in`, או `form_submission` למקורות טופס). `_shared/opt-out.ts` (מראה ב-`lib/runtime`): זיהוי "הסר"/STOP וכו' בהודעה קצרה בוואטסאפ/אינסטגרם/מייל → `applyOptOut` (שני הדגלים false, `no_proactive_contact`, אירוע `consent_revoked`, ביטול journeys/dispatch/recipients בהמתנה) + אישור הסרה; "חזור" מחזיר. ה-AI (playbook `opt_out`) עושה אותו דבר. `contact-guard` חוסם וואטסאפ יזום כש-`consent_whatsapp=false`. `dispatch-outbound` מוסיף את שורת ההסרה מ-`crm_config.messaging` לכל טקסט יזום (freeform + fallback); לתבניות מטא בשם — הפוטר חייב להיות בתבנית, וסנכרון התבניות מסמן `has_opt_out` ומתריע על תבניות שיווק בלעדיו. מייל: שורת הסרה בשלד + חוזה `ravmesser_unsubscribe_v1` (`intake_source_contracts.action='revoke_consent'`). `reengagement` עבר לתור. 18 לידים ישנים עם consent null — לא נגעו.
+- **תפוצת מייל 14.9 נכשלה** — "ravmesser not configured": ארבעת הסודות `RAVMESSER_*` חסרים ב-Supabase. ה-worker/cron תקינים (200 כל דקה). תוקן: `broadcasts.last_error/started_at/finished_at`, heartbeat `broadcast_dispatch`, סירוב לתזמן/לנסות שוב תפוצת מייל בלי הסודות, פעולה `retry` וכפתור "שלח שוב". הבעלים: להוסיף את הסודות (runbook רב מסר) ואז "שלח שוב".
 - מדריך לבעלים: `docs/runbooks/owner-step-by-step.md`.
 
 
-### ⏳ ממתין למיזוג — סבב "מינימום לחיצות" (ענף `claude/campaign-broadcasts-handoff-elew7z`)
+### ✅ מוזג — סבב "מינימום לחיצות" (PR #83, 2026-08-16) וסבב השיקום (PR #84, 2026-09-10)
 
-הסבב הוסיף מענה אינליין מהאינבוקס, סיווג מהיר, קיצורי מקלדת ומיון ברשימת הלידים.
+שני הסבבים ב-`master`. הפרונט נפרס ל-Vercel מהמיזוג של #84 (תיקון הכניסה, `/admin/status`, שערי תפקידים); ה-backend נפרס ב-"Deploy Supabase" #44 על master (אין מיגרציות ממתינות — 122–125 כבר הוחלו מהענף). הענף `claude/campaign-broadcasts-handoff-elew7z` אופס ל-master להמשך עבודה.
+
+הסבב הראשון הוסיף מענה אינליין מהאינבוקס, סיווג מהיר, קיצורי מקלדת ומיון ברשימת הלידים.
 
 **ה-backend כבר בפרודקשן** (2026-08-14, ריצת "Deploy Supabase" #35 שהופעלה ידנית על הענף): מיגרציות 118+119 הוחלו (מתברר ש-v4 מעולם לא הוחלה — הפרודקשן רץ על v3 עד עכשיו), וה-edge functions `leads-list`, `broadcasts`, `meta-template-status` נפרסו. שינוי ה-RPC הוא append-only, כך שהפרונט הקיים ממשיך לעבוד ללא שינוי.
 
-**מה שנשאר: מיזוג הענף ל-`master`.** הפרונט נפרס ל-Vercel אוטומטית רק מ-master (אחרי CI ירוק). ברגע המיזוג, כפתור "השב כאן 💬" ושאר הפיצ'רים מופיעים למפעילים. בדיקה אחרי הפריסה: כרטיס בליין "לענות עכשיו" מציג "השב כאן 💬", וה-digest היומי בטלגרם ממשיך להגיע.
+**בדיקה אחרי הפריסה:** כרטיס בליין "לענות עכשיו" מציג "השב כאן 💬", וה-digest היומי בטלגרם ממשיך להגיע.
 
 אימות ללא קרדנשיאלס: `npx playwright test e2e/inbox-stubbed.spec.ts` — חבילת e2e עם backend מסומלץ שרצה בכל סביבה (ראו הערות בקובץ עצמו).
 

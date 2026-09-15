@@ -22,6 +22,7 @@ import { shouldSendGenericAck } from '../_shared/generic-ack.ts';
 import { maybeRefreshSummary } from '../_shared/transcript-summary.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
+import { applyOptOut } from '../_shared/opt-out.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 
 Deno.serve(async (req) => {
@@ -553,6 +554,15 @@ Deno.serve(async (req) => {
           'ai',
           `playbook:${out.playbookName}`,
         );
+      }
+      // The AI recognised a removal request the keyword pass did not. A
+      // status change alone left consent untouched and journeys running;
+      // the consent change is what the law asks for.
+      if (out.playbookName === 'opt_out' || out.leadStatusUpdate === 'do_not_contact') {
+        await applyOptOut(supabase, {
+          leadId, channel: channel === 'instagram' ? 'instagram' : 'whatsapp', basis: 'ai_playbook',
+          text: lastLeadMessage as string | null, correlationId, conversationId, actorType: 'ai',
+        }).catch((err) => log.warn('ai_opt_out_apply_failed', { fn: 'orchestrate-message', correlationId, leadId, err: String(err) }));
       }
 
       await logLeadEvent(

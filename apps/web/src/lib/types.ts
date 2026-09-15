@@ -428,6 +428,9 @@ export interface BroadcastRow {
   sent_count: number;
   failed_count: number;
   skipped_count: number;
+  last_error?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

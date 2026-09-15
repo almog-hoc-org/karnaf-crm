@@ -5,6 +5,13 @@ import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { notifyOperator } from '../_shared/operator-alert.ts';
 
+// Opt-out wording Meta templates must carry (FOOTER, 60 chars max).
+const MARKETING_FOOTER = 'להסרה השיבו הסר';
+function hasOptOutWording(text: string): boolean {
+  const t = text.toLowerCase();
+  return /הסר|הסרה|תפסיק|stop|unsubscribe|opt.?out/.test(t);
+}
+
 Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
@@ -171,13 +178,17 @@ Deno.serve(async (req) => {
           name: spec.name,
           language: 'he',
           category: spec.category,
-          components: [{
-          type: 'BODY',
-          text: spec.text,
-          example: {
-            body_text: [[spec.example]],
-          },
-        }],
+          components: [
+            {
+              type: 'BODY',
+              text: spec.text,
+              example: { body_text: [[spec.example]] },
+            },
+            // חוק הספאם: marketing templates carry the opt-out route in
+            // the approved FOOTER — the only place it can live for a
+            // template sent by name.
+            ...(spec.category === 'MARKETING' ? [{ type: 'FOOTER', text: MARKETING_FOOTER }] : []),
+          ],
         }),
       });
       const createText = await createRes.text();
@@ -288,18 +299,29 @@ async function syncTemplates(
   }
   const json = JSON.parse(text || '{}');
 
-  const metaByName = new Map<string, { status: string; category: string; language: string; body: string | null }>();
+  const metaByName = new Map<string, {
+    status: string; category: string; language: string; body: string | null;
+    footer: string | null; buttons: string[]; has_opt_out: boolean;
+  }>();
   for (const t of (Array.isArray(json.data) ? json.data : []) as Array<Record<string, unknown>>) {
     const name = String(t.name ?? '');
     // Prefer the Hebrew variant when a template exists in several languages.
     if (metaByName.has(name) && t.language !== 'he') continue;
+    const components = Array.isArray(t.components) ? t.components as Array<Record<string, unknown>> : [];
+    const body = (components.find((c) => c.type === 'BODY')?.text as string | undefined) ?? null;
+    const footer = (components.find((c) => c.type === 'FOOTER')?.text as string | undefined) ?? null;
+    const buttons = ((components.find((c) => c.type === 'BUTTONS')?.buttons as Array<Record<string, unknown>> | undefined) ?? [])
+      .map((b) => String(b.text ?? '')).filter(Boolean);
     metaByName.set(name, {
       status: String(t.status ?? ''),
       category: String(t.category ?? ''),
       language: String(t.language ?? ''),
-      body: Array.isArray(t.components)
-        ? ((t.components as Array<Record<string, unknown>>).find((c) => c.type === 'BODY')?.text as string | undefined) ?? null
-        : null,
+      body,
+      footer,
+      buttons,
+      // חוק הספאם: a MARKETING template must tell the reader how to leave.
+      // Footer or a quick-reply button naming removal both count.
+      has_opt_out: hasOptOutWording([body ?? '', footer ?? '', ...buttons].join(' ')),
     });
   }
 
@@ -326,6 +348,27 @@ async function syncTemplates(
     if (meta.status && meta.status !== 'APPROVED') nonApproved.push({ key: local.key as string, status: meta.status });
     const metadata = { ...(local.metadata as Record<string, unknown> ?? {}), meta: { ...meta, synced_at: syncedAt } };
     await supabase.from('message_templates').update({ metadata }).eq('id', local.id);
+  }
+
+  // Marketing templates without an opt-out route: the dispatcher cannot
+  // append one to a template sent by name, so these need a new version
+  // submitted to Meta with a FOOTER. Listed in the sync result for the
+  // ops screen; alerted once a day.
+  const missingOptOut = [...metaByName.entries()]
+    .filter(([, m]) => m.category === 'MARKETING' && m.status === 'APPROVED' && !m.has_opt_out)
+    .map(([name]) => name);
+  if (missingOptOut.length > 0) {
+    await notifyOperator(supabase, {
+      kind: 'templates_missing_opt_out',
+      dedupeKey: `templates_missing_opt_out:${missingOptOut.sort().join(',')}`,
+      throttleMinutes: 24 * 60,
+      severity: 'warn',
+      title: 'תבניות שיווק במטא ללא אפשרות הסרה',
+      lines: [
+        ...missingOptOut.map((n) => `• ${n}`),
+        'חוק הספאם: כל הודעת שיווק חייבת לאפשר הסרה. הגישו גרסה חדשה של התבנית עם Footer "להסרה השיבו הסר".',
+      ],
+    });
   }
 
   if (nonApproved.length > 0) {
@@ -376,6 +419,7 @@ async function syncTemplates(
     created,
     drifted,
     nonApproved,
+    missingOptOut,
     unmatchedMeta: unmatchedMeta.filter((n) => !created.includes(n)),
     syncedAt,
   });

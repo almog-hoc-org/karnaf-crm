@@ -2,7 +2,7 @@ import { useState } from 'react';
 import clsx from 'clsx';
 import type { LeadHeat } from '@/lib/types';
 import { HEAT_LABELS } from '@/lib/format';
-import type { ProfileRow } from '@/lib/api';
+import type { ConsentChannel, ProfileRow } from '@/lib/api';
 import { SnoozePopover } from '@/components/SnoozePopover';
 import { usePresence } from '@/lib/usePresence';
 
@@ -15,17 +15,27 @@ export interface BulkActionBarProps {
   onAssignOwner: (userId: string) => void;
   onChangeHeat: (heat: LeadHeat) => void;
   onSnooze?: (snoozeUntilIso: string, note: string | null) => void;
+  onSetConsent?: (channel: ConsentChannel, value: boolean) => void;
 }
 
 const HEATS: LeadHeat[] = ['hot', 'warm', 'cool', 'cold'];
 
+// "channel:value" so one select covers both flags in both directions.
+const CONSENT_CHOICES: Array<{ value: string; label: string }> = [
+  { value: 'email:true', label: 'מייל — כן' },
+  { value: 'email:false', label: 'מייל — לא' },
+  { value: 'whatsapp:true', label: 'WhatsApp — כן' },
+  { value: 'whatsapp:false', label: 'WhatsApp — לא' },
+];
+
 export function BulkActionBar({
   selectedCount, totalCount, assignableUsers, busy,
-  onClear, onAssignOwner, onChangeHeat, onSnooze,
+  onClear, onAssignOwner, onChangeHeat, onSnooze, onSetConsent,
 }: BulkActionBarProps) {
-  const [mode, setMode] = useState<'idle' | 'assign' | 'heat'>('idle');
+  const [mode, setMode] = useState<'idle' | 'assign' | 'heat' | 'consent'>('idle');
   const [assignee, setAssignee] = useState<string>('');
   const [heat, setHeat] = useState<LeadHeat>('warm');
+  const [consentChoice, setConsentChoice] = useState<string>('email:true');
   // The dock rises when the first row is ticked and leaves the same way,
   // so selecting/deselecting reads as one continuous object.
   const { mounted, state } = usePresence(selectedCount > 0);
@@ -71,6 +81,52 @@ export function BulkActionBar({
               onSnooze={onSnooze}
             />
           ) : null}
+          {onSetConsent ? (
+            <button
+              type="button"
+              className="kf-pressable rounded-md bg-white/10 px-3 py-1.5 transition hover:bg-white/20"
+              onClick={() => setMode('consent')}
+              disabled={busy}
+            >
+              הסכמת דיוור
+            </button>
+          ) : null}
+        </>
+      ) : null}
+
+      {mode === 'consent' && onSetConsent ? (
+        <>
+          <select
+            aria-label="בחר הסכמת דיוור"
+            className="rounded-md bg-white/10 px-2 py-1.5 text-white"
+            value={consentChoice}
+            onChange={(e) => setConsentChoice(e.target.value)}
+          >
+            {CONSENT_CHOICES.map((c) => (
+              <option key={c.value} value={c.value} className="text-slate-900">
+                {c.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="kf-pressable rounded-md bg-emerald-500 px-3 py-1.5 font-semibold transition hover:bg-emerald-400 disabled:opacity-50"
+            disabled={busy}
+            onClick={() => {
+              const [channel, value] = consentChoice.split(':');
+              onSetConsent(channel as ConsentChannel, value === 'true');
+              setMode('idle');
+            }}
+          >
+            {busy ? '...' : 'עדכן'}
+          </button>
+          <button
+            type="button"
+            className="kf-pressable rounded-md bg-white/10 px-3 py-1.5 transition hover:bg-white/20"
+            onClick={() => setMode('idle')}
+          >
+            ביטול
+          </button>
         </>
       ) : null}
 

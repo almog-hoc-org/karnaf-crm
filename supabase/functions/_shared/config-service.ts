@@ -1,6 +1,7 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import type { AiRuntimeConfig } from './ai-contract.ts';
 import { DEFAULT_SAFETY_NET, resolveSafetyNet, type SafetyNetConfig } from './generic-ack.ts';
+import { DEFAULT_MESSAGING, resolveMessaging, type MessagingConfig } from './opt-out.ts';
 
 export interface RuntimeConfig extends AiRuntimeConfig {
   slaThresholds: {
@@ -32,6 +33,9 @@ export interface RuntimeConfig extends AiRuntimeConfig {
     // crm_config row off.
     perInboundTelegram: boolean;
   };
+  // Opt-out keywords, the footer on every outgoing marketing text and the
+  // confirmation sent back (חוק הספאם). Seeded in migration 128.
+  messaging: MessagingConfig;
 }
 
 const DEFAULT: RuntimeConfig = {
@@ -54,6 +58,7 @@ const DEFAULT: RuntimeConfig = {
   safetyNet: DEFAULT_SAFETY_NET,
   aiEnabledChannels: ['whatsapp', 'instagram'],
   notifications: { perInboundTelegram: false },
+  messaging: DEFAULT_MESSAGING,
 };
 
 export async function getRuntimeConfig(supabase: SupabaseClient): Promise<RuntimeConfig> {
@@ -77,6 +82,7 @@ export async function getRuntimeConfig(supabase: SupabaseClient): Promise<Runtim
     reengagement: get('reengagement', DEFAULT.reengagement),
     safetyNet: resolveSafetyNet(map.get('ai_safety_net')),
     aiEnabledChannels: resolveEnabledChannels(map.get('ai_enabled_channels')),
+    messaging: resolveMessaging(map.get('messaging')),
   };
 }
 

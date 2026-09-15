@@ -1202,6 +1202,9 @@ export function LeadsPage() {
           onSnooze={(snoozeUntil, note) =>
             bulkMut.mutate({ action: 'snooze', leadIds: Array.from(selected), snoozeUntil, note })
           }
+          onSetConsent={(channel, value) =>
+            bulkMut.mutate({ action: 'set_consent', leadIds: Array.from(selected), channel, value })
+          }
         />
       ) : null}
 

@@ -291,6 +291,22 @@ describe('LeadDetailPage', () => {
     expect(await screen.findByText('שלום, אשמח לפרטים')).toBeInTheDocument();
   });
 
+  it('lets an admin grant email consent from the pipeline card', async () => {
+    renderDetail('admin');
+    await screen.findByRole('heading', { name: 'דנה כהן' });
+    const select = screen.getByRole('combobox', { name: 'הסכמת מייל' }) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'true' } });
+    await waitFor(() => expect(vi.mocked(postAdminAction)).toHaveBeenCalledWith({
+      action: 'update_lead_meta', leadId: 'lead-1', metaUpdates: { consent_email: true },
+    }));
+  });
+
+  it('shows consent read-only to a viewer', async () => {
+    renderDetail('viewer');
+    await screen.findByRole('heading', { name: 'דנה כהן' });
+    expect(screen.queryByRole('combobox', { name: 'הסכמת מייל' })).not.toBeInTheDocument();
+  });
+
   it('invokes mark_won after confirming the action dialog', async () => {
     renderDetail();
     // Tier 5.D — lifecycle buttons live inside "פעולות נוספות" disclosure.

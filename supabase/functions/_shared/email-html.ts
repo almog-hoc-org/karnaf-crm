@@ -90,6 +90,9 @@ export function renderEmailHtml(bodyHtml: string, vars: Record<string, string | 
   });
 }
 
+export const EMAIL_OPT_OUT_LINE =
+  'להסרה מרשימת התפוצה השתמשו בקישור ההסרה בתחתית המייל, או השיבו למייל זה עם המילה "הסר".';
+
 /** Single-column RTL shell with inline styles (email-client-safe). */
 export function wrapEmailShell(innerHtml: string, brandName = 'קרנף נדל"ן'): string {
   return [
@@ -98,6 +101,10 @@ export function wrapEmailShell(innerHtml: string, brandName = 'קרנף נדל"�
     innerHtml,
     `<hr style="border:none; border-top:1px solid #e2e8f0; margin:28px 0 14px;" />`,
     `<p style="font-size:13px; color:#64748b; margin:0;">${brandName} 🦏</p>`,
+    // חוק הספאם: the reader must see how to leave. Rav Messer appends the
+    // actual unsubscribe link at send time; this line points at it and
+    // offers the reply route, which email-webhook understands.
+    `<p style="font-size:12px; color:#94a3b8; margin:8px 0 0;">${EMAIL_OPT_OUT_LINE}</p>`,
     '</div>',
     '</div>',
   ].join('\n');
