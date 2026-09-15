@@ -48,6 +48,15 @@ export const env = {
   ravmesserCSecret: () => optional('RAVMESSER_C_SECRET'),
   ravmesserUKey: () => optional('RAVMESSER_U_KEY'),
   ravmesserUSecret: () => optional('RAVMESSER_U_SECRET'),
+  /** Resend (resend.com) — transactional/marketing email API. Used by the
+   *  operator alert channel and, when crm_config.email_channel.provider is
+   *  'resend', by the email broadcast dispatcher. */
+  resendApiKey: () => optional('RESEND_API_KEY'),
+  /** Signs the per-lead unsubscribe token in marketing emails. Falls back
+   *  to the service-role key so no extra secret must be provisioned; set it
+   *  explicitly to rotate unsubscribe links without rotating the DB key. */
+  emailUnsubscribeSecret: () =>
+    optional('EMAIL_UNSUBSCRIBE_SECRET') || optional('SUPABASE_SERVICE_ROLE_KEY'),
   slaWorkerSecret: () => optional('SLA_WORKER_SECRET'),
   outboundDispatchSecret: () => optional('OUTBOUND_DISPATCH_SECRET'),
   // Falls back to the outbound dispatch secret so the broadcast worker

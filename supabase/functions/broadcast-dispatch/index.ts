@@ -27,8 +27,15 @@ import {
   createRavmesserMessage,
   sendRavmesserMessage,
 } from '../_shared/ravmesser.ts';
-import { sanitizeEmailHtml, wrapEmailShell } from '../_shared/email-html.ts';
-import { isRavmesserConfigured } from '../_shared/ravmesser.ts';
+import { renderEmailHtml, sanitizeEmailHtml, wrapEmailShell } from '../_shared/email-html.ts';
+import {
+  type EmailChannelConfig,
+  formatFromAddress,
+  loadEmailChannel,
+  preflightEmailChannel,
+} from '../_shared/email-channel.ts';
+import { sendResendEmail } from '../_shared/resend.ts';
+import { unsubscribeHeaders, unsubscribeUrl } from '../_shared/email-unsubscribe.ts';
 
 // How many broadcasts to advance per tick. The per-tick enqueue rate and
 // the rolling-24h cap come from crm_config 'broadcast_pacing' (see
@@ -38,6 +45,11 @@ import { isRavmesserConfigured } from '../_shared/ravmesser.ts';
 const MAX_BROADCASTS_PER_TICK = 3;
 const SEGMENT_FETCH_LIMIT = 5000;
 const BROADCAST_PRIORITY = 10;
+// Resend's default plan allows 2 requests/second. One send per recipient
+// means the dispatcher is the rate limiter; 600ms keeps a safety margin
+// and still clears a 20-recipient tick in ~12s, well inside the function
+// timeout.
+const RESEND_SEND_SPACING_MS = 600;
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -92,19 +104,14 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Email-channel config (Rav Messer campaign mode).
-  const { data: emailCfgRow } = await supabase
-    .from('crm_config').select('config_value').eq('config_key', 'email_channel').maybeSingle();
-  const emailCfgRaw = (emailCfgRow?.config_value ?? {}) as Record<string, unknown>;
-  const emailCfg = {
-    fromName: typeof emailCfgRaw.fromName === 'string' ? emailCfgRaw.fromName : 'קרנף נדל"ן',
-    fromEmail: typeof emailCfgRaw.fromEmail === 'string' ? emailCfgRaw.fromEmail : '',
-    requireConsent: emailCfgRaw.requireConsent !== false,
-  };
+  // Email-channel config. `provider` decides which send path runs: Resend
+  // (one message per recipient, the CRM owns the unsubscribe link) or Rav
+  // Messer (push into a Responder list, Responder sends the campaign).
+  const emailCfg = await loadEmailChannel(supabase);
 
   for (const b of broadcasts) {
     try {
-      // Email broadcasts ride Rav Messer list campaigns — a separate
+      // Email broadcasts talk to their provider directly — a separate
       // lifecycle from the WhatsApp per-recipient queue.
       if ((b.channel ?? 'whatsapp') === 'email') {
         const used = await advanceEmailBroadcast(supabase, b, emailCfg, allowance, correlationId);
@@ -305,18 +312,18 @@ async function finalCounts(supabase: ReturnType<typeof getServiceSupabase>, broa
   };
 }
 
-// Email broadcast lifecycle (Rav Messer campaign mode):
-//   scheduled → materialise consenting recipients with an email,
-//   ensure a dedicated Responder list (provider_ref.listId),
-//   push recipients into the list at the pacing allowance,
-//   once everyone is pushed — create the message and send it to the
-//   list, then finalise. Opens/clicks/unsubscribes live in Rav Messer.
-// Returns how many recipients were pushed this tick (counts against
-// the shared pacing allowance).
+// Email broadcasts, both providers.
+//
+// Shared first step: materialise the consenting recipients that have an
+// address, then run the provider preflight (the same one the scheduler
+// runs at the click — secrets can be removed between scheduling and the
+// send). Then the provider-specific body.
+// Returns how many recipients were handled this tick (counts against the
+// shared pacing allowance).
 async function advanceEmailBroadcast(
   supabase: ReturnType<typeof getServiceSupabase>,
   b: Record<string, unknown>,
-  emailCfg: { fromName: string; fromEmail: string; requireConsent: boolean },
+  emailCfg: EmailChannelConfig,
   allowance: number,
   correlationId: string,
 ): Promise<number> {
@@ -338,18 +345,223 @@ async function advanceEmailBroadcast(
       .eq('id', broadcastId);
   }
 
+  // The full check (including the Resend domain lookup) runs on the first
+  // tick; later ticks only re-check the local facts, so a blip on Resend's
+  // domains endpoint cannot fail a campaign that is already sending.
+  const preflight = await preflightEmailChannel(emailCfg, { skipDomainCheck: b.status !== 'scheduled' });
+  if (!preflight.ok) {
+    if (preflight.code === 'resend_domains_unreachable') {
+      // Transient: wait for the next tick rather than burn the campaign.
+      await supabase.from('broadcasts').update({ last_error: preflight.error?.slice(0, 500) ?? null }).eq('id', broadcastId);
+      log.warn('broadcast_email_preflight_deferred', {
+        fn: 'broadcast-dispatch', correlationId, broadcastId, err: preflight.error,
+      });
+      return 0;
+    }
+    await failEmailBroadcast(supabase, broadcastId, correlationId, preflight.error ?? 'ערוץ המייל אינו מוגדר');
+    return 0;
+  }
+
+  return emailCfg.provider === 'resend'
+    ? await advanceResendBroadcast(supabase, b, emailCfg, allowance, correlationId)
+    : await advanceRavmesserBroadcast(supabase, b, emailCfg, allowance, correlationId);
+}
+
+interface EmailRecipientRow {
+  id: string;
+  lead_id: string;
+  leads: {
+    email: string | null;
+    full_name: string | null;
+    consent_email: boolean | null;
+    do_not_contact: boolean | null;
+  } | null;
+}
+
+/** Pending recipients with the lead fields both providers need. */
+async function pendingEmailRecipients(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  broadcastId: string,
+  limit: number,
+): Promise<EmailRecipientRow[]> {
+  const { data } = await supabase
+    .from('broadcast_recipients')
+    .select('id, lead_id, leads(email, full_name, consent_email, do_not_contact)')
+    .eq('broadcast_id', broadcastId)
+    .eq('status', 'pending')
+    .limit(limit);
+  return (data ?? []) as unknown as EmailRecipientRow[];
+}
+
+/** null when the recipient may be sent to, otherwise the skip reason. */
+function emailSkipReason(
+  lead: EmailRecipientRow['leads'],
+  requireConsent: boolean,
+): 'no_email' | 'no_consent' | null {
+  if (!lead?.email) return 'no_email';
+  if (lead.do_not_contact) return 'no_consent';
+  if (requireConsent && lead.consent_email !== true) return 'no_consent';
+  return null;
+}
+
+/** The campaign body, ready to personalise per recipient. */
+function broadcastBodyHtml(b: Record<string, unknown>): string {
+  return (b.body_html as string | null) ??
+    `<p>${String(b.body_snapshot ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br />')}</p>`;
+}
+
+function broadcastSubject(b: Record<string, unknown>): string {
+  return String(b.subject ?? b.name ?? 'עדכון מקרנף נדל"ן');
+}
+
+// Resend path: one email per recipient, sent by us.
+//   scheduled → recipients materialised (above),
+//   each tick sends up to the pacing allowance, spaced for the rate limit,
+//   each recipient records its own outcome (sent + provider message id, or
+//   failed + the provider's reason),
+//   a rate limit / outage stops the tick and leaves the rest pending,
+//   once nothing is pending the broadcast is finalised.
+// Unsubscribes come back through the signed link in the footer
+// (email-unsubscribe) and through replies (email-webhook).
+async function advanceResendBroadcast(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  b: Record<string, unknown>,
+  emailCfg: EmailChannelConfig,
+  allowance: number,
+  correlationId: string,
+): Promise<number> {
+  const broadcastId = b.id as string;
+  const from = formatFromAddress(emailCfg);
+  const subject = broadcastSubject(b);
+  const bodyHtml = broadcastBodyHtml(b);
+  let sentThisTick = 0;
+
+  if (allowance > 0) {
+    const pending = await pendingEmailRecipients(supabase, broadcastId, allowance);
+    for (const [index, r] of pending.entries()) {
+      const lead = r.leads;
+      const skip = emailSkipReason(lead, emailCfg.requireConsent);
+      if (skip) {
+        await supabase.from('broadcast_recipients')
+          .update({ status: 'skipped', error: skip })
+          .eq('id', r.id);
+        continue;
+      }
+      if (index > 0) await new Promise((resolve) => setTimeout(resolve, RESEND_SEND_SPACING_MS));
+
+      const fullName = lead?.full_name ?? '';
+      const personalised = renderEmailHtml(bodyHtml, {
+        first_name: fullName.split(' ')[0] ?? '',
+        full_name: fullName,
+      });
+      const optOutUrl = await unsubscribeUrl(r.lead_id, broadcastId);
+      const html = wrapEmailShell(
+        sanitizeEmailHtml(personalised),
+        emailCfg.fromName,
+        { unsubscribeUrl: optOutUrl },
+      );
+
+      const result = await sendResendEmail({
+        from,
+        to: lead!.email as string,
+        subject,
+        html,
+        replyTo: emailCfg.replyTo || undefined,
+        headers: unsubscribeHeaders(optOutUrl),
+        tags: [{ name: 'broadcast_id', value: broadcastId }, { name: 'lead_id', value: r.lead_id }],
+        // Resend dedupes an identical key for 24h, so a crash between the
+        // send and the status write can never send the same person twice.
+        idempotencyKey: `broadcast-${broadcastId}-${r.id}`,
+      });
+
+      if (result.ok) {
+        await supabase.from('broadcast_recipients').update({
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+          provider_ref: { provider: 'resend', id: result.id ?? null },
+          error: null,
+        }).eq('id', r.id);
+        sentThisTick += 1;
+        continue;
+      }
+
+      if (result.outcome === 'retryable') {
+        // Rate limit or a Resend outage: everyone left stays pending and
+        // the next tick continues. The broadcast stays 'sending' — this is
+        // a pause, not a failure — but the reason is visible on the row.
+        await supabase.from('broadcasts')
+          .update({ last_error: `ההמתנה נמשכת: ${result.error ?? 'Resend לא זמין'}`.slice(0, 500) })
+          .eq('id', broadcastId);
+        log.warn('broadcast_email_send_paused', {
+          fn: 'broadcast-dispatch', correlationId, broadcastId, status: result.status, err: result.error,
+        });
+        await notifyOperator(supabase, {
+          kind: 'broadcast_email_stalled',
+          dedupeKey: `broadcast_email_stalled:${broadcastId}`,
+          throttleMinutes: 6 * 60,
+          severity: 'warn',
+          title: 'תפוצת מייל ממתינה',
+          lines: [`Resend החזיר שגיאה זמנית: ${result.error ?? result.status}`, 'השליחה תימשך אוטומטית בדקות הקרובות.'],
+          correlationId,
+        });
+        break;
+      }
+
+      await supabase.from('broadcast_recipients').update({
+        status: 'failed',
+        error: (result.error ?? `resend ${result.status}`).slice(0, 500),
+        provider_ref: { provider: 'resend', status: result.status },
+      }).eq('id', r.id);
+      log.warn('broadcast_email_recipient_failed', {
+        fn: 'broadcast-dispatch', correlationId, broadcastId, recipientId: r.id,
+        status: result.status, err: result.error,
+      });
+    }
+  }
+
+  const { count: remaining } = await supabase
+    .from('broadcast_recipients')
+    .select('id', { count: 'exact', head: true })
+    .eq('broadcast_id', broadcastId)
+    .eq('status', 'pending');
+  if ((remaining ?? 0) === 0) {
+    const counts = await finalCounts(supabase, broadcastId);
+    await supabase.from('broadcasts').update({
+      // Nobody reached = failed, so the operator sees it needs attention.
+      status: counts.sent === 0 && counts.failed > 0 ? 'failed' : 'sent',
+      sent_count: counts.sent,
+      failed_count: counts.failed,
+      skipped_count: counts.skipped,
+      finished_at: new Date().toISOString(),
+      last_error: counts.sent === 0 && counts.failed > 0
+        ? 'אף נמען לא קיבל את המייל — ראו את סיבת הכשל אצל הנמענים'
+        : null,
+      provider_ref: { ...((b.provider_ref ?? {}) as Record<string, unknown>), provider: 'resend' },
+    }).eq('id', broadcastId);
+    log.info('broadcast_email_finalised', {
+      fn: 'broadcast-dispatch', correlationId, broadcastId, provider: 'resend', ...counts,
+    });
+  }
+
+  return sentThisTick;
+}
+
+// Rav Messer path (Responder list campaign):
+//   ensure a dedicated Responder list (provider_ref.listId),
+//   push recipients into the list at the pacing allowance,
+//   once everyone is pushed — create the message and send it to the
+//   list, then finalise. Opens/clicks/unsubscribes live in Rav Messer.
+async function advanceRavmesserBroadcast(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  b: Record<string, unknown>,
+  emailCfg: EmailChannelConfig,
+  allowance: number,
+  correlationId: string,
+): Promise<number> {
+  const broadcastId = b.id as string;
   const providerRef = { ...((b.provider_ref ?? {}) as Record<string, unknown>) };
 
   if (!providerRef.listId) {
-    if (!isRavmesserConfigured()) {
-      await failEmailBroadcast(supabase, broadcastId, correlationId,
-        'רב מסר לא מוגדר: חסרים RAVMESSER_C_KEY / RAVMESSER_C_SECRET / RAVMESSER_U_KEY / RAVMESSER_U_SECRET ב-Supabase Edge Function secrets');
-      return 0;
-    }
-    if (!emailCfg.fromEmail) {
-      await failEmailBroadcast(supabase, broadcastId, correlationId, 'חסר fromEmail בהגדרת email_channel');
-      return 0;
-    }
     const list = await createRavmesserList({
       name: `karnaf-crm-${String(b.name ?? '').slice(0, 40)}-${broadcastId.slice(0, 8)}`,
       senderName: emailCfg.fromName,
@@ -366,25 +578,18 @@ async function advanceEmailBroadcast(
   // Push pending recipients into the Responder list, paced.
   let pushed = 0;
   if (allowance > 0) {
-    const { data: pending } = await supabase
-      .from('broadcast_recipients')
-      .select('id, lead_id, leads(email, full_name, consent_email, do_not_contact)')
-      .eq('broadcast_id', broadcastId)
-      .eq('status', 'pending')
-      .limit(allowance);
-    for (const r of (pending ?? []) as unknown as Array<{
-      id: string; lead_id: string;
-      leads: { email: string | null; full_name: string | null; consent_email: boolean | null; do_not_contact: boolean | null } | null;
-    }>) {
+    const pending = await pendingEmailRecipients(supabase, broadcastId, allowance);
+    for (const r of pending) {
       const lead = r.leads;
-      if (!lead?.email || lead.do_not_contact || (emailCfg.requireConsent && lead.consent_email !== true)) {
+      const skip = emailSkipReason(lead, emailCfg.requireConsent);
+      if (skip) {
         await supabase.from('broadcast_recipients')
-          .update({ status: 'skipped', error: !lead?.email ? 'no_email' : 'no_consent' })
+          .update({ status: 'skipped', error: skip })
           .eq('id', r.id);
         continue;
       }
       const added = await addSubscriberToList(providerRef.listId as string, {
-        email: lead.email, name: lead.full_name,
+        email: lead!.email as string, name: lead!.full_name,
       });
       if (added.ok) {
         await supabase.from('broadcast_recipients')
@@ -413,9 +618,9 @@ async function advanceEmailBroadcast(
     .eq('broadcast_id', broadcastId)
     .eq('status', 'pending');
   if ((remaining ?? 0) === 0 && !providerRef.messageSent) {
-    const bodyHtml = (b.body_html as string | null) ??
-      `<p>${String(b.body_snapshot ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br />')}</p>`;
-    const html = wrapEmailShell(sanitizeEmailHtml(bodyHtml), emailCfg.fromName);
+    // No per-lead unsubscribe link here: Responder appends its own footer
+    // to a list campaign, and it is the one that knows who unsubscribed.
+    const html = wrapEmailShell(sanitizeEmailHtml(broadcastBodyHtml(b)), emailCfg.fromName);
     const counts = await finalCounts(supabase, broadcastId);
 
     if (counts.sent === 0) {
@@ -431,7 +636,7 @@ async function advanceEmailBroadcast(
 
     const msg = await createRavmesserMessage({
       listId: providerRef.listId as string,
-      subject: String(b.subject ?? b.name ?? 'עדכון מקרנף נדל"ן'),
+      subject: broadcastSubject(b),
       html,
     });
     if (!msg.ok || !msg.messageId) {

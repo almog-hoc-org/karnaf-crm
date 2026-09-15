@@ -5,8 +5,10 @@
 // sanitize with a conservative allowlist — scripts, styles sheets,
 // iframes, event handlers, and javascript: URLs never survive — and wrap
 // the result in a single-column RTL shell with inline styles so it
-// renders acceptably across email clients. Rav Messer appends its own
-// unsubscribe footer at send time (legal opt-out lives on their side).
+// renders acceptably across email clients. The footer carries the opt-out
+// route: a per-lead unsubscribe link when the caller passes one (the Resend
+// path, where the CRM owns the send), otherwise the plain line that points
+// at the provider footer and the reply route (the Rav Messer path).
 
 const ALLOWED_TAGS = new Set([
   'a', 'b', 'strong', 'i', 'em', 'u', 's', 'p', 'br', 'hr', 'div', 'span',
@@ -93,18 +95,46 @@ export function renderEmailHtml(bodyHtml: string, vars: Record<string, string | 
 export const EMAIL_OPT_OUT_LINE =
   'להסרה מרשימת התפוצה השתמשו בקישור ההסרה בתחתית המייל, או השיבו למייל זה עם המילה "הסר".';
 
+export const EMAIL_OPT_OUT_LINK_TEXT = 'להסרה מרשימת התפוצה לחצו כאן';
+export const EMAIL_OPT_OUT_REPLY_HINT = 'או השיבו למייל זה עם המילה "הסר".';
+
+export interface EmailShellOptions {
+  /** Per-lead one-click unsubscribe URL (email-unsubscribe function). When
+   *  present the footer links to it; without it the reply route is the only
+   *  opt-out offered. */
+  unsubscribeUrl?: string | null;
+}
+
+function escapeAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 /** Single-column RTL shell with inline styles (email-client-safe). */
-export function wrapEmailShell(innerHtml: string, brandName = 'קרנף נדל"ן'): string {
+export function wrapEmailShell(
+  innerHtml: string,
+  brandName = 'קרנף נדל"ן',
+  opts: EmailShellOptions = {},
+): string {
+  // חוק הספאם: the reader must be able to leave from inside the message.
+  // With Resend the CRM owns the send, so it also owns the link; the Rav
+  // Messer path (where Responder appended its own footer) keeps the plain
+  // line, which points at that footer and at the reply route email-webhook
+  // understands.
+  const url = opts.unsubscribeUrl?.trim();
+  const optOutHtml = url
+    ? `<a href="${escapeAttr(url)}" style="color:#64748b; text-decoration:underline;">${EMAIL_OPT_OUT_LINK_TEXT}</a> ${EMAIL_OPT_OUT_REPLY_HINT}`
+    : EMAIL_OPT_OUT_LINE;
   return [
     '<div dir="rtl" style="margin:0; padding:24px 12px; background-color:#f4f6f8; font-family:Arial,Helvetica,sans-serif;">',
     '<div style="max-width:600px; margin:0 auto; background-color:#ffffff; border-radius:12px; padding:28px 24px; text-align:right; color:#1e293b; font-size:16px; line-height:1.65;">',
     innerHtml,
     `<hr style="border:none; border-top:1px solid #e2e8f0; margin:28px 0 14px;" />`,
     `<p style="font-size:13px; color:#64748b; margin:0;">${brandName} 🦏</p>`,
-    // חוק הספאם: the reader must see how to leave. Rav Messer appends the
-    // actual unsubscribe link at send time; this line points at it and
-    // offers the reply route, which email-webhook understands.
-    `<p style="font-size:12px; color:#94a3b8; margin:8px 0 0;">${EMAIL_OPT_OUT_LINE}</p>`,
+    `<p style="font-size:12px; color:#94a3b8; margin:8px 0 0;">${optOutHtml}</p>`,
     '</div>',
     '</div>',
   ].join('\n');

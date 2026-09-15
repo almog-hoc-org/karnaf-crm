@@ -16,7 +16,10 @@ async function importHmacKey(secret: string, hash: 'SHA-256' | 'SHA-1' = 'SHA-25
   );
 }
 
-async function hmacHex(secret: string, body: string, hash: 'SHA-256' | 'SHA-1' = 'SHA-256'): Promise<string> {
+/** Hex HMAC of an arbitrary string. Exported so the unsubscribe-link
+ *  signer (_shared/email-unsubscribe.ts) shares one implementation with
+ *  the webhook verifiers instead of rolling its own. */
+export async function hmacHex(secret: string, body: string, hash: 'SHA-256' | 'SHA-1' = 'SHA-256'): Promise<string> {
   const key = await importHmacKey(secret, hash);
   const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(body));
   const bytes = new Uint8Array(sig);

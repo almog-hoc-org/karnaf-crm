@@ -844,6 +844,16 @@ export interface SafetyNetConfig {
   oncePerHours: number;
 }
 
+export type EmailProvider = 'resend' | 'ravmesser';
+
+export interface EmailChannelConfig {
+  provider: EmailProvider;
+  fromName: string;
+  fromEmail: string;
+  replyTo: string;
+  requireConsent: boolean;
+}
+
 export async function fetchRuntimeConfig() {
   return getJson<{
     ok: true;
@@ -853,7 +863,15 @@ export async function fetchRuntimeConfig() {
     slaThresholds: SlaThresholdsConfig;
     forbiddenClaims: string[];
     safetyNet: SafetyNetConfig;
+    emailChannel: EmailChannelConfig;
   }>('/runtime-config');
+}
+
+export async function postUpdateEmailChannel(payload: EmailChannelConfig) {
+  return postJson<{ ok: true; emailChannel: EmailChannelConfig }>('/runtime-config', {
+    action: 'update_email_channel',
+    ...payload,
+  });
 }
 
 export async function postUpdateSafetyNet(payload: SafetyNetConfig) {

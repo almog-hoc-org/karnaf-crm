@@ -123,6 +123,12 @@ verify_jwt = true
 [functions.email-webhook]
 verify_jwt = false
 
+# Public one-click unsubscribe landing for marketing email (RFC 8058).
+# A mail client follows the link with no session; the per-lead HMAC token
+# in the URL is the authentication.
+[functions.email-unsubscribe]
+verify_jwt = false
+
 [functions.healthz]
 verify_jwt = false
 
