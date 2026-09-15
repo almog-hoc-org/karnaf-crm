@@ -187,6 +187,36 @@ jobs:
               group by 1 order by 1""",
             'backfill=true rows = migration 126; backfill=false = trigger on new leads')
 
+          # ── 4b. Broadcast (email campaign) diagnosis ─────────────────
+          q('broadcasts newest 5', """
+              select id, name, channel, status, scheduled_at, recipients_count,
+                     sent_count, failed_count, skipped_count, provider_ref,
+                     created_at, updated_at
+              from broadcasts order by created_at desc limit 5""",
+            'the 311-recipient email campaign: status + provider_ref (listId/messageId) tell how far it got')
+
+          q('broadcast recipients by status (newest broadcast)', """
+              select r.status, r.error, count(*)
+              from broadcast_recipients r
+              join broadcasts b on b.id = r.broadcast_id
+              where b.id = (select id from broadcasts order by created_at desc limit 1)
+              group by 1, 2 order by 3 desc""",
+            'pending = never pushed to Rav Messer; skipped/failed carry a reason')
+
+          q('broadcast failure alerts', """
+              select created_at, delivered, title, body
+              from operator_alerts
+              where kind in ('broadcast_email_failed', 'broadcast_failed')
+              order by created_at desc limit 5""",
+            'failEmailBroadcast writes the reason here (and only here)')
+
+          q('broadcast dispatch cron + gateway (last 6h)', """
+              select created, status_code, left(content::text, 200) as body
+              from net._http_response
+              where content::text like '%%broadcast%%' or content::text like '%%enqueued%%'
+              order by created desc limit 5""",
+            'is the every-minute broadcast-dispatch call answered 200', attempts=2)
+
           # ── 5. Alert channels ────────────────────────────────────────
           q('alert ledger (newest 5)', """
               select kind, delivered, channel_results, created_at
