@@ -18,6 +18,8 @@ import {
   sendInstagramText,
 } from '../_shared/instagram-provider.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
+import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { applyOptOut, detectOptOut } from '../_shared/opt-out.ts';
 import { ensureConversation, logLeadEvent } from '../_shared/lead-service.ts';
 import { messageAlreadyLogged } from '../_shared/idempotency.ts';
 import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
@@ -150,6 +152,34 @@ Deno.serve(async (req) => {
         dueAt: new Date(Date.now() + 30 * 60_000).toISOString(),
         createdByActorType: 'system',
       });
+    }
+
+    // Removal request (חוק הספאם): honour it before anything answers.
+    const { messaging } = await getRuntimeConfig(supabase);
+    if (detectOptOut(normalized.text, messaging.optOutKeywords)) {
+      await applyOptOut(supabase, {
+        leadId: leadRow.id, channel: 'instagram', basis: 'inbound_keyword', text: normalized.text,
+        correlationId, conversationId: conversation.id,
+      });
+      const ack = await sendInstagramText(normalized.igsid, messaging.optOutConfirmation);
+      await supabase.from('messages').insert({
+        conversation_id: conversation.id,
+        lead_id: leadRow.id,
+        provider_message_id: ack.providerMessageId ?? null,
+        sender_type: 'system',
+        sender_name: 'Karnaf',
+        direction: 'outbound',
+        message_type: 'text',
+        content_text: messaging.optOutConfirmation,
+        provider_status: ack.ok ? 'sent' : 'failed',
+        provider_error: ack.ok ? null : ack.error ?? 'send failed',
+        raw_payload: { source: 'opt_out', correlation_id: correlationId },
+      });
+      await logLeadEvent(supabase, leadRow.id, 'opt_out_confirmed', 'system', {
+        delivered: ack.ok, correlation_id: correlationId,
+      }, conversation.id);
+      results.push({ leadId: leadRow.id, optOut: true, skippedAi: true });
+      continue;
     }
 
     // Customer inbound reopened the 24h window — flush queued manual replies.

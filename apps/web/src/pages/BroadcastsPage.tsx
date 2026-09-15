@@ -124,6 +124,9 @@ export function BroadcastsPage() {
             busy={act.isPending}
             onOpen={() => setDetailId(b.id)}
             onSchedule={() => act.mutate({ action: 'schedule', id: b.id })}
+            onRetry={() => {
+              if (confirm('לשלוח שוב עכשיו? נמענים שכבר נשלחו לא יקבלו שוב.')) act.mutate({ action: 'retry', id: b.id });
+            }}
             onCancel={() => act.mutate({ action: 'cancel', id: b.id })}
             onDelete={() => {
               if (confirm('למחוק את התפוצה?')) act.mutate({ action: 'delete', id: b.id });
@@ -152,6 +155,7 @@ function BroadcastCard({
   busy,
   onOpen,
   onSchedule,
+  onRetry,
   onCancel,
   onDelete,
 }: {
@@ -159,6 +163,7 @@ function BroadcastCard({
   busy: boolean;
   onOpen: () => void;
   onSchedule: () => void;
+  onRetry: () => void;
   onCancel: () => void;
   onDelete: () => void;
 }) {
@@ -183,10 +188,19 @@ function BroadcastCard({
         ) : null}
       </div>
 
+      {b.status === 'failed' && b.last_error ? (
+        <p role="alert" className="mt-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          סיבת הכשל: {b.last_error}
+        </p>
+      ) : null}
+
       <div className="mt-3 flex flex-wrap gap-2">
         <button className="kf-btn kf-btn-ghost" onClick={onOpen}>פרטים ואנליטיקה</button>
         {b.status === 'draft' ? (
           <button className="kf-btn kf-btn-primary" onClick={onSchedule} disabled={busy}>תזמן שליחה</button>
+        ) : null}
+        {b.status === 'failed' ? (
+          <button className="kf-btn kf-btn-primary" onClick={onRetry} disabled={busy}>שלח שוב</button>
         ) : null}
         {b.status === 'scheduled' || b.status === 'sending' ? (
           <button className="kf-btn kf-btn-danger" onClick={onCancel} disabled={busy}>ביטול</button>

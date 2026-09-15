@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderEmailHtml, sanitizeEmailHtml, wrapEmailShell } from './email-html';
+import { EMAIL_OPT_OUT_LINE, renderEmailHtml, sanitizeEmailHtml, wrapEmailShell } from './email-html';
 
 describe('sanitizeEmailHtml', () => {
   it('strips script tags including their content', () => {
@@ -49,6 +49,12 @@ describe('renderEmailHtml', () => {
 });
 
 describe('wrapEmailShell', () => {
+  it('always tells the reader how to unsubscribe (חוק הספאם)', () => {
+    const out = wrapEmailShell('<p>תוכן</p>');
+    expect(out).toContain(EMAIL_OPT_OUT_LINE);
+    expect(out).toContain('הסר');
+  });
+
   it('produces an RTL single-column shell containing the body', () => {
     const out = wrapEmailShell('<p>תוכן</p>');
     expect(out).toContain('dir="rtl"');

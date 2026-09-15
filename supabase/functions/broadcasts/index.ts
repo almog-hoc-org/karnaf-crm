@@ -17,6 +17,7 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { countSegment, fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
 import { resolvePacing } from '../_shared/broadcast-pacing.ts';
 import { sanitizeEmailHtml } from '../_shared/email-html.ts';
+import { isRavmesserConfigured } from '../_shared/ravmesser.ts';
 
 interface MetaTemplate { name: string; lang?: string; params?: string[] }
 
@@ -270,6 +271,15 @@ Deno.serve(async (req) => {
     if (b.channel === 'email' && !b.subject) {
       return jsonResponse(req, { error: 'תפוצת מייל דורשת שורת נושא' }, 400);
     }
+    // Fail at the click, not at 19:30 with 311 people waiting: the email
+    // channel is Rav Messer campaigns, and without its four API secrets the
+    // worker can only fail the campaign the second it starts.
+    if (b.channel === 'email' && !isRavmesserConfigured()) {
+      return jsonResponse(req, {
+        error: 'רב מסר לא מוגדר — חסרים RAVMESSER_C_KEY / RAVMESSER_C_SECRET / RAVMESSER_U_KEY / RAVMESSER_U_SECRET ב-Supabase Edge Function secrets. ראו docs/runbooks/ravmesser-integration.md',
+        code: 'ravmesser_not_configured',
+      }, 400);
+    }
     // Snapshot the current segment size for display; recipients are
     // materialised at send time by the worker.
     const count = await countSegment(
@@ -283,6 +293,33 @@ Deno.serve(async (req) => {
       .eq('id', id).select('*').single();
     if (error) return jsonResponse(req, { error: error.message }, 400);
     log.info('broadcast_scheduled', { fn: 'broadcasts', correlationId, id, count });
+    return jsonResponse(req, { ok: true, broadcast: data });
+  }
+
+  // A failed campaign goes back to the queue with the same recipients:
+  // the ones still pending are picked up where they stopped, sent ones
+  // are not re-sent. Same preflight as schedule.
+  if (action === 'retry') {
+    const id = body.id as string | undefined;
+    if (!id) return jsonResponse(req, { error: 'id required' }, 400);
+    const { data: b } = await supabase.from('broadcasts').select('*').eq('id', id).maybeSingle();
+    if (!b) return jsonResponse(req, { error: 'not found' }, 404);
+    if (b.status !== 'failed') return jsonResponse(req, { error: `cannot retry a ${b.status} broadcast` }, 409);
+    if (b.channel === 'email' && !isRavmesserConfigured()) {
+      return jsonResponse(req, {
+        error: 'רב מסר עדיין לא מוגדר — הוסיפו את ארבעת הסודות ב-Supabase ואז נסו שוב',
+        code: 'ravmesser_not_configured',
+      }, 400);
+    }
+    const scheduledAt = typeof body.scheduled_at === 'string' && body.scheduled_at
+      ? body.scheduled_at
+      : new Date().toISOString();
+    const { data, error } = await supabase
+      .from('broadcasts')
+      .update({ status: 'scheduled', scheduled_at: scheduledAt, last_error: null, finished_at: null })
+      .eq('id', id).select('*').single();
+    if (error) return jsonResponse(req, { error: error.message }, 400);
+    log.info('broadcast_retried', { fn: 'broadcasts', correlationId, id, scheduledAt, by: staff.userId });
     return jsonResponse(req, { ok: true, broadcast: data });
   }
 

@@ -16,6 +16,7 @@ import { finalizeWebhookInbox, persistWebhookInbox } from '../_shared/webhook-in
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { buildHumanHandoffSchedule } from '../_shared/handoff-schedule.ts';
 import { getMemberConciergeConfig, handleMemberConcierge, type MemberRow } from '../_shared/member-concierge.ts';
+import { applyOptOut, applyResubscribe, detectOptOut, detectResubscribe } from '../_shared/opt-out.ts';
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -183,6 +184,24 @@ Deno.serve(async (req) => {
     provider_message_id: normalized.providerMessageId,
     correlation_id: correlationId,
   }, conversation.id);
+
+  // A removal request is a system command, not conversation. It is
+  // honoured before the router, the AI and any queued reply — whoever the
+  // lead is and whichever track they are on — and answered with one
+  // confirmation. חוק הספאם: the request must stop mailings; it does.
+  const optOutResult = await handleOptOutCommand(supabase, {
+    lead,
+    conversationId: conversation.id,
+    phone,
+    text: normalized.text ?? null,
+    correlationId,
+  });
+  if (optOutResult) {
+    return jsonResponse(req, {
+      ok: true, leadId: lead.id, conversationId: conversation.id, correlationId,
+      skippedAi: true, ...optOutResult,
+    });
+  }
 
   const flushedManualReplies = await flushPendingManualReplies(supabase, {
     leadId: lead.id,
@@ -752,10 +771,45 @@ async function sendRouterWelcomeTemplate(
   }
 }
 
+// Returns null when the message is not an opt-out / re-subscribe command.
+async function handleOptOutCommand(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  input: {
+    lead: Record<string, unknown>;
+    conversationId: string;
+    phone: string;
+    text: string | null;
+    correlationId: string;
+  },
+): Promise<{ optOut: true } | { resubscribed: true } | null> {
+  const { messaging } = await getRuntimeConfig(supabase);
+  const leadId = input.lead.id as string;
+  if (detectOptOut(input.text, messaging.optOutKeywords)) {
+    await applyOptOut(supabase, {
+      leadId, channel: 'whatsapp', basis: 'inbound_keyword', text: input.text,
+      correlationId: input.correlationId, conversationId: input.conversationId,
+    });
+    await sendRouterText(supabase, { leadId, conversationId: input.conversationId, phone: input.phone, correlationId: input.correlationId },
+      messaging.optOutConfirmation, 'opt_out_confirmed');
+    return { optOut: true };
+  }
+  if (input.lead.consent_whatsapp === false && detectResubscribe(input.text, messaging.resubscribeKeywords)) {
+    await applyResubscribe(supabase, {
+      leadId, channel: 'whatsapp', text: input.text,
+      correlationId: input.correlationId, conversationId: input.conversationId,
+    });
+    await sendRouterText(supabase, { leadId, conversationId: input.conversationId, phone: input.phone, correlationId: input.correlationId },
+      messaging.resubscribeConfirmation, 'resubscribe_confirmed');
+    return { resubscribed: true };
+  }
+  return null;
+}
+
 async function sendRouterText(
   supabase: ReturnType<typeof getServiceSupabase>,
   input: { leadId: string; conversationId: string; phone: string; correlationId: string },
   text: string,
+  eventType?: string,
 ) {
   const result = await sendWhatsAppText(input.phone, text);
   await supabase.from('messages').insert({
@@ -769,6 +823,11 @@ async function sendRouterText(
     content_text: text,
     provider_status: result.ok ? 'sent' : 'failed',
     provider_error: result.ok ? null : result.error ?? 'send failed',
-    raw_payload: { source: 'whatsapp_router', correlation_id: input.correlationId },
+    raw_payload: { source: eventType ? 'opt_out' : 'whatsapp_router', correlation_id: input.correlationId },
   });
+  if (eventType) {
+    await logLeadEvent(supabase, input.leadId, eventType, 'system', {
+      delivered: result.ok, error: result.ok ? null : result.error ?? null, correlation_id: input.correlationId,
+    }, input.conversationId);
+  }
 }

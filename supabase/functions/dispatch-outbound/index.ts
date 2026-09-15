@@ -19,6 +19,7 @@ import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { fallbackTemplateParams } from '../_shared/provider-errors.ts';
 import { canContactLead, type ContactChannel } from '../_shared/contact-guard.ts';
 import { findNextOpening, isWithinWorkingHours } from '../_shared/handoff-schedule.ts';
+import { appendOptOutFooter } from '../_shared/opt-out.ts';
 
 interface DispatchRow {
   id: string;
@@ -132,6 +133,15 @@ async function deliverTemplateRow(
     config.whatsappSession.freeformWindowHours,
   );
 
+  // חוק הספאם: every proactive text tells the reader how to leave. A
+  // Meta template sent by name carries its footer inside the approved
+  // template (nothing can be appended on the wire); the two text paths
+  // get the configured line here, and the stored message shows it too.
+  const footer = config.messaging.optOutFooter;
+  const textWithFooter = appendOptOutFooter(text, footer);
+  const oneLineWithFooter = appendOptOutFooter(text, footer, { oneLine: true });
+  let deliveredText = text;
+
   let sendResult;
   if (channel === 'whatsapp' && payload.meta_template?.name) {
     // Pre-approved Meta template sent by name — the correct path for
@@ -153,13 +163,15 @@ async function deliverTemplateRow(
     // Wrap the rendered text in the fallback template, same as
     // orchestrate-message does for AI replies.
     if (!lead.phone) { await markRecipientSkipped('no_phone'); return 'skipped'; }
+    deliveredText = oneLineWithFooter;
     sendResult = await sendWhatsAppTemplate(
       lead.phone as string,
       config.whatsappSession.fallbackTemplateName,
-      fallbackTemplateParams(text),
+      fallbackTemplateParams(deliveredText),
     );
   } else {
-    sendResult = await sendChannelText(channel, lead, text);
+    deliveredText = textWithFooter;
+    sendResult = await sendChannelText(channel, lead, deliveredText);
   }
   if (!sendResult.ok) throw new Error(`template send failed: ${sendResult.error ?? 'unknown'}`);
 
@@ -170,7 +182,7 @@ async function deliverTemplateRow(
     sender_type: 'system',
     direction: 'outbound',
     message_type: 'template',
-    content_text: text,
+    content_text: deliveredText,
     provider_status: 'sent',
     raw_payload: {
       source: payload.broadcast_id ? 'broadcast' : 'automation_engine',

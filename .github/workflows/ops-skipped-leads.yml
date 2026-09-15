@@ -187,6 +187,23 @@ jobs:
               group by 1 order by 1""",
             'backfill=true rows = migration 126; backfill=false = trigger on new leads')
 
+          q('opt-outs (last 30 days) by basis', """
+              select event_payload->>'basis' as basis, event_payload->>'channel' as channel, count(*)
+              from lead_events
+              where event_type = 'consent_revoked' and created_at > now() - interval '30 days'
+              group by 1, 2 order by 3 desc""",
+            'inbound_keyword = the lead wrote הסר; provider_unsubscribe = Rav Messer link; manual = operator')
+
+          q('marketing templates without an opt-out route', """
+              select key, status, metadata->'meta'->>'category' as category,
+                     metadata->'meta'->>'footer' as footer,
+                     metadata->'meta'->>'has_opt_out' as has_opt_out
+              from message_templates
+              where channel = 'whatsapp'
+                and metadata->'meta'->>'category' = 'MARKETING'
+              order by key""",
+            'has_opt_out=false after the next template sync = resubmit that template to Meta with a footer', attempts=2)
+
           # ── 4b. Broadcast (email campaign) diagnosis ─────────────────
           q('broadcasts newest 5', """
               select id, name, channel, status, scheduled_at, recipients_count,

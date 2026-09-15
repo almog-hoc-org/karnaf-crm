@@ -66,6 +66,8 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   email_list_added: 'נוסף לרשימת דיוור',
   consent_granted: 'נרשם אישור דיוור',
   consent_revoked: 'אישור דיוור בוטל',
+  opt_out_confirmed: 'נשלח אישור הסרה מדיוור',
+  resubscribe_confirmed: 'נשלח אישור חזרה לדיוור',
   // Lifecycle / manual actions
   lead_created: 'ליד נוצר',
   lead_manual_created: 'ליד נוצר ידנית',

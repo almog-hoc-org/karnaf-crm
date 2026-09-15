@@ -32,6 +32,7 @@ export interface ContactGuardLead {
   snoozed_until?: string | null;
   no_proactive_contact?: boolean | null;
   consent_email?: boolean | null;
+  consent_whatsapp?: boolean | null;
 }
 
 export type ContactBlockReason =
@@ -69,9 +70,19 @@ export function canContactLead(lead: ContactGuardLead, opts: ContactGuardOptions
   switch (opts.channel) {
     case 'whatsapp':
       if (!nonEmpty(lead.phone)) return { ok: false, reason: 'no_phone' };
+      // A lead who wrote "הסר" has consent_whatsapp = false. NULL (never
+      // asked; only rows older than migration 128) still passes: WhatsApp
+      // marketing is gated by Meta's template approval, and the owner's
+      // rule is consent-by-default. Replies are never blocked by this.
+      if (opts.kind === 'proactive' && lead.consent_whatsapp === false) {
+        return { ok: false, reason: 'no_consent' };
+      }
       break;
     case 'instagram':
       if (!nonEmpty(lead.ig_user_id)) return { ok: false, reason: 'no_identity' };
+      if (opts.kind === 'proactive' && lead.consent_whatsapp === false) {
+        return { ok: false, reason: 'no_consent' };
+      }
       break;
     case 'email':
       if (!nonEmpty(lead.email)) return { ok: false, reason: 'no_email' };

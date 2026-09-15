@@ -9,7 +9,7 @@
 // each flow is one-shot per lead (guarded by a lead_event).
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { sendWhatsAppTemplate } from './whatsapp-provider.ts';
+import { enqueueTemplateDispatch } from './outbound-enqueue.ts';
 import { logLeadEvent } from './lead-service.ts';
 import { log } from './logger.ts';
 import { canContactLead, type ContactGuardLead } from './contact-guard.ts';
@@ -66,16 +66,27 @@ async function sendNudge(
     log.info('reengagement_skipped', { fn: 'reengagement', correlationId, leadId: lead.id as string, eventType, reason: guard.reason });
     return false;
   }
-  const phone = lead.phone as string;
-  const res = await sendWhatsAppTemplate(phone, cfg.templateName, [
-    { name: 'context', value: contextLine(lead) },
-  ]);
+  // Through the shared queue, not a direct provider call: the contact
+  // guard is re-checked at send time, quiet hours defer, retries and the
+  // DLQ apply, and the daily cap counts it. A nudge that bypassed all of
+  // that could reach a lead who opted out a minute earlier.
+  const context = contextLine(lead);
+  const res = await enqueueTemplateDispatch(supabase, {
+    leadId: lead.id as string,
+    channel: 'whatsapp',
+    text: context,
+    templateKey: cfg.templateName,
+    source: 'reengagement',
+    metaTemplate: { name: cfg.templateName, lang: 'he', params: [context] },
+    correlationId,
+  });
   if (!res.ok) {
-    log.warn('reengagement_send_failed', { fn: 'reengagement', correlationId, leadId: lead.id as string, eventType, err: res.error });
+    log.warn('reengagement_enqueue_failed', { fn: 'reengagement', correlationId, leadId: lead.id as string, eventType, err: res.error });
     return false;
   }
   await logLeadEvent(supabase, lead.id as string, eventType, 'system', {
     template: cfg.templateName,
+    dispatch_id: res.dispatchId ?? null,
     correlation_id: correlationId,
   });
   return true;

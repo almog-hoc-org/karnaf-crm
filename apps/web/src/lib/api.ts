@@ -993,6 +993,7 @@ export type BroadcastAction =
   | { action: 'update'; id: string; name?: string; channel?: BroadcastChannel; template_key?: string | null;
       meta_template?: BroadcastMetaTemplate | null; segment?: BroadcastSegment; scheduled_at?: string | null }
   | { action: 'schedule'; id: string }
+  | { action: 'retry'; id: string; scheduled_at?: string | null }
   | { action: 'cancel'; id: string }
   | { action: 'delete'; id: string };
 

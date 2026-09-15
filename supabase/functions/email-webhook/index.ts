@@ -18,6 +18,8 @@ import { ensureConversation, logLeadEvent, upsertLead } from '../_shared/lead-se
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { normalizeIsraeliPhone } from '../_shared/phone.ts';
 import { verifyHmacHeader } from '../_shared/webhook-signature.ts';
+import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { applyOptOut, detectOptOut } from '../_shared/opt-out.ts';
 import { optional } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
@@ -120,15 +122,27 @@ Deno.serve(async (req) => {
     correlation_id: correlationId, subject, message_id: messageId,
   }, conversation.id);
 
+  // "הסר" / "unsubscribe" in the subject or a short body revokes email
+  // consent right away (חוק הספאם). The reply still lands in the human
+  // queue, flagged, so the operator sees it happened.
+  const { messaging } = await getRuntimeConfig(supabase);
+  const optOut = detectOptOut(subject, messaging.optOutKeywords) || detectOptOut(textBody, messaging.optOutKeywords);
+  if (optOut) {
+    await applyOptOut(supabase, {
+      leadId: lead.id, channel: 'email', basis: 'inbound_keyword', scope: 'email',
+      text: subject || textBody, correlationId, conversationId: conversation.id,
+    });
+  }
+
   // Email replies need a human; the WhatsApp orchestrator can't compose
   // outbound email yet, so we always queue Mia for the first turn.
   await ensurePendingQueueItem(supabase, {
     leadId: lead.id,
     queueType: 'human_handoff',
     priorityLevel: 2,
-    reason: 'אימייל נכנס דורש מענה ידני',
+    reason: optOut ? 'בקשת הסרה מדיוור במייל — ההסכמה בוטלה אוטומטית' : 'אימייל נכנס דורש מענה ידני',
     queueSummary: subject || textBody.slice(0, 120),
-    payloadJson: { channel: 'email', correlationId },
+    payloadJson: { channel: 'email', correlationId, optOut },
   });
 
   log.info('email_inbound_accepted', {

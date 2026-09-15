@@ -231,6 +231,31 @@ vacuum (full, analyze) activities;
 
 ---
 
+## בעיה 7 — 📧 תפוצת המייל ל-311 נמענים נכשלה (14.9)
+
+### מה קרה, במילה אחת
+הקמפיין תוזמן ל-19:30, ובשנייה הראשונה נכשל עם ההודעה: **"רב מסר לא מוגדר"**. המערכת שולחת מיילים דרך רב מסר, ולרב מסר צריך ארבעה מפתחות API שלא הוזנו ב-Supabase. שום מייל לא יצא. ה-worker וה-cron תקינים.
+
+### שלב 7.1 — להשיג את ארבעת המפתחות
+תמיכת רב מסר: 03-717-7777 / support@responder.co.il → "מפתחות API ל-Responder" (c_key, c_secret, u_key, u_secret).
+
+### שלב 7.2 — להדביק ב-Supabase
+👉 <https://supabase.com/dashboard/project/svkzkpgccahwmyflobvn/settings/functions> → **Add new secret** × 4:
+
+| Name | Value |
+|---|---|
+| `RAVMESSER_C_KEY` | c_key |
+| `RAVMESSER_C_SECRET` | c_secret |
+| `RAVMESSER_U_KEY` | u_key |
+| `RAVMESSER_U_SECRET` | u_secret |
+
+> ⚠️ לא לשלוח לי את הערכים. רק "הוספתי".
+
+### שלב 7.3 — לשלוח שוב
+👉 <https://karnaf-crm.vercel.app/broadcasts> → על הקמפיין שנכשל יש עכשיו את סיבת הכשל וכפתור **"שלח שוב"**. קודם מומלץ קמפיין בדיקה קטן (סגמנט עם הכתובת שלך).
+
+---
+
 ## 📋 סיכום — סדר הפעולות
 
 ```
@@ -245,6 +270,7 @@ vacuum (full, analyze) activities;
 [ ] 4        חכה לטבלה ממני
 [ ] 5.1      כניסה בחלון גלישה בסתר → נכנסת?
 [ ] 6        GitHub: למזג PR #84 (ראה בעיה 6)
+[ ] 7.2      Supabase: 4 סודות רב מסר → "הוספתי" → "שלח שוב" בתפוצה
 ```
 
 ---
