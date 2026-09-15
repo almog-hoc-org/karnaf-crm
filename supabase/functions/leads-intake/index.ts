@@ -304,8 +304,7 @@ Deno.serve(async (req) => {
       fn: 'leads-intake', correlationId, contractKey: contract.contract_key, found: !!found,
     });
     const revokeResponse = { ok: true, revoked: !!found, contractKey: contract.contract_key, correlationId };
-    await storeWebhookIdempotencyResponse(supabase, idempotencyKey, revokeResponse);
-    return jsonResponse(req, revokeResponse);
+    await storeWebhookIdempotencyResponse(supabase, idempotencyKey, 'intake', revokeResponse);
     return jsonResponse(req, revokeResponse);
   }
 
