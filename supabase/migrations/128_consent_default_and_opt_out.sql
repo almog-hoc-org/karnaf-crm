@@ -13,8 +13,8 @@
 --      outgoing marketing text carries, and the confirmation sent back.
 --
 -- Existing leads with consent still null (18 on 2026-09-14: 17 whatsapp,
--- 1 manual) are NOT backfilled here — the rule is about new leads; the
--- owner decides on those separately.
+-- 1 manual) are NOT backfilled here; the owner approved that the next day
+-- and migration 129 does it.
 
 -- ── 1. Default opt-in on insert ────────────────────────────────────────
 create or replace function public.leads_landing_page_consent_before_insert()
