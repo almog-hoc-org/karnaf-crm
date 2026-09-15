@@ -4,10 +4,12 @@ import {
   fetchRuntimeConfig,
   postUpdateActiveHours,
   postUpdateFollowUpDelays,
+  postUpdateEmailChannel,
   postUpdateForbiddenClaims,
   postUpdateSafetyNet,
   postUpdateSlaThresholds,
   type ActiveHoursConfig,
+  type EmailChannelConfig,
   type FollowUpDelaysConfig,
   type SafetyNetConfig,
   type SlaThresholdsConfig,
@@ -160,6 +162,12 @@ export function SettingsPage() {
         onSaved={() => qc.invalidateQueries({ queryKey: ['runtime-config'] })}
       />
 
+      <EmailChannelCard
+        value={configQ.data?.emailChannel ?? null}
+        loading={configQ.isLoading}
+        onSaved={() => qc.invalidateQueries({ queryKey: ['runtime-config'] })}
+      />
+
       <WhatsAppTemplateReadiness session={configQ.data?.whatsappSession ?? null} loading={configQ.isLoading} />
     </div>
   );
@@ -255,6 +263,123 @@ function SlaThresholdsCard({
           <NumberField label="תשלום ממתין (שעות)" value={draft.paymentPendingHours} min={1} max={168}
             onChange={(v) => setDraft((d) => ({ ...d, paymentPendingHours: v }))} />
         </div>
+      )}
+      <div className="flex justify-end">
+        <button type="submit" className="kf-btn kf-btn-primary" disabled={save.isPending || loading}>
+          {save.isPending ? 'שומר...' : 'שמירה'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// Email channel — who sends תפוצות מייל and from which address. Until
+// this card existed the setting could only be changed by a migration, and
+// the dispatcher ignored it anyway: the 2026-09-14 campaign to 311 people
+// died on Rav Messer secrets that were never provisioned.
+const DEFAULT_EMAIL_CHANNEL: EmailChannelConfig = {
+  provider: 'resend',
+  fromName: 'קרנף נדל"ן',
+  fromEmail: '',
+  replyTo: '',
+  requireConsent: true,
+};
+
+function EmailChannelCard({
+  value,
+  loading,
+  onSaved,
+}: {
+  value: EmailChannelConfig | null;
+  loading: boolean;
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [draft, setDraft] = useState<EmailChannelConfig>(DEFAULT_EMAIL_CHANNEL);
+  useEffect(() => { if (value) setDraft(value); }, [value]);
+  const save = useMutation({
+    mutationFn: postUpdateEmailChannel,
+    onSuccess: () => { onSaved(); toast.success('הגדרות ערוץ המייל נשמרו'); },
+    onError: (err) => toast.error((err as Error).message),
+  });
+  const senderDomain = draft.fromEmail.includes('@') ? draft.fromEmail.split('@').pop() ?? '' : '';
+  const publicDomain = /^(gmail|googlemail|hotmail|outlook|live|yahoo|icloud|me)\.|^walla\./i.test(senderDomain);
+  return (
+    <form
+      className="kf-card max-w-3xl space-y-4 p-5"
+      onSubmit={(e) => { e.preventDefault(); save.mutate(draft); }}
+    >
+      <div>
+        <h2 className="text-lg font-semibold">ערוץ מייל (תפוצות)</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          מי שולח את תפוצות המייל ומאיזו כתובת. ב-Resend המערכת שולחת מייל נפרד לכל נמען,
+          מוסיפה לכל מייל קישור הסרה אישי, ורושמת נשלח/נכשל לכל נמען בנפרד.
+        </p>
+      </div>
+      {loading ? (
+        <div className="rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500">{t('loading')}</div>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block text-sm">
+              <span className="mb-1 block text-slate-600">ספק</span>
+              <select
+                className="kf-input w-full"
+                value={draft.provider}
+                aria-label="ספק מייל"
+                onChange={(e) => setDraft((d) => ({ ...d, provider: e.target.value as EmailChannelConfig['provider'] }))}
+              >
+                <option value="resend">Resend</option>
+                <option value="ravmesser">רב מסר</option>
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-slate-600">שם השולח</span>
+              <input
+                className="kf-input w-full"
+                value={draft.fromName}
+                onChange={(e) => setDraft((d) => ({ ...d, fromName: e.target.value }))}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-slate-600">כתובת השולח</span>
+              <input
+                className="kf-input w-full"
+                dir="ltr"
+                type="email"
+                placeholder="hi@your-domain.co.il"
+                value={draft.fromEmail}
+                onChange={(e) => setDraft((d) => ({ ...d, fromEmail: e.target.value }))}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-slate-600">כתובת לתשובות (Reply-To)</span>
+              <input
+                className="kf-input w-full"
+                dir="ltr"
+                type="email"
+                placeholder="karnaf.yazamut@gmail.com"
+                value={draft.replyTo}
+                onChange={(e) => setDraft((d) => ({ ...d, replyTo: e.target.value }))}
+              />
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={draft.requireConsent}
+              onChange={(e) => setDraft((d) => ({ ...d, requireConsent: e.target.checked }))}
+            />
+            לשלוח רק ללידים עם הסכמת דיוור (חוק הספאם — מומלץ להשאיר מסומן)
+          </label>
+          {draft.provider === 'resend' && publicDomain ? (
+            <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+              Resend לא שולח מכתובת {senderDomain} (תיבת דואר ציבורית). צריך דומיין משלכם שמאומת ב-
+              <a className="underline" href="https://resend.com/domains" target="_blank" rel="noreferrer">resend.com/domains</a>
+              , ואז לכתוב כאן כתובת על אותו דומיין. את הכתובת הנוכחית אפשר להשאיר בשדה התשובות.
+            </p>
+          ) : null}
+        </>
       )}
       <div className="flex justify-end">
         <button type="submit" className="kf-btn kf-btn-primary" disabled={save.isPending || loading}>

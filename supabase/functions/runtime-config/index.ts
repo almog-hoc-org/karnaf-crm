@@ -5,6 +5,7 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
+import { loadEmailChannel, resolveEmailChannel } from '../_shared/email-channel.ts';
 
 type ActiveHoursPayload = {
   action: 'update_active_hours';
@@ -15,6 +16,7 @@ type ActiveHoursPayload = {
 };
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const ALLOWED_TIMEZONES = new Set(['Asia/Jerusalem']);
 
 Deno.serve(async (req) => {
@@ -42,6 +44,9 @@ Deno.serve(async (req) => {
       slaThresholds: config.slaThresholds,
       forbiddenClaims: config.forbiddenClaims,
       safetyNet: config.safetyNet,
+      // Who sends marketing email, and from which address. Owner-editable
+      // because switching provider or sender used to need a SQL migration.
+      emailChannel: await loadEmailChannel(supabase),
     });
   }
 
@@ -126,6 +131,33 @@ Deno.serve(async (req) => {
       if (claims.length === 0) return jsonResponse(req, { error: 'נדרשת לפחות הצהרה אסורה אחת' }, 400);
       if (claims.length > 50) return jsonResponse(req, { error: 'עד 50 הצהרות' }, 400);
       return await persist('forbidden_claims', claims, 'runtime_config_forbidden_claims_updated');
+    }
+    // The email channel: provider + sender identity. Resend will not send
+    // from a public mailbox and needs a verified domain — that check runs
+    // at schedule time (preflightEmailChannel), not here, so the owner can
+    // save the address first and verify the domain after.
+    case 'update_email_channel': {
+      const provider = body.provider;
+      if (provider !== 'resend' && provider !== 'ravmesser') {
+        return jsonResponse(req, { error: 'provider חייב להיות resend או ravmesser' }, 400);
+      }
+      const fromName = typeof body.fromName === 'string' ? body.fromName.trim() : '';
+      if (!fromName || fromName.length > 80) {
+        return jsonResponse(req, { error: 'נדרש שם שולח (עד 80 תווים)' }, 400);
+      }
+      const fromEmail = typeof body.fromEmail === 'string' ? body.fromEmail.trim() : '';
+      if (fromEmail && !EMAIL_RE.test(fromEmail)) {
+        return jsonResponse(req, { error: `"${fromEmail}" אינה כתובת מייל תקינה` }, 400);
+      }
+      const replyTo = typeof body.replyTo === 'string' ? body.replyTo.trim() : '';
+      if (replyTo && !EMAIL_RE.test(replyTo)) {
+        return jsonResponse(req, { error: `"${replyTo}" אינה כתובת מייל תקינה` }, 400);
+      }
+      const value = resolveEmailChannel({
+        provider, fromName, fromEmail, replyTo,
+        requireConsent: body.requireConsent !== false,
+      });
+      return await persist('email_channel', value, 'runtime_config_email_channel_updated');
     }
     default:
       return jsonResponse(req, { error: 'Unsupported action' }, 400);

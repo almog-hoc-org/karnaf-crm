@@ -17,7 +17,7 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { countSegment, fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
 import { resolvePacing } from '../_shared/broadcast-pacing.ts';
 import { sanitizeEmailHtml } from '../_shared/email-html.ts';
-import { isRavmesserConfigured } from '../_shared/ravmesser.ts';
+import { loadEmailChannel, preflightEmailChannel } from '../_shared/email-channel.ts';
 
 interface MetaTemplate { name: string; lang?: string; params?: string[] }
 
@@ -271,14 +271,15 @@ Deno.serve(async (req) => {
     if (b.channel === 'email' && !b.subject) {
       return jsonResponse(req, { error: 'תפוצת מייל דורשת שורת נושא' }, 400);
     }
-    // Fail at the click, not at 19:30 with 311 people waiting: the email
-    // channel is Rav Messer campaigns, and without its four API secrets the
-    // worker can only fail the campaign the second it starts.
-    if (b.channel === 'email' && !isRavmesserConfigured()) {
-      return jsonResponse(req, {
-        error: 'רב מסר לא מוגדר — חסרים RAVMESSER_C_KEY / RAVMESSER_C_SECRET / RAVMESSER_U_KEY / RAVMESSER_U_SECRET ב-Supabase Edge Function secrets. ראו docs/runbooks/ravmesser-integration.md',
-        code: 'ravmesser_not_configured',
-      }, 400);
+    // Fail at the click, not at 19:30 with 311 people waiting: whichever
+    // provider crm_config.email_channel names must have its API key, a
+    // sender address, and (for Resend) a verified sending domain.
+    if (b.channel === 'email') {
+      const emailCfg = await loadEmailChannel(supabase);
+      const preflight = await preflightEmailChannel(emailCfg);
+      if (!preflight.ok) {
+        return jsonResponse(req, { error: preflight.error, code: preflight.code }, 400);
+      }
     }
     // Snapshot the current segment size for display; recipients are
     // materialised at send time by the worker.
@@ -305,11 +306,12 @@ Deno.serve(async (req) => {
     const { data: b } = await supabase.from('broadcasts').select('*').eq('id', id).maybeSingle();
     if (!b) return jsonResponse(req, { error: 'not found' }, 404);
     if (b.status !== 'failed') return jsonResponse(req, { error: `cannot retry a ${b.status} broadcast` }, 409);
-    if (b.channel === 'email' && !isRavmesserConfigured()) {
-      return jsonResponse(req, {
-        error: 'רב מסר עדיין לא מוגדר — הוסיפו את ארבעת הסודות ב-Supabase ואז נסו שוב',
-        code: 'ravmesser_not_configured',
-      }, 400);
+    if (b.channel === 'email') {
+      const emailCfg = await loadEmailChannel(supabase);
+      const preflight = await preflightEmailChannel(emailCfg);
+      if (!preflight.ok) {
+        return jsonResponse(req, { error: preflight.error, code: preflight.code }, 400);
+      }
     }
     const scheduledAt = typeof body.scheduled_at === 'string' && body.scheduled_at
       ? body.scheduled_at

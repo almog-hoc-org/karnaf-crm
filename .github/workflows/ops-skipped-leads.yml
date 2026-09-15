@@ -205,6 +205,17 @@ jobs:
             'has_opt_out=false after the next template sync = resubmit that template to Meta with a footer', attempts=2)
 
           # ── 4b. Broadcast (email campaign) diagnosis ─────────────────
+          q('email channel config', """
+              select config_value->>'provider' as provider,
+                     config_value->>'fromName'  as from_name,
+                     coalesce(nullif(config_value->>'fromEmail', ''), '(not set)') as from_email,
+                     coalesce(nullif(config_value->>'replyTo', ''), '(not set)')  as reply_to,
+                     config_value->>'requireConsent' as require_consent,
+                     updated_at
+              from crm_config where config_key = 'email_channel'""",
+            'provider=resend needs a from_email on a domain verified at resend.com/domains; '
+            'a gmail from_email blocks scheduling on purpose')
+
           q('broadcasts newest 5', """
               select id, name, channel, status, scheduled_at, recipients_count,
                      sent_count, failed_count, skipped_count, provider_ref,
@@ -213,19 +224,30 @@ jobs:
             'the 311-recipient email campaign: status + provider_ref (listId/messageId) tell how far it got')
 
           q('broadcast recipients by status (newest broadcast)', """
-              select r.status, r.error, count(*)
+              select r.status, r.error, r.provider_ref->>'provider' as provider, count(*)
               from broadcast_recipients r
               join broadcasts b on b.id = r.broadcast_id
               where b.id = (select id from broadcasts order by created_at desc limit 1)
-              group by 1, 2 order by 3 desc""",
-            'pending = never pushed to Rav Messer; skipped/failed carry a reason')
+              group by 1, 2, 3 order by 4 desc""",
+            'pending = not sent yet; sent rows on the Resend path carry provider_ref.id '
+            '(the Resend message id); skipped/failed carry a reason')
 
           q('broadcast failure alerts', """
               select created_at, delivered, title, body
               from operator_alerts
-              where kind in ('broadcast_email_failed', 'broadcast_failed')
+              where kind in ('broadcast_email_failed', 'broadcast_email_stalled', 'broadcast_failed')
               order by created_at desc limit 5""",
-            'failEmailBroadcast writes the reason here (and only here)')
+            'broadcast_email_failed = campaign dead; broadcast_email_stalled = Resend rate limit '
+            'or outage, sending resumes by itself')
+
+          q('email unsubscribes via the link (last 30d)', """
+              select date_trunc('day', created_at)::date as day, count(*)
+              from lead_events
+              where event_type = 'consent_revoked'
+                and event_payload->>'basis' = 'provider_unsubscribe'
+                and created_at > now() - interval '30 days'
+              group by 1 order by 1 desc""",
+            'clicks on the unsubscribe footer link (email-unsubscribe function)')
 
           q('broadcast dispatch cron + gateway (last 6h)', """
               select created, status_code, left(content::text, 200) as body

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { EMAIL_OPT_OUT_LINE, renderEmailHtml, sanitizeEmailHtml, wrapEmailShell } from './email-html';
+import {
+  EMAIL_OPT_OUT_LINE,
+  EMAIL_OPT_OUT_LINK_TEXT,
+  renderEmailHtml,
+  sanitizeEmailHtml,
+  wrapEmailShell,
+} from './email-html';
 
 describe('sanitizeEmailHtml', () => {
   it('strips script tags including their content', () => {
@@ -53,6 +59,21 @@ describe('wrapEmailShell', () => {
     const out = wrapEmailShell('<p>תוכן</p>');
     expect(out).toContain(EMAIL_OPT_OUT_LINE);
     expect(out).toContain('הסר');
+  });
+
+  it('links to the per-lead unsubscribe route when one is given', () => {
+    const url = 'https://xyz.supabase.co/functions/v1/email-unsubscribe?l=abc&t=deadbeef';
+    const out = wrapEmailShell('<p>תוכן</p>', 'קרנף נדל"ן', { unsubscribeUrl: url });
+    expect(out).toContain(EMAIL_OPT_OUT_LINK_TEXT);
+    // The & in the query string must be escaped inside the href attribute.
+    expect(out).toContain('href="https://xyz.supabase.co/functions/v1/email-unsubscribe?l=abc&amp;t=deadbeef"');
+    expect(out).not.toContain(EMAIL_OPT_OUT_LINE);
+  });
+
+  it('falls back to the reply route when no link is available', () => {
+    const out = wrapEmailShell('<p>תוכן</p>', 'קרנף נדל"ן', {});
+    expect(out).toContain(EMAIL_OPT_OUT_LINE);
+    expect(out).not.toContain('<a href');
   });
 
   it('produces an RTL single-column shell containing the body', () => {

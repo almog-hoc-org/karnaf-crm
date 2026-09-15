@@ -104,10 +104,11 @@ export function BroadcastsPage() {
       </header>
 
       <PageIntro>
-        שליחת הודעה אחת לסגמנט של לידים, מתוזמנת לשעה מדויקת, דרך וואטסאפ. השליחה
-        עוברת דרך תור הבוט בעדיפות נמוכה — כך תפוצה גדולה לעולם לא חוסמת את
-        המענה בזמן אמת. וואטסאפ לנמענים שלא כתבו לבוט ב-24 השעות האחרונות מחייב
-        תבנית מאושרת של Meta (בוחרים תבנית, לא כותבים טקסט חופשי). מייל יתווסף בהמשך.
+        שליחת הודעה אחת לסגמנט של לידים, מתוזמנת לשעה מדויקת, בוואטסאפ או במייל.
+        וואטסאפ עובר דרך תור הבוט בעדיפות נמוכה — כך תפוצה גדולה לעולם לא חוסמת את
+        המענה בזמן אמת — ולנמענים שלא כתבו לבוט ב-24 השעות האחרונות הוא מחייב
+        תבנית מאושרת של Meta (בוחרים תבנית, לא כותבים טקסט חופשי). מייל נשלח דרך
+        Resend, מייל נפרד לכל נמען, בקצב מבוקר.
       </PageIntro>
 
       {q.isLoading ? <p className="text-slate-500">טוען…</p> : null}
@@ -188,9 +189,16 @@ function BroadcastCard({
         ) : null}
       </div>
 
-      {b.status === 'failed' && b.last_error ? (
-        <p role="alert" className="mt-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          סיבת הכשל: {b.last_error}
+      {(b.status === 'failed' || b.status === 'sending') && b.last_error ? (
+        <p
+          role="alert"
+          className={
+            b.status === 'failed'
+              ? 'mt-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700'
+              : 'mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800'
+          }
+        >
+          {b.status === 'failed' ? 'סיבת הכשל: ' : 'ממתין: '}{b.last_error}
         </p>
       ) : null}
 
@@ -347,9 +355,9 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         </Field>
         {channel === 'email' ? (
           <p className="text-xs text-slate-500">
-            תפוצת מייל נשלחת דרך רב מסר: המערכת יוצרת שם רשימה ייעודית, מוסיפה אליה את
-            הנמענים (רק מי שיש לו מייל והסכמת דיוור), ושולחת את הקמפיין. הסרות ופתיחות
-            מנוהלות ברב מסר.
+            תפוצת מייל נשלחת דרך Resend: מייל נפרד לכל נמען (רק למי שיש לו כתובת מייל
+            והסכמת דיוור), עם קישור הסרה אישי בתחתית כל מייל. לכל נמען נרשם בנפרד אם
+            נשלח או נכשל. הספק וכתובת השולח נקבעים ב<a className="underline" href="/settings">הגדרות → ערוץ מייל</a>.
           </p>
         ) : null}
 
