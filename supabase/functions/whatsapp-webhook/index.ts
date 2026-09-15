@@ -190,7 +190,7 @@ Deno.serve(async (req) => {
   // lead is and whichever track they are on — and answered with one
   // confirmation. חוק הספאם: the request must stop mailings; it does.
   const optOutResult = await handleOptOutCommand(supabase, {
-    lead,
+    lead: lead as unknown as { id: string; consent_whatsapp?: boolean | null },
     conversationId: conversation.id,
     phone,
     text: normalized.text ?? null,
@@ -775,7 +775,7 @@ async function sendRouterWelcomeTemplate(
 async function handleOptOutCommand(
   supabase: ReturnType<typeof getServiceSupabase>,
   input: {
-    lead: Record<string, unknown>;
+    lead: { id: string; consent_whatsapp?: boolean | null };
     conversationId: string;
     phone: string;
     text: string | null;
@@ -783,7 +783,7 @@ async function handleOptOutCommand(
   },
 ): Promise<{ optOut: true } | { resubscribed: true } | null> {
   const { messaging } = await getRuntimeConfig(supabase);
-  const leadId = input.lead.id as string;
+  const leadId = input.lead.id;
   if (detectOptOut(input.text, messaging.optOutKeywords)) {
     await applyOptOut(supabase, {
       leadId, channel: 'whatsapp', basis: 'inbound_keyword', text: input.text,

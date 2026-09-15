@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
   if (!allowed) return jsonResponse(req, { error: 'Rate limit exceeded' }, 429);
 
   // ---- 4. Process each message item -------------------------------------
-  const results: Array<{ leadId: string; conversationId: string; messageId: string; isNewLead: boolean }> = [];
+  const results: Array<{ leadId: string; conversationId: string; messageId: string; isNewLead?: boolean; optOut?: boolean }> = [];
 
   for (const entry of body.entry ?? []) {
     for (const m of entry.messaging ?? []) {

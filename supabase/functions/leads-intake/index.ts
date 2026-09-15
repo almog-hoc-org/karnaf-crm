@@ -306,6 +306,7 @@ Deno.serve(async (req) => {
     const revokeResponse = { ok: true, revoked: !!found, contractKey: contract.contract_key, correlationId };
     await storeWebhookIdempotencyResponse(supabase, idempotencyKey, revokeResponse);
     return jsonResponse(req, revokeResponse);
+    return jsonResponse(req, revokeResponse);
   }
 
   const lead = await upsertLead(supabase, {
