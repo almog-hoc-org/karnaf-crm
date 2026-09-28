@@ -4,6 +4,7 @@ import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { notifyOperator } from '../_shared/operator-alert.ts';
+import { diagnoseWhatsAppSubscription } from '../_shared/whatsapp-diagnostics.ts';
 
 // Opt-out wording Meta templates must carry (FOOTER, 60 chars max).
 const MARKETING_FOOTER = 'להסרה השיבו הסר';
@@ -95,41 +96,10 @@ Deno.serve(async (req) => {
   // the token already in the secrets — no credential ever leaves the
   // function and none is echoed back.
   if (req.method === 'POST' && postBody?.action === 'subscription') {
-    const out: Record<string, unknown> = { wabaId };
-
-    const subsRes = await fetch(
-      `https://graph.facebook.com/${graphVersion}/${wabaId}/subscribed_apps`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-    const subsText = await subsRes.text();
-    out.subscribedApps = {
-      ok: subsRes.ok,
-      status: subsRes.status,
-      body: safeJson(subsText),
-    };
-
-    const phoneRes = await fetch(
-      `https://graph.facebook.com/${graphVersion}/${phoneId}?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status,throughput`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-    const phoneText = await phoneRes.text();
-    out.phoneNumber = {
-      ok: phoneRes.ok,
-      status: phoneRes.status,
-      body: safeJson(phoneText),
-    };
-
-    // Empty `data` on subscribed_apps is the smoking gun: the app is no
-    // longer subscribed to this WABA, so Meta delivers nothing and never
-    // reports an error to us.
-    const apps = (out.subscribedApps as { body?: { data?: unknown[] } }).body?.data;
-    out.verdict = !subsRes.ok
-      ? 'token_or_permission_problem'
-      : Array.isArray(apps) && apps.length === 0
-        ? 'app_not_subscribed_to_waba'
-        : 'subscription_present';
-
-    return jsonResponse(req, { ok: true, ...out }, 200);
+    // Shared with whatsapp-channel-status (_shared/whatsapp-diagnostics.ts);
+    // also reports a per-number webhook override now.
+    const diagnosis = await diagnoseWhatsAppSubscription(wabaId);
+    return jsonResponse(req, { ok: true, ...diagnosis }, 200);
   }
 
   if (req.method === 'POST') {
@@ -248,10 +218,6 @@ Deno.serve(async (req) => {
     templates,
   });
 });
-
-function safeJson(text: string): unknown {
-  try { return JSON.parse(text || '{}'); } catch { return { raw: text.slice(0, 400) }; }
-}
 
 async function notifySyncFailure(
   supabase: ReturnType<typeof getServiceSupabase>,

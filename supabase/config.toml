@@ -135,6 +135,11 @@ verify_jwt = false
 [functions.email-channel-status]
 verify_jwt = true
 
+# Owner/admin (or ops, service-role key) — asks Meta whether customer
+# messages reach us. Read-only. MUST stay true (_shared/service-or-staff.ts).
+[functions.whatsapp-channel-status]
+verify_jwt = true
+
 [functions.healthz]
 verify_jwt = false
 

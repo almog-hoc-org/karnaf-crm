@@ -13,6 +13,7 @@ import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { alertInboundWindowOpened, maybeAlertHumanInbound } from '../_shared/inbound-alert.ts';
 import { archiveWhatsAppMedia } from '../_shared/media-fetch.ts';
 import { finalizeWebhookInbox, persistWebhookInbox } from '../_shared/webhook-inbox.ts';
+import { applyProviderStatuses, extractProviderStatuses } from '../_shared/provider-status.ts';
 import { getRuntimeConfig } from '../_shared/config-service.ts';
 import { buildHumanHandoffSchedule } from '../_shared/handoff-schedule.ts';
 import { getMemberConciergeConfig, handleMemberConcierge, type MemberRow } from '../_shared/member-concierge.ts';
@@ -84,10 +85,21 @@ Deno.serve(async (req) => {
 
   const normalized = normalizeProviderInbound(body);
   if (!normalized) {
-    // Statuses, template callbacks and account updates all land here
-    // legitimately, so this is not an error — but it must be visible, since
-    // "Meta is delivering nothing but statuses" and "Meta has stopped
-    // delivering" used to look identical from outside.
+    // Delivery receipts arrive here, not at provider-status-webhook: Meta
+    // has one callback URL per app. They used to be dropped as
+    // "unsupported_payload", so WhatsApp delivered/read and late failures
+    // (#131049 marketing limits, bad numbers) were never recorded.
+    const statuses = extractProviderStatuses(body);
+    if (statuses.length > 0) {
+      const applied = await applyProviderStatuses(supabase, statuses, correlationId);
+      await finalizeWebhookInbox(supabase, inboxId, 'success',
+        `statuses:${applied.received} matched:${applied.matched}${applied.failed ? ` failed:${applied.failed}` : ''}`);
+      return jsonResponse(req, { ok: true, statuses: applied.received, matched: applied.matched });
+    }
+    // Template callbacks and account updates still land here legitimately,
+    // so this is not an error — but it must be visible, since "Meta is
+    // delivering nothing but receipts" and "Meta has stopped delivering"
+    // used to look identical from outside.
     await finalizeWebhookInbox(supabase, inboxId, 'success', 'unsupported_payload');
     log.info('whatsapp_unsupported_payload', {
       fn: 'whatsapp-webhook', correlationId,
