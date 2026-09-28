@@ -32,6 +32,24 @@ describe('ReplyComposer', () => {
     await waitFor(() => expect(screen.queryByDisplayValue('שלום')).not.toBeInTheDocument());
   });
 
+  it('does not send on Enter from a touch keyboard', async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes('pointer: coarse'), media: query, onchange: null,
+      addListener: () => {}, removeListener: () => {},
+      addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    try {
+      const { onSend } = renderComposer();
+      const textarea = screen.getByPlaceholderText('הקלד תשובה ידנית...');
+      fireEvent.change(textarea, { target: { value: 'שורה ראשונה' } });
+      fireEvent.keyDown(textarea, { key: 'Enter' });
+      expect(onSend).not.toHaveBeenCalled();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   it('keeps the draft when onSend rejects', async () => {
     const onSend = vi.fn(async () => { throw new Error('boom'); });
     renderComposer({ onSend });

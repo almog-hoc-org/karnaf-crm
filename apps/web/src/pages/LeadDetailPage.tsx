@@ -31,6 +31,7 @@ import {
   DEAL_STAGE_LABELS,
   DEAL_STATUS_LABELS,
   MEETING_STATUS_LABELS, MEETING_TYPE_LABELS,
+  OWNERSHIP_LABELS,
   PARTNER_DOMAIN_LABELS,
   PRD_TRACK_LABELS,
   PRODUCT_LABELS,
@@ -55,10 +56,28 @@ import type {
   QueueRow,
   ReadinessLevel,
 } from '@/lib/types';
-import { useAuth } from '@/auth/auth-context';
+import { isAdminRole, isManagerRole, useAuth } from '@/auth/auth-context';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { useRealtimeInvalidate } from '@/lib/useRealtimeInvalidate';
+
+type WonTrack = 'program' | 'presale' | 'investor_mentorship';
+const WON_TRACK_OPTIONS: Array<{ value: WonTrack; label: string }> = [
+  { value: 'program', label: 'קורס הדרך לדירה' },
+  { value: 'investor_mentorship', label: 'ליווי משקיעים' },
+  { value: 'presale', label: 'פריסייל' },
+];
+// Pre-select what the lead is already tracked for; the owner only
+// confirms. Falls back to the flagship program.
+function defaultWonTrack(lead: { primary_track?: string | null; product_interest?: string | null }): WonTrack {
+  const candidates = [lead.primary_track, lead.product_interest];
+  for (const c of candidates) {
+    if (c === 'program' || c === 'digital_program') return 'program';
+    if (c === 'investor_mentorship') return 'investor_mentorship';
+    if (c === 'presale') return 'presale';
+  }
+  return 'program';
+}
 
 export function LeadDetailPage() {
   const { leadId = '' } = useParams<{ leadId: string }>();
@@ -94,13 +113,14 @@ export function LeadDetailPage() {
   useRealtimeInvalidate('conversation_claims', leadDetailKey);
 
   const action = useMutation({
-    mutationFn: (input: { action: AdminAction; note?: string; label: string; dealId?: string; targetStage?: string }) =>
+    mutationFn: (input: { action: AdminAction; note?: string; label: string; dealId?: string; targetStage?: string; wonTrack?: WonTrack }) =>
       postAdminAction({
         action: input.action,
         leadId,
         note: input.note ?? null,
         dealId: input.dealId,
         targetStage: input.targetStage,
+        wonTrack: input.wonTrack,
       }).then((r) => ({
         r,
         label: input.label,
@@ -238,10 +258,12 @@ export function LeadDetailPage() {
     action: AdminAction;
     note?: string;
     askNote?: boolean;
+    askTrack?: boolean;
     label: string;
     description: string;
     destructive: boolean;
   } | null>(null);
+  const [wonTrackChoice, setWonTrackChoice] = useState<WonTrack>('program');
   const [pendingQueueClose, setPendingQueueClose] = useState<{ id: string; label: string } | null>(null);
   const [pendingMergeDuplicateId, setPendingMergeDuplicateId] = useState<string | null>(null);
   const [queueCloseNote, setQueueCloseNote] = useState('');
@@ -446,105 +468,108 @@ export function LeadDetailPage() {
             already gated to terminal states + admin role).
             Server-side gate stays: only owner / admin / mia see these.
         */}
-        {auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia' ? (
-          <div className="mt-4">
-            {/* Reopen is a rare override on dead leads — keep it visible
-                so an admin doesn't have to dig into "more". */}
+        {/* One visible action bar. The lifecycle actions used to hide in a
+            "פעולות נוספות" disclosure while the guidance card and the quick
+            bar each offered their own subset — three places to look. The
+            common moves are visible; rare and destructive ones sit under ⋯. */}
+        {isManagerRole(auth.role) ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             {(lead.lead_status === 'won' || lead.lead_status === 'lost' || lead.do_not_contact) &&
-            (auth.role === 'owner' || auth.role === 'admin') ? (
-              <div className="mb-2">
-                <button type="button" className="kf-btn kf-btn-primary" onClick={() => setReopenOpen(true)}>
-                  פתח שיחה מחדש
-                </button>
-              </div>
+            isAdminRole(auth.role) ? (
+              <button type="button" className="kf-btn kf-btn-primary" onClick={() => setReopenOpen(true)}>
+                פתח שיחה מחדש
+              </button>
             ) : null}
-            <details className="group">
-              <summary className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
-                פעולות נוספות
-                <svg viewBox="0 0 16 16" className="h-4 w-4 transition group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="1.7"><path strokeLinecap="round" d="M4 6l4 4 4-4" /></svg>
-              </summary>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <ActionGroup label="בעלות">
+            {lead.lead_status !== 'won' ? (
+              <button
+                type="button"
+                className="kf-btn bg-emerald-600 text-white hover:bg-emerald-700"
+                disabled={action.isPending}
+                onClick={() => {
+                  setWonTrackChoice(defaultWonTrack(lead));
+                  setPendingAction({
+                    action: 'mark_won',
+                    askTrack: true,
+                    label: 'נסגר ברכישה',
+                    description: 'מסמן סגירה ומפעיל את תהליך הקליטה (מסע ללקוח חדש + עמלה). אם אין עסקה פתוחה — היא תיפתח לפי מה שנרכש.',
+                    destructive: false,
+                  });
+                }}
+              >
+                נסגר ברכישה ✓
+              </button>
+            ) : null}
+            {lead.ownership_mode === 'ai_active' ? (
+              <button
+                type="button"
+                className="kf-btn"
+                disabled={action.isPending}
+                onClick={() => action.mutate({ action: 'assign_to_mia', label: 'עבר לטיפול אישי' })}
+              >
+                אני אטפל
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="kf-btn"
+                disabled={action.isPending}
+                onClick={() => action.mutate({ action: 'return_to_ai', label: 'הוחזר לבוט' })}
+              >
+                להחזיר לבוט
+              </button>
+            )}
+            {lead.ownership_mode !== 'phone_sales_pending' ? (
+              <button
+                type="button"
+                className="kf-btn kf-btn-ghost"
+                disabled={action.isPending}
+                onClick={() => action.mutate({ action: 'mark_phone_escalation', label: 'סומן לשיחה' })}
+              >
+                📞 לשיחה
+              </button>
+            ) : null}
+            {lead.lead_status !== 'lost' ? (
+              <button
+                type="button"
+                className="kf-btn kf-btn-ghost"
+                onClick={() =>
+                  setPendingAction({
+                    action: 'mark_lost',
+                    label: 'לא רלוונטי',
+                    description: 'מסמן את הלקוח כלא רלוונטי (אבוד). כדאי לציין סיבה — היא נשמרת על הלקוח ועוזרת בדוחות.',
+                    destructive: true,
+                    askNote: true,
+                  })
+                }
+              >
+                לא רלוונטי
+              </button>
+            ) : null}
+            <details className="relative">
+              <summary className="kf-btn kf-btn-ghost cursor-pointer list-none" aria-label="פעולות נוספות">⋯</summary>
+              <div className="absolute end-0 z-20 mt-1 flex w-48 flex-col gap-1 rounded-lg bg-white p-1 shadow-lg ring-1 ring-slate-200">
+                <button
+                  type="button"
+                  className="rounded-md px-3 py-2 text-start text-sm text-rose-700 hover:bg-rose-50"
+                  onClick={() =>
+                    setPendingAction({
+                      action: 'mark_dnc',
+                      label: 'לא ליצור קשר',
+                      description: 'הבוט יפסיק לפנות ללקוח ולא יישלחו אליו עוד הודעות. אפשר לבטל דרך ״פתח שיחה מחדש״.',
+                      destructive: true,
+                    })
+                  }
+                >
+                  לא ליצור קשר
+                </button>
+                {isAdminRole(auth.role) ? (
                   <button
                     type="button"
-                    className="kf-btn"
-                    onClick={() => action.mutate({ action: 'assign_to_mia', label: 'הועבר לנציג' })}
+                    className="rounded-md px-3 py-2 text-start text-sm text-rose-700 hover:bg-rose-50"
+                    onClick={() => setDeleteOpen(true)}
                   >
-                    העברה לנציג
+                    מחיקת לקוח
                   </button>
-                  <button
-                    type="button"
-                    className="kf-btn"
-                    onClick={() => action.mutate({ action: 'return_to_ai', label: 'הוחזר ל-AI' })}
-                  >
-                    החזרה ל-AI
-                  </button>
-                  <button
-                    type="button"
-                    className="kf-btn"
-                    onClick={() => action.mutate({ action: 'mark_phone_escalation', label: 'סומן לשיחה' })}
-                  >
-                    סימון לשיחה
-                  </button>
-                </ActionGroup>
-                <ActionGroup label="סטטוס">
-                  <button
-                    type="button"
-                    className="kf-btn kf-btn-primary"
-                    onClick={() =>
-                      setPendingAction({
-                        action: 'mark_won',
-                        label: 'נסגר ברכישה',
-                        description: 'לסמן את הליד כסגירה ולהפעיל את תהליך האונבורדינג (מסע + עמלה)?\n\nדורש עסקה פתוחה — אם אין, צור אחת ב-״מסלולים ועסקאות״ קודם.',
-                        destructive: false,
-                      })
-                    }
-                  >
-                    סימון כסגירה
-                  </button>
-                  <button
-                    type="button"
-                    className="kf-btn"
-                    onClick={() =>
-                      setPendingAction({
-                        action: 'mark_lost',
-                        label: 'סומן כאבוד',
-                        description: 'לסמן את הליד כאבוד. אפשר (ומומלץ) לציין סיבה — היא נשמרת על הליד.',
-                        destructive: true,
-                        askNote: true,
-                      })
-                    }
-                  >
-                    סימון כאבוד
-                  </button>
-                </ActionGroup>
-                <ActionGroup label="הסרה">
-                  <button
-                    type="button"
-                    className="kf-btn kf-btn-danger"
-                    onClick={() =>
-                      setPendingAction({
-                        action: 'mark_dnc',
-                        label: 'סומן כ-DNC',
-                        description:
-                          'לסמן את הליד כ-Do Not Contact (אסור-ליצור-קשר). הבוט יפסיק לפנות אליו ולא יישלחו עוד הודעות.',
-                        destructive: true,
-                      })
-                    }
-                  >
-                    סימון כ-DNC
-                  </button>
-                </ActionGroup>
-                {auth.role === 'owner' || auth.role === 'admin' ? (
-                  <ActionGroup label="מחיקה">
-                    <button
-                      type="button"
-                      className="kf-btn kf-btn-danger"
-                      onClick={() => setDeleteOpen(true)}
-                    >
-                      מחיקת ליד
-                    </button>
-                  </ActionGroup>
                 ) : null}
               </div>
             </details>
@@ -1020,10 +1045,23 @@ export function LeadDetailPage() {
             action: pendingAction.action,
             note: pendingAction.askNote ? (actionNote.trim() || undefined) : pendingAction.note,
             label: pendingAction.label,
+            wonTrack: pendingAction.askTrack ? wonTrackChoice : undefined,
           });
           setActionNote('');
         }}
       >
+        {pendingAction?.askTrack ? (
+          <label className="mb-3 block text-sm">
+            <span className="text-slate-600">מה נרכש?</span>
+            <select
+              className="kf-input mt-1 w-full"
+              value={wonTrackChoice}
+              onChange={(e) => setWonTrackChoice(e.target.value as WonTrack)}
+            >
+              {WON_TRACK_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </label>
+        ) : null}
         {pendingAction?.askNote ? (
           <label className="block text-sm">
             <span className="text-slate-600">סיבה</span>
@@ -1801,20 +1839,12 @@ function operatorInsight(lead: LeadDetailType, queueItems: QueueRow[], messages:
     detail: 'מצב הבעלות לא חד־משמעי. מומלץ לקחת לטיפול ידני ולסגור את ההחלטה.',
     why: classificationWhy || 'מצב הבעלות לא תואם מסלול עבודה ברור.',
     script: humanScript,
-    ownerLine: `בעלות: ${lead.ownership_mode}`,
+    ownerLine: `מי מטפל: ${OWNERSHIP_LABELS[lead.ownership_mode as keyof typeof OWNERSHIP_LABELS] ?? 'לא ידוע'}`,
     primaryAction: 'takeover' as const,
     tone: 'border-slate-200 bg-white text-slate-900',
   };
 }
 
-function ActionGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/50 p-1.5">
-      <span className="w-full px-2 text-xs text-slate-500 sm:w-auto">{label}</span>
-      {children}
-    </div>
-  );
-}
 
 
 // Phase C — the triage quick bar: the same one-click actions the inbox

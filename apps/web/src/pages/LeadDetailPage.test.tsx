@@ -307,18 +307,20 @@ describe('LeadDetailPage', () => {
     expect(screen.queryByRole('combobox', { name: 'הסכמת מייל' })).not.toBeInTheDocument();
   });
 
-  it('invokes mark_won after confirming the action dialog', async () => {
+  it('marks won from the visible action bar, sending what was bought', async () => {
     renderDetail();
-    // Tier 5.D — lifecycle buttons live inside "פעולות נוספות" disclosure.
-    fireEvent.click(await screen.findByText('פעולות נוספות'));
-    fireEvent.click(await screen.findByRole('button', { name: 'סימון כסגירה' }));
+    // The won action is on the bar, not behind a disclosure, and the
+    // dialog asks what was bought so the backend can open the deal.
+    fireEvent.click(await screen.findByRole('button', { name: 'נסגר ברכישה ✓' }));
     const dialog = await screen.findByRole('alertdialog');
+    fireEvent.change(within(dialog).getByLabelText('מה נרכש?'), { target: { value: 'investor_mentorship' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'אישור' }));
     await waitFor(() => {
       expect(postAdminAction).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'mark_won',
           leadId: 'lead-1',
+          wonTrack: 'investor_mentorship',
         }),
       );
     });
@@ -326,8 +328,7 @@ describe('LeadDetailPage', () => {
 
   it('invokes mark_lost with the typed reason after confirming dialog', async () => {
     renderDetail();
-    fireEvent.click(await screen.findByText('פעולות נוספות'));
-    fireEvent.click(await screen.findByRole('button', { name: 'סימון כאבוד' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'לא רלוונטי' }));
     const dialog = await screen.findByRole('alertdialog');
     // The dialog now asks for a free-text reason instead of hardcoding
     // 'manual_close' into lost_reason.
@@ -348,10 +349,9 @@ describe('LeadDetailPage', () => {
 
   it('cancel button on the confirm dialog does not fire the action', async () => {
     renderDetail();
-    // Tier 5.D — lifecycle buttons are now inside a "פעולות נוספות"
-    // <details> disclosure. Expand it before reaching the DNC button.
-    fireEvent.click(await screen.findByText('פעולות נוספות'));
-    fireEvent.click(await screen.findByRole('button', { name: 'סימון כ-DNC' }));
+    // DNC is rare and destructive: under the ⋯ menu.
+    fireEvent.click(await screen.findByLabelText('פעולות נוספות'));
+    fireEvent.click(await screen.findByRole('button', { name: 'לא ליצור קשר' }));
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'ביטול' }));
     expect(postAdminAction).not.toHaveBeenCalled();

@@ -44,6 +44,7 @@ export function ReplyComposer({
   compact?: boolean;
   autoFocus?: boolean;
 }) {
+  const enterSends = !isTouchOnly();
   const [text, setText] = useState('');
   const [missingVars, setMissingVars] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -134,12 +135,15 @@ export function ReplyComposer({
       <textarea
         ref={textareaRef}
         className={clsx('kf-input w-full', compact ? 'min-h-[56px]' : 'min-h-[88px]')}
-        placeholder={disabled ? 'לא ניתן לשלוח (ליד מושתק או חסרה שיחה).' : 'הקלד תשובה ידנית... (Enter לשליחה, Shift+Enter לשורה חדשה)'}
+        placeholder={disabled ? 'לא ניתן לשלוח (ליד מושתק או חסרה שיחה).' : (enterSends ? 'הקלד תשובה ידנית... (Enter לשליחה, Shift+Enter לשורה חדשה)' : 'הקלד תשובה ידנית...')}
         value={text}
         maxLength={2000}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
+          // On a touch keyboard the return key is how you start a new
+          // line; sending on it fired half-written replies at customers.
+          // There, the send button sends.
+          if (enterSends && e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             void send();
           }
@@ -207,4 +211,11 @@ export function ReplyComposer({
       {errorMessage ? <p className="text-sm text-rose-600">{errorMessage}</p> : null}
     </form>
   );
+}
+
+// True on phones/tablets: the primary pointer is coarse and there is no
+// hover. Desktop (and tests, where matchMedia is absent) keep Enter-to-send.
+function isTouchOnly(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  try { return window.matchMedia('(hover: none) and (pointer: coarse)').matches; } catch { return false; }
 }

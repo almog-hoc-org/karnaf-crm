@@ -36,6 +36,12 @@ const ACTOR_LABELS: Record<string, string> = {
 const HIDDEN_EVENT_TYPES = new Set<string>([
   'inbound_message_received',
   'provider_message_status_updated',
+  // Internal plumbing: the state machine refusing an illegal move, a
+  // message flushed after a lock, a Telegram mirror. None of it is
+  // something the owner acts on.
+  'state_transition_rejected',
+  'inbound_after_flush',
+  'telegram_inbound_alert',
 ]);
 
 // Hebrew for every event slug the backend logs (grep logLeadEvent +
@@ -75,6 +81,17 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   lead_manual_restored: 'ליד שוחזר',
   lead_manual_soft_deleted: 'ליד הוסר',
   lead_meta_updated: 'פרטי הליד עודכנו',
+  lead_status_changed: 'השלב של הלקוח עודכן',
+  lead_merged: 'רשומות כפולות אוחדו',
+  lead_reopened: 'השיחה נפתחה מחדש',
+  lead_marked_reviewed: 'סומן כטופל',
+  lead_snoozed: 'הושהה עד מועד',
+  lead_unsnoozed: 'ההשהיה הסתיימה',
+  lead_no_followup_set: 'סומן ללא פנייה יזומה',
+  lead_outcome_set: 'נרשמה תוצאה',
+  lead_outcome_cleared: 'התוצאה בוטלה',
+  generic_ack_sent: 'נשלח אישור קבלה אוטומטי',
+  member_concierge_send_failed: 'שליחה לחבר תוכנית נכשלה',
   manual_assign_to_mia: 'הועבר לטיפול נציג',
   manual_return_to_ai: 'הוחזר למענה אוטומטי',
   manual_mark_won: 'סומן כעסקה שנסגרה',
