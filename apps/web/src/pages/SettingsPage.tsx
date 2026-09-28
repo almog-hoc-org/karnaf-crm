@@ -1,7 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  fetchEmailChannelStatus,
   fetchRuntimeConfig,
+  postEmailTestSend,
   postUpdateActiveHours,
   postUpdateFollowUpDelays,
   postUpdateEmailChannel,
@@ -299,13 +301,27 @@ function EmailChannelCard({
   onSaved: () => void;
 }) {
   const toast = useToast();
+  const qc = useQueryClient();
   const [draft, setDraft] = useState<EmailChannelConfig>(DEFAULT_EMAIL_CHANNEL);
   useEffect(() => { if (value) setDraft(value); }, [value]);
+  // What Resend itself reports — the domain's real verification state and
+  // whether a campaign could be scheduled right now.
+  const statusQ = useQuery({ queryKey: ['email-channel-status'], queryFn: fetchEmailChannelStatus, enabled: !loading });
   const save = useMutation({
     mutationFn: postUpdateEmailChannel,
-    onSuccess: () => { onSaved(); toast.success('הגדרות ערוץ המייל נשמרו'); },
+    onSuccess: () => {
+      onSaved();
+      qc.invalidateQueries({ queryKey: ['email-channel-status'] });
+      toast.success('הגדרות ערוץ המייל נשמרו');
+    },
     onError: (err) => toast.error((err as Error).message),
   });
+  const testSend = useMutation({
+    mutationFn: () => postEmailTestSend(),
+    onSuccess: (r) => toast.success(`מייל בדיקה נשלח אל ${r.to} — בדקו גם בספאם`),
+    onError: (err) => toast.error((err as Error).message),
+  });
+  const status = statusQ.data;
   const senderDomain = draft.fromEmail.includes('@') ? draft.fromEmail.split('@').pop() ?? '' : '';
   const publicDomain = /^(gmail|googlemail|hotmail|outlook|live|yahoo|icloud|me)\.|^walla\./i.test(senderDomain);
   return (
@@ -383,9 +399,48 @@ function EmailChannelCard({
               , ואז לכתוב כאן כתובת על אותו דומיין. את הכתובת הנוכחית אפשר להשאיר בשדה התשובות.
             </p>
           ) : null}
+          {draft.provider === 'resend' && status ? (
+            <div className="space-y-2 rounded-lg bg-slate-50 p-3 text-sm" data-testid="email-channel-status">
+              <p className={status.readyToSend ? 'font-medium text-emerald-700' : 'font-medium text-amber-800'}>
+                {status.readyToSend ? '✅ מוכן לשליחה' : `⚠️ עוד לא מוכן: ${status.preflight.error ?? ''}`}
+              </p>
+              {status.domains.length > 0 ? (
+                <ul className="text-slate-600">
+                  {status.domains.map((d) => (
+                    <li key={d.name} dir="ltr" className="text-right">
+                      {d.name} — {d.status === 'verified' ? 'מאומת ✓' : d.status}
+                    </li>
+                  ))}
+                </ul>
+              ) : status.domainsError ? (
+                <p className="text-rose-700">לא הצלחנו לשאול את Resend: {status.domainsError}</p>
+              ) : (
+                <p className="text-slate-600">אין עדיין דומיינים בחשבון Resend.</p>
+              )}
+              {status.suggestedFromEmail ? (
+                <button
+                  type="button"
+                  className="kf-btn kf-btn-ghost"
+                  onClick={() => setDraft((d) => ({ ...d, fromEmail: status.suggestedFromEmail as string }))}
+                >
+                  להשתמש ב-{status.suggestedFromEmail}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </>
       )}
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        {draft.provider === 'resend' ? (
+          <button
+            type="button"
+            className="kf-btn kf-btn-ghost"
+            disabled={testSend.isPending || loading || !status?.readyToSend}
+            onClick={() => testSend.mutate()}
+          >
+            {testSend.isPending ? 'שולח...' : 'שלח לי מייל בדיקה'}
+          </button>
+        ) : null}
         <button type="submit" className="kf-btn kf-btn-primary" disabled={save.isPending || loading}>
           {save.isPending ? 'שומר...' : 'שמירה'}
         </button>

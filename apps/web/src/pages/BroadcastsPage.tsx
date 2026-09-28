@@ -9,6 +9,7 @@ import {
   fetchSavedLists,
   previewBroadcastSegment,
   postBroadcastAction,
+  postEmailTestSend,
   postSaveList,
   type BroadcastAction,
 } from '@/lib/api';
@@ -94,6 +95,11 @@ export function BroadcastsPage() {
     },
     onError: (err) => toast.error((err as Error).message),
   });
+  const testSend = useMutation({
+    mutationFn: (id: string) => postEmailTestSend(id),
+    onSuccess: (r) => toast.success(`מייל בדיקה נשלח אל ${r.to} — בדקו גם בספאם`),
+    onError: (err) => toast.error((err as Error).message),
+  });
 
   return (
     <div className="space-y-4">
@@ -133,6 +139,8 @@ export function BroadcastsPage() {
               if (confirm('לשלוח שוב עכשיו? נמענים שכבר נשלחו לא יקבלו שוב.')) act.mutate({ action: 'retry', id: b.id });
             }}
             onCancel={() => act.mutate({ action: 'cancel', id: b.id })}
+            onTestSend={() => testSend.mutate(b.id)}
+            testSending={testSend.isPending && testSend.variables === b.id}
             onDelete={() => {
               if (confirm('למחוק את התפוצה?')) act.mutate({ action: 'delete', id: b.id });
             }}
@@ -162,6 +170,8 @@ function BroadcastCard({
   onSchedule,
   onRetry,
   onCancel,
+  onTestSend,
+  testSending,
   onDelete,
 }: {
   broadcast: BroadcastRow;
@@ -170,6 +180,8 @@ function BroadcastCard({
   onSchedule: () => void;
   onRetry: () => void;
   onCancel: () => void;
+  onTestSend: () => void;
+  testSending: boolean;
   onDelete: () => void;
 }) {
   return (
@@ -216,6 +228,13 @@ function BroadcastCard({
         ) : null}
         {b.status === 'scheduled' || b.status === 'sending' ? (
           <button className="kf-btn kf-btn-danger" onClick={onCancel} disabled={busy}>ביטול</button>
+        ) : null}
+        {b.channel === 'email' && b.status !== 'sent' ? (
+          // Sends this campaign — exactly as a recipient gets it — to the
+          // signed-in owner only. Never to the audience.
+          <button className="kf-btn kf-btn-ghost" onClick={onTestSend} disabled={testSending}>
+            {testSending ? 'שולח בדיקה...' : 'שלח לי בדיקה'}
+          </button>
         ) : null}
         {b.status === 'draft' || b.status === 'cancelled' || b.status === 'failed' ? (
           <button className="kf-btn kf-btn-ghost" onClick={onDelete} disabled={busy}>מחק</button>

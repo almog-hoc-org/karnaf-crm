@@ -11,6 +11,14 @@ on:
         description: 'Unschedule karnaf_drain_cron_history_once (only when the report shows the drain is done)'
         type: boolean
         default: false
+      email_test:
+        description: 'Send ONE test email to email_channel.replyTo (the owner) through Resend'
+        type: boolean
+        default: false
+      email_test_broadcast_id:
+        description: 'Optional: make the test email that broadcast, exactly as a recipient gets it'
+        type: string
+        default: ''
 
 jobs:
   diag:
@@ -22,6 +30,8 @@ jobs:
           PROJECT_REF: svkzkpgccahwmyflobvn
           OWNER_EMAIL: karnaf.yazamut@gmail.com
           FINISH_DRAIN: ${{ inputs.finish_drain }}
+          EMAIL_TEST: ${{ inputs.email_test }}
+          EMAIL_TEST_BROADCAST_ID: ${{ inputs.email_test_broadcast_id }}
         run: |
           python3 - <<'EOF'
           import json, os, time, urllib.error, urllib.request
@@ -302,6 +312,52 @@ jobs:
             'lead_events should stay a few thousand; dead tuples shrink after autovacuum')
 
           # ── 7. The one write, opt-in ─────────────────────────────────
+          # ── 7. Email channel, asked of Resend itself ─────────────────
+          # The domain's verification status lives in Resend, not in the
+          # database. email-channel-status asks Resend with the key stored
+          # in the Edge Function secrets; this job authenticates with the
+          # service-role key fetched from the Management API (masked).
+          def http_json(url, method='GET', payload=None, headers=None):
+              req = urllib.request.Request(
+                  url, method=method,
+                  data=json.dumps(payload).encode() if payload is not None else None,
+                  headers={'Content-Type': 'application/json', 'User-Agent': 'karnaf-ops/1.0', **(headers or {})})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      return r.status, json.loads(r.read().decode() or 'null')
+              except urllib.error.HTTPError as e:
+                  raw = e.read().decode(errors='replace')
+                  try:
+                      return e.code, json.loads(raw)
+                  except Exception:
+                      return e.code, raw[:300]
+
+          print('== email channel status (from Resend) ==')
+          print('-- proves: readyToSend=true = a campaign can be scheduled; domains = what Resend itself reports')
+          st, keys = http_json(f'https://api.supabase.com/v1/projects/{ref}/api-keys?reveal=true',
+                               headers={'Authorization': f'Bearer {token}'})
+          service_key = None
+          if st == 200 and isinstance(keys, list):
+              for k in keys:
+                  if k.get('name') == 'service_role' and k.get('api_key'):
+                      service_key = k['api_key']
+          if not service_key:
+              print(f'-- could not read the service-role key ({st})\n')
+          else:
+              print(f'::add-mask::{service_key}')
+              fn = f'https://{ref}.supabase.co/functions/v1/email-channel-status'
+              auth = {'Authorization': f'Bearer {service_key}', 'apikey': service_key}
+              st, status = http_json(fn, headers=auth)
+              print(st, json.dumps(status, ensure_ascii=False, indent=1, default=str))
+              print()
+              if os.environ.get('EMAIL_TEST', 'false') == 'true':
+                  bid = os.environ.get('EMAIL_TEST_BROADCAST_ID', '').strip()
+                  print('== email test send (one email, to email_channel.replyTo) ==')
+                  payload = {'action': 'test_send', **({'broadcast_id': bid} if bid else {})}
+                  st, sent = http_json(fn, method='POST', payload=payload, headers=auth)
+                  print(st, json.dumps(sent, ensure_ascii=False, indent=1, default=str))
+                  print()
+
           if finish_drain:
               q('unschedule the finished drain job', """
                   select cron.unschedule('karnaf_drain_cron_history_once') as unscheduled

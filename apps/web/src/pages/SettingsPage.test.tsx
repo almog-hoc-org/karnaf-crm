@@ -13,9 +13,11 @@ vi.mock('@/lib/api', () => ({
   postUpdateSafetyNet: vi.fn(),
   postUpdateSlaThresholds: vi.fn(),
   postUpdateEmailChannel: vi.fn(),
+  fetchEmailChannelStatus: vi.fn(),
+  postEmailTestSend: vi.fn(),
 }));
 
-import { fetchRuntimeConfig, postUpdateEmailChannel } from '@/lib/api';
+import { fetchEmailChannelStatus, fetchRuntimeConfig, postEmailTestSend, postUpdateEmailChannel } from '@/lib/api';
 
 function makeConfig(emailChannel: Record<string, unknown>) {
   return {
@@ -47,7 +49,47 @@ function renderPage() {
 }
 
 describe('SettingsPage — email channel', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchEmailChannelStatus).mockResolvedValue({
+      ok: true,
+      emailChannel: {} as never,
+      readyToSend: false,
+      preflight: { ok: false, code: 'resend_domain_not_verified', error: 'Resend לא שולח מכתובת gmail.com' },
+      senderDomain: 'gmail.com',
+      domains: [],
+      domainsError: null,
+      suggestedFromEmail: null,
+    });
+  });
+
+  it('shows the verified Resend domain, offers an address on it, and sends a test to me', async () => {
+    vi.mocked(fetchRuntimeConfig).mockResolvedValue(makeConfig({
+      provider: 'resend', fromName: 'קרנף נדל"ן', fromEmail: 'karnaf.yazamut@gmail.com',
+      replyTo: 'karnaf.yazamut@gmail.com', requireConsent: true,
+    }) as never);
+    vi.mocked(fetchEmailChannelStatus).mockResolvedValue({
+      ok: true,
+      emailChannel: {} as never,
+      readyToSend: true,
+      preflight: { ok: true },
+      senderDomain: 'karnafnadlan.com',
+      domains: [{ name: 'karnafnadlan.com', status: 'verified' }],
+      domainsError: null,
+      suggestedFromEmail: 'info@karnafnadlan.com',
+    });
+    vi.mocked(postEmailTestSend).mockResolvedValue({ ok: true, to: 'owner@x.com', id: 'e1', subject: 's' });
+
+    renderPage();
+
+    expect(await screen.findByText(/מוכן לשליחה/)).toBeInTheDocument();
+    expect(screen.getByText(/karnafnadlan\.com — מאומת/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'להשתמש ב-info@karnafnadlan.com' }));
+    expect(screen.getByDisplayValue('info@karnafnadlan.com')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'שלח לי מייל בדיקה' }));
+    await waitFor(() => expect(postEmailTestSend).toHaveBeenCalled());
+  });
 
   it('warns that Resend cannot send from a gmail address', async () => {
     vi.mocked(fetchRuntimeConfig).mockResolvedValue(makeConfig({
