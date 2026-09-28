@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { isAdminRole, isManagerRole, roleLabel, useAuth } from '@/auth/auth-context';
 import { t, type TranslationKey } from '@/lib/i18n';
 import { RoleHelp } from '@/components/RoleHelp';
+import { GlobalSearch } from '@/components/GlobalSearch';
 import { useAttentionCount, useAttentionTitle } from '@/lib/useAttentionCount';
 import { usePresence } from '@/lib/usePresence';
 
@@ -99,6 +100,7 @@ export function Layout() {
           </nav>
 
           <div className="ms-auto flex items-center gap-2 sm:gap-3">
+            <GlobalSearch />
             <div className="hidden items-center gap-3 sm:flex">
               <div className="text-end">
                 <div className="text-sm font-medium text-slate-700 leading-tight">{auth.user?.email}</div>
