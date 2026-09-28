@@ -50,7 +50,7 @@ export function decidePlaceholderReply(input: PlaceholderDecisionInput): Placeho
 
   if (lower.includes('נציג') || lower.includes('מישהו') || lower.includes('לדבר')) {
     return {
-      replyText: `${prefix}בשמחה. אני מסדר שמיה תראה את זה ותמשיך איתך בצורה מסודרת.`,
+      replyText: `${prefix}בשמחה. אני מעביר את זה לצוות שלנו, ונחזור אליך בהקדם בצורה מסודרת.`,
       leadStatusUpdate: 'human_handoff',
       leadHeatUpdate: 'warm',
       scoreDelta: 8,

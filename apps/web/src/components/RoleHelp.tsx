@@ -23,11 +23,11 @@ const ROLE_PERMISSIONS: Record<Role, { label: string; can: string[]; cannot: str
     cannot: ['ביטול חשבון בעלים'],
   },
   mia: {
-    label: 'מפעיל/ת ראשי/ת (Mia)',
+    label: 'מפעיל/ת ראשי/ת',
     can: [
       'דאשבורד, לידים, תור, ניתוח',
       'שליחת הודעות ידניות, תיעוד שיחות טלפון',
-      'סימון won / lost / DNC, העברת לידים בין AI ל-Mia',
+      'סימון won / lost / DNC, העברת לידים בין AI לטיפול אנושי',
     ],
     cannot: ['ניהול משתמשים', 'עריכת prompt variants'],
   },
