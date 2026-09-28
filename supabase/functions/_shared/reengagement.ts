@@ -103,7 +103,7 @@ export async function runReengagement(
   }
 
   const now = Date.now();
-  const SELECT = 'id, phone, full_name, lead_status, ownership_mode, last_human_touch_at, last_inbound_at, last_outbound_at, updated_at, goal_summary, pain_point_summary, interest_topic, primary_track, do_not_contact, removed_by_request, snoozed_until, no_proactive_contact';
+  const SELECT = 'id, phone, full_name, lead_status, ownership_mode, last_human_touch_at, last_inbound_at, last_outbound_at, updated_at, goal_summary, pain_point_summary, interest_topic, primary_track, do_not_contact, removed_by_request, snoozed_until, no_proactive_contact, consent_whatsapp';
 
   // ── 1. check-in: handed to a human ~checkinDays ago, lead never replied ──
   let checkins = 0;

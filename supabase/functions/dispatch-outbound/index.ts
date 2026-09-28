@@ -75,7 +75,7 @@ async function deliverTemplateRow(
 
   const { data: lead, error: leadErr } = await supabase
     .from('leads')
-    .select('id, phone, email, ig_user_id, consent_email, do_not_contact, removed_by_request, snoozed_until, no_proactive_contact, last_inbound_at')
+    .select('id, phone, email, ig_user_id, consent_email, consent_whatsapp, do_not_contact, removed_by_request, snoozed_until, no_proactive_contact, last_inbound_at')
     .eq('id', row.lead_id)
     .maybeSingle();
   if (leadErr) throw leadErr;
