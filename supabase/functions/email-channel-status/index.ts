@@ -32,11 +32,33 @@ import { wrapEmailShell } from '../_shared/email-html.ts';
 
 type Caller = { kind: 'service' } | { kind: 'staff'; email: string | null; userId: string };
 
+/** Claims of a JWT whose signature the gateway has ALREADY verified. */
+function verifiedClaims(token: string): Record<string, unknown> | null {
+  const part = token.split('.')[1];
+  if (!part) return null;
+  try {
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, '='))) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 async function authenticate(req: Request): Promise<Caller> {
   const header = req.headers.get('authorization') ?? '';
   const token = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
   const serviceKey = env.serviceRoleKey();
   if (token && serviceKey && safeEqual(token, serviceKey)) return { kind: 'service' };
+  // The service-role key the Management API hands out is not always
+  // byte-identical to the one injected into the function's env (first ops
+  // run: 401). verify_jwt = true in config.toml means the gateway rejected
+  // any token with a bad signature before this line, so the role claim can
+  // be trusted — this branch MUST go if verify_jwt is ever turned off.
+  const claims = token ? verifiedClaims(token) : null;
+  const projectRef = new URL(env.supabaseUrl()).hostname.split('.')[0];
+  if (claims?.role === 'service_role' && (claims.ref === undefined || claims.ref === projectRef)) {
+    return { kind: 'service' };
+  }
   const staff = await requireStaff(req, { allow: ['owner', 'admin'] });
   return { kind: 'staff', email: staff.email, userId: staff.userId };
 }

@@ -131,6 +131,7 @@ verify_jwt = false
 
 # Owner/admin (or ops, with the service-role key) — Resend domain status and
 # a test email to the caller's own address. Never sends to a customer.
+# MUST stay true: the function trusts the verified JWT's role claim.
 [functions.email-channel-status]
 verify_jwt = true
 
