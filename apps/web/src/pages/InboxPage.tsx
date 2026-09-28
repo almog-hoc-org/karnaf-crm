@@ -84,6 +84,8 @@ export function InboxPage() {
   // At most one inline composer open at a time — a dozen open textareas
   // would bury the card content this screen just fought to surface.
   const [replyOpenLeadId, setReplyOpenLeadId] = useState<string | null>(null);
+  // Secondary actions live behind "עוד ⋯", one card at a time.
+  const [moreOpenLeadId, setMoreOpenLeadId] = useState<string | null>(null);
   const qc = useQueryClient();
   const toast = useToast();
   const auth = useAuth();
@@ -107,24 +109,46 @@ export function InboxPage() {
 
   const [originFilter, setOriginFilter] = useState('');
 
-  const allRows = useMemo(() => sortRows(q.data ?? []), [q.data]);
+  // Every attention row, best-first. A lead can own several (a waiting
+  // reply AND a handoff task AND a first-response task); the screen shows
+  // ONE card per lead — the most urgent row — and lists the rest on it.
+  // Three cards for the same customer read as three customers.
+  const rawRows = useMemo(() => sortRows(q.data ?? []), [q.data]);
+  const allRows = useMemo(() => firstRowPerLead(rawRows), [rawRows]);
+  const otherRowsByLead = useMemo(() => {
+    const map = new Map<string, AttentionRow[]>();
+    const shown = new Set(allRows.map((r) => `${r.kind}:${r.ref_id}`));
+    for (const row of rawRows) {
+      if (shown.has(`${row.kind}:${row.ref_id}`)) continue;
+      const list = map.get(row.lead_id) ?? [];
+      list.push(row);
+      map.set(row.lead_id, list);
+    }
+    return map;
+  }, [rawRows, allRows]);
   const originOptions = useMemo(() => {
     const labels = new Set<string>();
     for (const row of allRows) labels.add(describeLeadOrigin(row).label);
     return Array.from(labels).sort((a, b) => a.localeCompare(b, 'he'));
   }, [allRows]);
   const rows = useMemo(() => {
-    const byLane = lane === 'all' ? allRows : allRows.filter((row) => classifyRow(row).lane === lane);
+    // Lane filtering looks at every row of a lead, then shows its best one
+    // in that lane — a lead whose top row is "reply" but who also asked for
+    // a call must still appear under להתקשר.
+    const byLane = lane === 'all' ? allRows : firstRowPerLead(rawRows.filter((row) => classifyRow(row).lane === lane));
     return originFilter ? byLane.filter((row) => describeLeadOrigin(row).label === originFilter) : byLane;
-  }, [allRows, lane, originFilter]);
+  }, [allRows, rawRows, lane, originFilter]);
   const immediateRows = useMemo(() => rows.filter(isImmediateRow), [rows]);
   const laterRows = useMemo(() => rows.filter((row) => !isImmediateRow(row)), [rows]);
 
   const counts = useMemo(() => {
+    // Leads, not rows: the number on a lane is how many customers are in it.
     const acc: Record<WorkLane, number> = { all: allRows.length, reply: 0, call: 0, risk: 0, ops: 0 };
-    for (const row of allRows) acc[classifyRow(row).lane] += 1;
+    for (const key of ['reply', 'call', 'risk', 'ops'] as const) {
+      acc[key] = new Set(rawRows.filter((row) => classifyRow(row).lane === key).map((row) => row.lead_id)).size;
+    }
     return acc;
-  }, [allRows]);
+  }, [allRows, rawRows]);
 
   // The exact order cards appear on screen — immediate section first.
   const visibleRows = useMemo(() => [...immediateRows, ...laterRows], [immediateRows, laterRows]);
@@ -173,7 +197,13 @@ export function InboxPage() {
       if (e.code === 'KeyD') { e.preventDefault(); clickHotkey('done'); return; }
       if (e.code === 'KeyR') { e.preventDefault(); clickHotkey('reply'); return; }
       if (e.code === 'KeyS') { e.preventDefault(); clickHotkey('snooze'); return; }
-      if (e.code === 'KeyW') { e.preventDefault(); clickHotkey('whatsapp'); return; }
+      if (e.code === 'KeyW') {
+        // Straight to the URL: the WhatsApp link may sit in the closed ⋯ menu.
+        e.preventDefault();
+        const url = whatsappConversationUrl(row);
+        if (url) window.open(url, '_blank', 'noreferrer');
+        return;
+      }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -480,6 +510,14 @@ export function InboxPage() {
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
                         {row.lead_phone ? <a href={`tel:${row.lead_phone}`} className="tabular-nums hover:text-brand-700">{row.lead_phone}</a> : null}
                         <span>{humanReason(row)}</span>
+                        {otherRowsByLead.get(row.lead_id)?.length ? (
+                          <span
+                            className="kf-chip kf-tone-neutral rounded-full"
+                            title={otherRowsByLead.get(row.lead_id)!.map(humanReason).join(' · ')}
+                          >
+                            +{otherRowsByLead.get(row.lead_id)!.length} פתוחים נוספים ללקוח הזה
+                          </span>
+                        ) : null}
                         <span className="kf-chip kf-tone-neutral rounded-full">
                           מקור: {origin.label}{origin.detail ? ` · ${origin.detail}` : ''}
                         </span>
@@ -603,18 +641,18 @@ export function InboxPage() {
                       <StatusBadge status={row.lead_status} />
                       <HeatBadge heat={row.lead_heat} />
                       <OwnershipBadge ownership={row.ownership_mode} />
-                      <span className="kf-chip kf-tone-neutral">עדיפות {row.priority_level}</span>
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-2 sm:min-w-[220px] sm:flex-row lg:flex-col">
-                    <Link to={`/leads/${row.lead_id}`} className="kf-btn justify-center">
-                      פתיחת ליד
-                    </Link>
+                  {/* Visible: the lane's own action, "טופל", "השהיה", and — when
+                      there's no inline composer — WhatsApp. Everything else is
+                      one tap away under "עוד ⋯": eleven buttons per card made
+                      every card look like a settings page. */}
+                  <div className="flex flex-col gap-2 sm:min-w-[200px] sm:flex-row sm:flex-wrap lg:flex-col">
                     {row.lead_phone && meta.lane === 'call' ? (
                       <a
                         href={`tel:${row.lead_phone}`}
-                        className="kf-btn kf-btn-ghost justify-center"
+                        className="kf-btn kf-btn-primary justify-center"
                         aria-label={`חיוג אל ${row.lead_name || row.lead_phone}`}
                       >
                         חיוג עכשיו
@@ -630,30 +668,16 @@ export function InboxPage() {
                         סימון אין מענה
                       </button>
                     ) : null}
-                    {whatsappUrl ? (
+                    {whatsappUrl && !canReplyInline ? (
                       <a
                         href={whatsappUrl}
                         target="_blank"
                         rel="noreferrer"
-                        data-hotkey="whatsapp"
                         className="kf-btn kf-btn-ghost justify-center"
                         aria-label={`פתיחת WhatsApp עבור ${row.lead_name || row.lead_phone || 'הליד'}`}
                       >
                         פתיחת WhatsApp
                       </a>
-                    ) : null}
-                    {QUEUE_BACKED_KINDS.has(row.kind) ? (
-                      <button
-                        type="button"
-                        className="kf-btn kf-btn-ghost justify-center"
-                        disabled={resolve.isPending}
-                        onClick={() => {
-                          setPendingClose(row);
-                          setCloseNote('');
-                        }}
-                      >
-                        סגירת משימה
-                      </button>
                     ) : null}
                     <button
                       type="button"
@@ -673,35 +697,74 @@ export function InboxPage() {
                         onSnooze={(until, note) => snoozeLead.mutate({ row, until, note })}
                       />
                     </span>
-                    {canClassify ? (
-                      <QuickClassifyPopover
-                        heat={row.lead_heat}
-                        segment={row.intake_segment}
-                        busy={classify.isPending}
-                        buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
-                        onSetHeat={(heat) => classify.mutate({ leadId: row.lead_id, metaUpdates: { lead_heat: heat } })}
-                        onSetSegment={(segment) => classify.mutate({ leadId: row.lead_id, metaUpdates: { intake_segment: segment } })}
-                      />
+                    <button
+                      type="button"
+                      className="kf-btn kf-btn-ghost justify-center text-slate-600"
+                      aria-expanded={moreOpenLeadId === row.lead_id}
+                      onClick={() => setMoreOpenLeadId((cur) => (cur === row.lead_id ? null : row.lead_id))}
+                    >
+                      עוד ⋯
+                    </button>
+                    {moreOpenLeadId === row.lead_id ? (
+                      <div className="flex flex-col gap-2 rounded-lg bg-slate-50 p-2 ring-1 ring-inset ring-slate-200" role="group" aria-label="פעולות נוספות">
+                        <Link to={`/leads/${row.lead_id}`} className="kf-btn kf-btn-ghost justify-center">
+                          פתיחת כרטיס לקוח
+                        </Link>
+                        {whatsappUrl && canReplyInline ? (
+                          <a
+                            href={whatsappUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="kf-btn kf-btn-ghost justify-center"
+                            aria-label={`פתיחת WhatsApp עבור ${row.lead_name || row.lead_phone || 'הליד'}`}
+                          >
+                            פתיחת WhatsApp
+                          </a>
+                        ) : null}
+                        {canClassify ? (
+                          <QuickClassifyPopover
+                            heat={row.lead_heat}
+                            segment={row.intake_segment}
+                            busy={classify.isPending}
+                            buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
+                            onSetHeat={(heat) => classify.mutate({ leadId: row.lead_id, metaUpdates: { lead_heat: heat } })}
+                            onSetSegment={(segment) => classify.mutate({ leadId: row.lead_id, metaUpdates: { intake_segment: segment } })}
+                          />
+                        ) : null}
+                        <button
+                          type="button"
+                          className="kf-btn kf-btn-ghost justify-center"
+                          onClick={() => {
+                            setPendingOutcome(row);
+                            setOutcomeChoice('investor_mentorship');
+                            setOutcomeNote('');
+                          }}
+                        >
+                          נסגר לתהליך 🏷
+                        </button>
+                        {QUEUE_BACKED_KINDS.has(row.kind) ? (
+                          <button
+                            type="button"
+                            className="kf-btn kf-btn-ghost justify-center"
+                            disabled={resolve.isPending}
+                            onClick={() => {
+                              setPendingClose(row);
+                              setCloseNote('');
+                            }}
+                          >
+                            סגירת המשימה בלבד
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="kf-btn kf-btn-ghost justify-center text-slate-500"
+                          disabled={noFollowup.isPending}
+                          onClick={() => noFollowup.mutate(row)}
+                        >
+                          ללא פנייה יזומה
+                        </button>
+                      </div>
                     ) : null}
-                    <button
-                      type="button"
-                      className="kf-btn kf-btn-ghost justify-center"
-                      onClick={() => {
-                        setPendingOutcome(row);
-                        setOutcomeChoice('investor_mentorship');
-                        setOutcomeNote('');
-                      }}
-                    >
-                      נסגר לתהליך 🏷
-                    </button>
-                    <button
-                      type="button"
-                      className="kf-btn kf-btn-ghost justify-center text-slate-500"
-                      disabled={noFollowup.isPending}
-                      onClick={() => noFollowup.mutate(row)}
-                    >
-                      ללא פנייה יזומה
-                    </button>
                   </div>
                 </div>
               </article>
@@ -1150,6 +1213,18 @@ async function copyTalkTrack(text: string) {
   textarea.select();
   document.execCommand('copy');
   document.body.removeChild(textarea);
+}
+
+// Keep the first (best-sorted) row of each lead.
+function firstRowPerLead(rows: AttentionRow[]): AttentionRow[] {
+  const seen = new Set<string>();
+  const out: AttentionRow[] = [];
+  for (const row of rows) {
+    if (seen.has(row.lead_id)) continue;
+    seen.add(row.lead_id);
+    out.push(row);
+  }
+  return out;
 }
 
 function sortRows(rows: AttentionRow[]): AttentionRow[] {

@@ -297,7 +297,9 @@ describe('InboxPage', () => {
 
     renderInbox();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'סיווג ⚡' }));
+    // Classification is a secondary action: behind the card's "עוד ⋯".
+    fireEvent.click(await screen.findByRole('button', { name: 'עוד ⋯' }));
+    fireEvent.click(screen.getByRole('button', { name: 'סיווג ⚡' }));
     fireEvent.click(screen.getByRole('button', { name: 'חם' }));
 
     await waitFor(() => expect(mockedPostAdminAction).toHaveBeenCalledWith({
@@ -343,7 +345,41 @@ describe('InboxPage', () => {
 
     renderInbox('/inbox', 'sales_rep');
 
-    expect(await screen.findByText('נועה בר')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'עוד ⋯' }));
     expect(screen.queryByRole('button', { name: 'סיווג ⚡' })).not.toBeInTheDocument();
+  });
+
+  // One customer, three open items (waiting reply + handoff task + first
+  // response task) used to be three cards that read as three customers.
+  it('shows one card per lead and counts the other open items on it', async () => {
+    mockedFetchAttentionInbox.mockResolvedValue([
+      replyRow(),
+      replyRow({ kind: 'queue', ref_id: 'q-handoff', queue_type: 'human_handoff', reason: 'הועבר לטיפול אנושי' }),
+      replyRow({ kind: 'queue', ref_id: 'q-first', queue_type: 'first_response_due', reason: 'נדרש מענה ראשוני' }),
+    ]);
+
+    renderInbox();
+
+    expect(await screen.findAllByText('נועה בר')).toHaveLength(1);
+    expect(screen.getByText('+2 פתוחים נוספים ללקוח הזה')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'טופל ✓' })).toHaveLength(1);
+    // The "הכל" lane counts customers, not rows.
+    expect(screen.getByRole('button', { name: /^הכל/ })).toHaveTextContent('1');
+  });
+
+  it('keeps secondary actions behind the card menu', async () => {
+    mockedFetchAttentionInbox.mockResolvedValue([replyRow()]);
+
+    renderInbox();
+
+    expect(await screen.findByRole('button', { name: 'השב כאן 💬' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'טופל ✓' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'ללא פנייה יזומה' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /פתיחת WhatsApp/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'עוד ⋯' }));
+    expect(screen.getByRole('button', { name: 'ללא פנייה יזומה' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'פתיחת WhatsApp עבור נועה בר' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'פתיחת כרטיס לקוח' })).toHaveAttribute('href', '/leads/44444444-4444-4444-4444-444444444444');
   });
 });

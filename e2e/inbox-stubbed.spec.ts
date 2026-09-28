@@ -222,6 +222,7 @@ test.describe('Inbox minimum-clicks round (stubbed backend)', () => {
     await page.goto('/inbox');
 
     const card = page.locator('article', { hasText: 'רוני לוי' });
+    await card.getByRole('button', { name: 'עוד ⋯' }).click();
     await card.getByRole('button', { name: 'סיווג ⚡' }).click();
     await expect(page.getByRole('dialog', { name: 'סיווג מהיר' })).toBeVisible();
     await page.screenshot({ path: 'e2e-artifacts/04-classify-popover.png', fullPage: true });
