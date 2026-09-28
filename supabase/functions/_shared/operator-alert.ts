@@ -20,6 +20,8 @@ import { optional } from './env.ts';
 import { log } from './logger.ts';
 import { notifyTelegram, type AlertSeverity } from './notify-telegram.ts';
 import { sendWhatsAppTemplate, sendWhatsAppText } from './whatsapp-provider.ts';
+import { isFreeformAllowed } from './conversation-window.ts';
+import { normalizeIsraeliPhone, toWhatsAppPhone } from './phone.ts';
 
 export type { AlertSeverity };
 
@@ -96,7 +98,7 @@ export async function notifyOperator(
   const oneLine = composeOneLine(alert);
 
   const [whatsapp, email, telegram] = await Promise.all([
-    sendWhatsAppAlert(alert, oneLine),
+    sendWhatsAppAlert(supabase, alert, oneLine),
     sendEmailAlert(alert, body),
     sendTelegramAlert(alert),
   ]);
@@ -197,25 +199,53 @@ function composeOneLine(alert: OperatorAlert): string {
     : parts;
 }
 
-async function sendWhatsAppAlert(alert: OperatorAlert, oneLine: string): Promise<ChannelResult> {
+/**
+ * When did the operator's number last write to the business number? Their
+ * messages go through whatsapp-webhook like anyone's, so the number is a
+ * lead with last_inbound_at. null = never, or unknown.
+ */
+async function operatorLastInboundAt(supabase: SupabaseClient, to: string): Promise<string | null> {
+  const local = normalizeIsraeliPhone(to);
+  const intl = toWhatsAppPhone(to);
+  const candidates = [...new Set([to, local, intl, intl ? `+${intl}` : null].filter(Boolean) as string[])];
+  const { data } = await supabase
+    .from('leads').select('last_inbound_at').in('phone', candidates)
+    .not('last_inbound_at', 'is', null)
+    .order('last_inbound_at', { ascending: false }).limit(1).maybeSingle();
+  return (data?.last_inbound_at as string | null) ?? null;
+}
+
+async function sendWhatsAppAlert(
+  supabase: SupabaseClient,
+  alert: OperatorAlert,
+  oneLine: string,
+): Promise<ChannelResult> {
   const to = optional('ALERT_WHATSAPP_TO');
   if (!to) return { ok: false, skipped: 'no_alert_whatsapp_to' };
+  const templateName = optional('ALERT_WHATSAPP_TEMPLATE', optional('WHATSAPP_FALLBACK_TEMPLATE', 'karnaf_followup_v1'));
+  const sendTemplate = () => sendWhatsAppTemplate(to, templateName, [{ name: '1', value: oneLine }])
+    .catch((err) => ({ ok: false as const, error: String(err) }));
 
-  // Freeform first: it is richer, and it works as long as the operator has
-  // written to the business number within 24 hours — which, once alerts are
-  // flowing and they reply to any of them, is the normal state.
+  // Freeform only inside the 24h customer-service window. Meta ACCEPTS a
+  // freeform send outside it (200 + message id) and rejects it minutes
+  // later with #131047 "Re-engagement message" in a delivery receipt — so
+  // "freeform first, template if it fails" never reached the template: 266
+  // alerts between 29.8 and 28.9 were recorded as delivered and never
+  // arrived. 23h leaves a margin for clock skew and slow receipts.
+  const lastInbound = await operatorLastInboundAt(supabase, to).catch(() => null);
+  if (!isFreeformAllowed(lastInbound, 23)) {
+    const template = await sendTemplate();
+    if (template.ok) return { ok: true, detail: `template:${templateName}` };
+    return { ok: false, detail: `template (outside 24h window): ${template.error ?? 'failed'}`.slice(0, 400) };
+  }
+
   const freeform = await sendWhatsAppText(to, composeBody(alert)).catch((err) => ({
     ok: false as const, error: String(err),
   }));
   if (freeform.ok) return { ok: true, detail: 'freeform' };
 
-  // Outside the window Meta rejects freeform, so fall back to the approved
-  // template. Its single {{1}} carries the whole alert as one line.
-  const templateName = optional('ALERT_WHATSAPP_TEMPLATE', optional('WHATSAPP_FALLBACK_TEMPLATE', 'karnaf_followup_v1'));
-  const template = await sendWhatsAppTemplate(to, templateName, [{ name: '1', value: oneLine }])
-    .catch((err) => ({ ok: false as const, error: String(err) }));
+  const template = await sendTemplate();
   if (template.ok) return { ok: true, detail: `template:${templateName}` };
-
   return {
     ok: false,
     detail: `freeform: ${freeform.error ?? 'failed'} | template: ${template.error ?? 'failed'}`.slice(0, 400),
