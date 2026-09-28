@@ -4,6 +4,7 @@ import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
 import { env, optional } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { checkRateLimit, clientIdentifier } from '../_shared/rate-limit.ts';
+import { applyProviderStatuses, extractProviderStatuses } from '../_shared/provider-status.ts';
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -51,62 +52,11 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { error: 'Rate limit exceeded' }, 429);
   }
 
-  // Meta delivers an array of statuses inside entry[0].changes[0].value.statuses;
-  // WATI sends flat fields. Normalise both shapes.
-  const flatStatuses = Array.isArray(payload.statuses) ? (payload.statuses as Array<Record<string, unknown>>) : null;
-  const metaStatuses = (((payload.entry as Array<Record<string, unknown>> | undefined)?.[0]?.changes as Array<Record<string, unknown>> | undefined)?.[0]?.value as Record<string, unknown> | undefined)?.statuses as Array<Record<string, unknown>> | undefined;
-  const statuses = metaStatuses ?? flatStatuses ?? [{
-    id: payload.message_id ?? payload.id,
-    status: payload.status,
-    errors: payload.error ? [payload.error] : payload.errors,
-  }];
-
-  let processed = 0;
-  for (const item of statuses) {
-    const providerMessageId = (item.id ?? item.message_id) as string | undefined;
-    const status = String(item.status ?? 'unknown').toLowerCase();
-    const errorMessage = ((item.errors as Array<Record<string, unknown>> | undefined)?.[0]?.message
-      ?? (item.error as Record<string, unknown> | undefined)?.message
-      ?? null) as string | null;
-
-    if (!providerMessageId) continue;
-
-    const { data: message } = await supabase
-      .from('messages')
-      .select('id, lead_id, conversation_id')
-      .eq('provider_message_id', providerMessageId)
-      .maybeSingle();
-    if (!message) continue;
-
-    const updates: Record<string, unknown> = { provider_status: status };
-    const ts = new Date().toISOString();
-    if (status === 'delivered') updates.delivered_at = ts;
-    if (status === 'read') updates.read_at = ts;
-    if (status === 'failed') updates.provider_error = errorMessage;
-
-    await supabase.from('messages').update(updates).eq('id', message.id);
-
-    // Broadcast analytics — a provider-side failure (bad number, template
-    // rejection) arrives asynchronously AFTER dispatch-outbound marked the
-    // recipient 'sent'. Roll it up via the message link so the broadcast
-    // counts the recipient as failed, not delivered. delivered/read need
-    // no rollup — recipientStats derives them from the messages join.
-    if (status === 'failed') {
-      await supabase
-        .from('broadcast_recipients')
-        .update({ status: 'failed', error: errorMessage ?? 'provider failure' })
-        .eq('message_id', message.id);
-    }
-
-    await supabase.from('lead_events').insert({
-      lead_id: message.lead_id,
-      conversation_id: message.conversation_id,
-      event_type: 'provider_message_status_updated',
-      actor_type: 'provider',
-      event_payload: { provider_message_id: providerMessageId, status, error_message: errorMessage, correlation_id: correlationId },
-    });
-    processed++;
-  }
+  // Parsing and application are shared with whatsapp-webhook, which is
+  // where Meta actually delivers receipts (one callback URL per app).
+  const statuses = extractProviderStatuses(payload);
+  const applied = await applyProviderStatuses(supabase, statuses, correlationId);
+  const processed = applied.matched;
 
   return jsonResponse(req, { ok: true, processed });
 });

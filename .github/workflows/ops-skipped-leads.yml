@@ -19,6 +19,14 @@ on:
         description: 'Optional: make the test email that broadcast, exactly as a recipient gets it'
         type: string
         default: ''
+      schedule_broadcast_id:
+        description: 'WRITE: re-schedule this FAILED email broadcast (same as the app''s "שלח שוב", at schedule_at)'
+        type: string
+        default: ''
+      schedule_at:
+        description: 'UTC ISO time for schedule_broadcast_id, e.g. 2026-09-29T15:00:00Z (18:00 Israel summer time)'
+        type: string
+        default: ''
 
 jobs:
   diag:
@@ -32,6 +40,8 @@ jobs:
           FINISH_DRAIN: ${{ inputs.finish_drain }}
           EMAIL_TEST: ${{ inputs.email_test }}
           EMAIL_TEST_BROADCAST_ID: ${{ inputs.email_test_broadcast_id }}
+          SCHEDULE_BROADCAST_ID: ${{ inputs.schedule_broadcast_id }}
+          SCHEDULE_AT: ${{ inputs.schedule_at }}
         run: |
           python3 - <<'EOF'
           import json, os, time, urllib.error, urllib.request
@@ -152,6 +162,44 @@ jobs:
 
           # The digest is the only thing that would have said "no inbound for
           # 3 days". Did its cron fire, and what did the gateway answer?
+          # What Meta actually sends to whatsapp-webhook. Receipts
+          # (value.statuses) for our own sends vs customer messages
+          # (value.messages). No customer number is printed.
+          WA_CHANGES = """
+              with w as (
+                select received_at, body::jsonb as j
+                from webhook_inbox
+                where source = 'whatsapp-webhook'
+                  and received_at > now() - interval '30 days'
+                  and left(ltrim(body), 1) = '{'
+              ), c as (
+                select w.received_at, ch->>'field' as field, ch->'value' as v
+                from w
+                cross join lateral jsonb_array_elements(coalesce(w.j->'entry', '[]'::jsonb)) e
+                cross join lateral jsonb_array_elements(coalesce(e->'changes', '[]'::jsonb)) ch
+              )"""
+          q('whatsapp webhook payloads by day (30d)', WA_CHANGES + """
+              select date_trunc('day', received_at)::date as day, field,
+                     count(*) as changes,
+                     count(*) filter (where v ? 'statuses') as receipts,
+                     count(*) filter (where v ? 'messages') as customer_messages,
+                     string_agg(distinct v->'metadata'->>'display_phone_number', ',') as business_number
+              from c group by 1, 2 order by 1 desc limit 31""",
+            'customer_messages=0 with receipts>0 = Meta reaches us but customer messages go elsewhere')
+
+          q('whatsapp receipts by status (30d)', WA_CHANGES + """
+              select s->>'status' as status, s->'errors'->0->>'code' as error_code,
+                     left(s->'errors'->0->>'title', 80) as error_title, count(*)
+              from c cross join lateral jsonb_array_elements(coalesce(c.v->'statuses', '[]'::jsonb)) s
+              group by 1, 2, 3 order by 4 desc""",
+            'failed rows = sends Meta rejected after accepting them (was invisible before 28.9)')
+
+          q('whatsapp customer messages by type (30d)', WA_CHANGES + """
+              select m->>'type' as type, count(*), max(received_at) as newest
+              from c cross join lateral jsonb_array_elements(coalesce(c.v->'messages', '[]'::jsonb)) m
+              group by 1 order by 2 desc""",
+            'empty = not one customer message reached the webhook in 30 days')
+
           q('operator digest cron runs (newest 5)', """
               select d.status, d.start_time, left(d.return_message, 120) as message
               from cron.job_run_details d
@@ -350,6 +398,11 @@ jobs:
               st, status = http_json(fn, headers=auth)
               print(st, json.dumps(status, ensure_ascii=False, indent=1, default=str))
               print()
+              print('== whatsapp channel status (from Meta) ==')
+              print('-- proves: verdict + webhook_configuration = where Meta sends customer messages for our number')
+              st, wa = http_json(f'https://{ref}.supabase.co/functions/v1/whatsapp-channel-status', headers=auth)
+              print(st, json.dumps(wa, ensure_ascii=False, indent=1, default=str))
+              print()
               if os.environ.get('EMAIL_TEST', 'false') == 'true':
                   bid = os.environ.get('EMAIL_TEST_BROADCAST_ID', '').strip()
                   print('== email test send (one email, to email_channel.replyTo) ==')
@@ -357,6 +410,27 @@ jobs:
                   st, sent = http_json(fn, method='POST', payload=payload, headers=auth)
                   print(st, json.dumps(sent, ensure_ascii=False, indent=1, default=str))
                   print()
+
+          # ── 8. Opt-in write: schedule a failed email campaign ────────
+          import re as _re
+          sched_id = os.environ.get('SCHEDULE_BROADCAST_ID', '').strip()
+          sched_at = os.environ.get('SCHEDULE_AT', '').strip()
+          if sched_id or sched_at:
+              uuid_ok = _re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', sched_id)
+              time_ok = _re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?Z', sched_at)
+              if not (uuid_ok and time_ok):
+                  print(f'== schedule refused: need a broadcast uuid and a UTC time like 2026-09-29T15:00:00Z ==\n')
+              else:
+                  q('schedule the email broadcast', f"""
+                      update broadcasts
+                         set status = 'scheduled', scheduled_at = '{sched_at}'::timestamptz,
+                             last_error = null, finished_at = null, updated_at = now()
+                       where id = '{sched_id}' and channel = 'email'
+                         and status in ('failed', 'draft', 'cancelled')
+                         and '{sched_at}'::timestamptz > now()
+                      returning id, name, status, scheduled_at,
+                                scheduled_at at time zone 'Asia/Jerusalem' as israel_time""",
+                    'empty = not changed (already scheduled/sending/sent, not email, or time in the past)', attempts=1)
 
           if finish_drain:
               q('unschedule the finished drain job', """
