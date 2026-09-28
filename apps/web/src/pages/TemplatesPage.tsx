@@ -12,6 +12,7 @@ import { supabase } from '@/lib/supabase';
 // Tier 7.C.1 — central labels.
 import { TEMPLATE_CHANNEL_LABELS, TEMPLATE_STATUS_LABELS } from '@/lib/format';
 import { Modal } from '@/components/Modal';
+import { LoadFailed } from '@/components/LoadFailed';
 const CHANNEL_LABELS = TEMPLATE_CHANNEL_LABELS as Record<TemplateChannel, string>;
 const STATUS_LABELS = TEMPLATE_STATUS_LABELS as Record<TemplateStatus, string>;
 
@@ -110,6 +111,9 @@ export function TemplatesPage() {
 
   return (
     <div className="space-y-4">
+      {templatesQ.error ? (
+        <LoadFailed error={templatesQ.error} onRetry={() => void templatesQ.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={templatesQ.isFetching} />
+      ) : null}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">תבניות הודעה</h1>
         <div className="flex items-center gap-3">

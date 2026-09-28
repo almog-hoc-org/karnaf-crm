@@ -39,7 +39,7 @@ const MAX_INVESTOR_DEALS_PER_TICK = 50;
 const LEAD_SCAN_COLUMNS =
   'id, full_name, phone, email, city, product_interest, intake_segment, ' +
   'primary_track, do_not_contact, removed_by_request, snoozed_until, ' +
-  'no_proactive_contact, ig_user_id, consent_email, source, source_campaign, ' +
+  'no_proactive_contact, ig_user_id, consent_email, consent_whatsapp, source, source_campaign, ' +
   'created_at, last_inbound_at, last_outbound_at, lead_status, ownership_mode, lead_heat';
 
 /**

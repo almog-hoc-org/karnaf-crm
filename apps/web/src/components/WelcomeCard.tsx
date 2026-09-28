@@ -52,9 +52,9 @@ export function WelcomeCard({ role, userEmail }: { role: Role | null; userEmail:
       ) : null}
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <WelcomeStep
-          to="/queue"
-          title="התור שלך"
-          description="כל המשימות הפתוחות מסודרות לפי SLA."
+          to="/inbox"
+          title="היום"
+          description="מי מחכה לך עכשיו ומה הצעד הבא — מתחילים מכאן."
         />
         <WelcomeStep
           to="/leads?heat=hot"
@@ -64,25 +64,23 @@ export function WelcomeCard({ role, userEmail }: { role: Role | null; userEmail:
         <WelcomeStep
           to="/analytics"
           title="ניתוח"
-          description="מקור, conversion, ו-AI מול אדם."
+          description="מאיפה מגיעים הלקוחות, כמה נסגרים, ומה הבוט סוגר לבד."
         />
         {isAdmin ? (
           <WelcomeStep
             to="/prompts"
-            title="פרומפטים"
-            description="עריכת התסריטים שה-AI עובד איתם."
+            title="תסריטי הבוט"
+            description="עריכת הנוסח שהבוט החכם עובד איתו."
           />
         ) : (
           <WelcomeStep
             to="/leads"
-            title="כל הלידים"
-            description="חיפוש, סינון, וצפייה בכל הלידים."
+            title="לקוחות"
+            description="חיפוש, סינון, וצפייה בכל הלקוחות."
           />
         )}
       </div>
       <p className="mt-3 text-xs text-slate-500">
-        מדריך מלא בעברית: <code className="rounded bg-white px-1.5 py-0.5">docs/operator-guide.md</code>
-        {' · '}
         <Link to="/help/permissions" className="text-brand-700 hover:underline">מטריצת הרשאות</Link>
       </p>
     </section>

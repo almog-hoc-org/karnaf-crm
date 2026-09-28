@@ -55,7 +55,7 @@ function renderUsers(role: Role | null = 'admin', userId = 'admin-1') {
         <MemoryRouter initialEntries={['/users']}>
           <Routes>
             <Route path="/users" element={<UsersPage />} />
-            <Route path="/" element={<div>home outlet</div>} />
+            <Route path="/inbox" element={<div>home outlet</div>} />
           </Routes>
         </MemoryRouter>
       </AuthContext.Provider>
@@ -77,13 +77,13 @@ afterEach(() => {
 });
 
 describe('UsersPage', () => {
-  it('redirects non-admin roles back to /', () => {
+  it('redirects non-admin roles back to /inbox', () => {
     renderUsers('sales_rep');
     expect(screen.getByText('home outlet')).toBeInTheDocument();
     expect(screen.queryByText('ניהול משתמשים')).not.toBeInTheDocument();
   });
 
-  it('redirects mia operators back to /', () => {
+  it('redirects mia operators back to /inbox', () => {
     renderUsers('mia');
     expect(screen.getByText('home outlet')).toBeInTheDocument();
   });

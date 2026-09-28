@@ -60,7 +60,7 @@ function renderPrompts(role: Role | null = 'admin') {
         <MemoryRouter initialEntries={['/prompts']}>
           <Routes>
             <Route path="/prompts" element={<PromptVariantsPage />} />
-            <Route path="/" element={<div>home outlet</div>} />
+            <Route path="/inbox" element={<div>home outlet</div>} />
           </Routes>
         </MemoryRouter>
       </AuthContext.Provider>

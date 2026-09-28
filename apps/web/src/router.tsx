@@ -2,7 +2,7 @@ import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter, Link, Navigate, RouterProvider, useParams } from 'react-router-dom';
 import { AuthProvider } from '@/auth/AuthProvider';
 import { ProtectedRoute } from '@/auth/ProtectedRoute';
-import { useAuth, type Role } from '@/auth/auth-context';
+import { ADMIN_ROLES, MANAGER_ROLES, roleLabel, useAuth, type Role } from '@/auth/auth-context';
 import { LoginPage } from '@/auth/LoginPage';
 import { Layout } from '@/components/Layout';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -11,7 +11,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { Spinner } from '@/components/Spinner';
 
-const HomeRoute = lazy(() => import('@/pages/HomeRoute').then((m) => ({ default: m.HomeRoute })));
+const DashboardPage = lazy(() => import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })));
 const LeadsPage = lazy(() => import('@/pages/LeadsPage').then((m) => ({ default: m.LeadsPage })));
 const LeadDetailPage = lazy(() => import('@/pages/LeadDetailPage').then((m) => ({ default: m.LeadDetailPage })));
 // Remounts LeadDetailPage whenever the route's :leadId changes. See the
@@ -69,10 +69,10 @@ function RequireRole({ allow, children }: { allow: Role[]; children: ReactNode }
         <p className="text-3xl" aria-hidden="true">🔒</p>
         <h1 className="mt-2 text-lg font-semibold">אין לך הרשאה למסך הזה</h1>
         <p className="mt-1 text-sm text-slate-600">
-          התפקיד שלך ({auth.role ?? 'לא ידוע'}) לא כולל גישה לעמוד הזה. פנה למנהל המערכת אם אתה צריך אותה.
+          התפקיד שלך ({roleLabel(auth.role)}) לא כולל גישה לעמוד הזה. פנה למנהל המערכת אם אתה צריך אותה.
         </p>
         <div className="mt-4 flex justify-center gap-2">
-          <Link to="/inbox" className="kf-btn">חזרה להיום שלי</Link>
+          <Link to="/inbox" className="kf-btn">חזרה להיום</Link>
           <Link to="/help/permissions" className="kf-btn kf-btn-ghost">מה מותר לכל תפקיד</Link>
         </div>
       </div>
@@ -81,8 +81,8 @@ function RequireRole({ allow, children }: { allow: Role[]; children: ReactNode }
   return <>{children}</>;
 }
 
-const MANAGER: Role[] = ['owner', 'admin', 'mia'];
-const ADMIN: Role[] = ['owner', 'admin'];
+const MANAGER = MANAGER_ROLES;
+const ADMIN = ADMIN_ROLES;
 
 // Wraps a lazy page in its Suspense boundary and, when given, its role gate.
 function page(element: ReactNode, allow?: Role[]) {
@@ -98,7 +98,11 @@ const router = createBrowserRouter([
       {
         element: <Layout />,
         children: [
-          { path: '/', element: page(<HomeRoute />) },
+          // Everyone starts on "היום" — the one screen that says what needs
+          // doing now. The business-status dashboard used to be the owner's
+          // landing page, a third competing "today" screen.
+          { path: '/', element: <Navigate to="/inbox" replace /> },
+          { path: '/dashboard', element: page(<DashboardPage />, MANAGER) },
           { path: '/leads', element: page(<LeadsPage />) },
           // `key` on the element is load-bearing. React Router reuses the same
           // component instance when only the :leadId param changes, so every
@@ -122,13 +126,15 @@ const router = createBrowserRouter([
           { path: '/reports', element: page(<ReportsPage />, MANAGER) },
           { path: '/journeys', element: page(<JourneysPage />, MANAGER) },
           { path: '/broadcasts', element: page(<BroadcastsPage />, MANAGER) },
-          { path: '/admin', element: page(<AdminHubPage />, ADMIN) },
+          // The hub ("עוד") is where every manager page is linked from, so it
+          // is open to managers; admin-only cards are filtered inside it.
+          { path: '/admin', element: page(<AdminHubPage />, MANAGER) },
           { path: '/admin/whatsapp-router', element: page(<WhatsAppRouterOptionsPage />, ADMIN) },
           { path: '/admin/settings', element: page(<SettingsPage />, ADMIN) },
           { path: '/admin/status', element: page(<OpsStatusPage />, ADMIN) },
           { path: '/prompts', element: page(<PromptVariantsPage />, ADMIN) },
           { path: '/help/permissions', element: page(<PermissionsHelpPage />) },
-          { path: '*', element: <Navigate to="/" replace /> },
+          { path: '*', element: <Navigate to="/inbox" replace /> },
         ],
       },
     ],

@@ -14,6 +14,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
+import { LoadFailed } from '@/components/LoadFailed';
 
 const OPTION_KEY_RE = /^[a-z][a-z0-9_]{1,59}$/;
 const TRACKS: WhatsAppRouterTrack[] = ['program', 'presale', 'investor_mentorship', 'human'];
@@ -47,6 +48,9 @@ export function WhatsAppRouterOptionsPage() {
 
   return (
     <div className="space-y-4">
+      {optionsQ.error ? (
+        <LoadFailed error={optionsQ.error} onRetry={() => void optionsQ.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={optionsQ.isFetching} />
+      ) : null}
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">ראוטר WhatsApp</h1>
         <span className="text-sm text-slate-500">{optionsQ.data?.length ?? 0} אפשרויות</span>

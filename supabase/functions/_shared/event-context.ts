@@ -74,6 +74,7 @@ export interface LeadRowForContext {
   no_proactive_contact?: boolean | null;
   ig_user_id?: string | null;
   consent_email?: boolean | null;
+  consent_whatsapp?: boolean | null;
 }
 
 export interface LeadContextOptions {
@@ -112,6 +113,7 @@ export interface LeadContext {
   no_proactive_contact: boolean;
   ig_user_id: string | null;
   consent_email: boolean | null;
+  consent_whatsapp: boolean | null;
   // Derived (null when includeDerived=false).
   has_won_program: boolean | null;
   is_program_member: boolean | null;
@@ -125,7 +127,7 @@ const LEAD_SELECT_COLUMNS =
   // snoozed_until + no_proactive_contact feed the contact guard in
   // automation-engine's send action; ig_user_id/consent_email let the same
   // guard answer for the non-WhatsApp channels.
-  'removed_by_request, snoozed_until, no_proactive_contact, ig_user_id, consent_email, ' +
+  'removed_by_request, snoozed_until, no_proactive_contact, ig_user_id, consent_email, consent_whatsapp, ' +
   'source, source_campaign, created_at, last_inbound_at, last_outbound_at';
 
 // Resolve the lead from id then delegate. The common case for one-off
@@ -181,6 +183,7 @@ export async function buildLeadContextFromRow(
     no_proactive_contact: !!row.no_proactive_contact,
     ig_user_id: row.ig_user_id ?? null,
     consent_email: row.consent_email ?? null,
+    consent_whatsapp: row.consent_whatsapp ?? null,
     has_won_program: null,
     is_program_member: null,
     days_since_program_join: null,

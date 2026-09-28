@@ -13,11 +13,11 @@ test('non-admin users do not see Users link in navigation', async ({ page }) => 
 
   const nav = page.getByRole('navigation').first();
   await expect(nav).toBeVisible();
-  // owner / admin see "משתמשים"; lower roles do not — the suite is configured
-  // against an owner/admin test user, so this asserts the link exists. Lower
-  // role suites can flip this assertion via a separate E2E_VIEWER_* env pair.
+  // owner / admin / mia see "עוד" (the hub); lower roles do not — the suite
+  // is configured against an owner/admin test user, so this asserts the link
+  // exists. Lower role suites can flip this via a separate E2E_VIEWER_* pair.
   if (process.env.E2E_EXPECT_ADMIN === '1') {
-    await expect(nav.getByRole('link', { name: /משתמשים/ })).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'עוד' })).toBeVisible();
   }
 });
 

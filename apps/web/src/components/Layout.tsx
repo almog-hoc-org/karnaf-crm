@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import clsx from 'clsx';
-import { useAuth } from '@/auth/auth-context';
+import { isAdminRole, isManagerRole, roleLabel, useAuth } from '@/auth/auth-context';
 import { t, type TranslationKey } from '@/lib/i18n';
 import { RoleHelp } from '@/components/RoleHelp';
+import { GlobalSearch } from '@/components/GlobalSearch';
 import { useAttentionCount, useAttentionTitle } from '@/lib/useAttentionCount';
 import { usePresence } from '@/lib/usePresence';
 
@@ -16,30 +17,26 @@ interface NavItem {
   icon: ReactNode;
 }
 
-// Tier 5 — minimalist top nav. 5 items is the cognitive ceiling for
-// a non-CRM-native user (Mia learning the system). Everything that
-// used to be a top-level link now lives under /admin (AdminHubPage),
-// which groups them by what an admin actually does.
-//
-// What stayed up top:
-//   * בית — landing page; manager dashboard for owner/admin/mia,
-//           redirects to /inbox for operators.
-//   * היום שלי — Mia's work queue. The single most-visited page.
-//   * לידים — the customer list. Second most-visited.
-//   * דוחות — the 5-dashboard hub for managers. Manager+ only.
-//   * ניהול — everything else, organised. Admin+ only.
+// Four items, built for a business run by one owner (2026-09 audit):
+//   * היום     — what needs me right now (attention inbox). Everyone's home.
+//   * לקוחות   — find, filter, segment, import/export.
+//   * דיוור    — campaigns and message templates. Manager+.
+//   * עוד      — reports, automations, settings, team, system status,
+//                grouped in the hub. Manager+ (admin-only cards are
+//                filtered inside it).
+// The business-status dashboard moved from "/" to /dashboard and is
+// reached from the hub and from the היום header.
 const NAV: NavItem[] = [
-  { to: '/', labelKey: 'nav_dashboard', end: true, managerOnly: true, icon: <IconDashboard /> },
   { to: '/inbox', labelKey: 'nav_inbox', icon: <IconInbox /> },
   { to: '/leads', labelKey: 'nav_leads', icon: <IconUsers /> },
-  { to: '/reports', labelKey: 'nav_reports', managerOnly: true, icon: <IconChart /> },
-  { to: '/admin', labelKey: 'nav_admin', adminOnly: true, icon: <IconShield /> },
+  { to: '/broadcasts', labelKey: 'nav_broadcasts', managerOnly: true, icon: <IconSend /> },
+  { to: '/admin', labelKey: 'nav_more', managerOnly: true, icon: <IconGrid /> },
 ];
 
 export function Layout() {
   const auth = useAuth();
-  const isAdmin = auth.role === 'owner' || auth.role === 'admin';
-  const isManager = isAdmin || auth.role === 'mia';
+  const isAdmin = isAdminRole(auth.role);
+  const isManager = isManagerRole(auth.role);
   const visible = NAV.filter((item) => (!item.adminOnly || isAdmin) && (!item.managerOnly || isManager));
   const [mobileOpen, setMobileOpen] = useState(false);
   const drawer = usePresence(mobileOpen);
@@ -63,13 +60,13 @@ export function Layout() {
       </a>
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70">
         <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:gap-6">
-          <Link to={isManager ? '/' : '/inbox'} className="group flex items-center gap-2">
+          <Link to="/inbox" className="group flex items-center gap-2">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white shadow-sm transition group-hover:bg-brand-700" aria-hidden="true">
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 7l8 5 8-5M4 7v10l8 5 8-5V7M4 7l8-5 8 5" />
               </svg>
             </span>
-            <span className="text-base font-semibold text-slate-900 sm:text-lg">Karnaf <span className="text-brand-700">CRM</span><span className="ms-2 hidden rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 sm:inline">Manager</span></span>
+            <span className="text-base font-semibold text-slate-900 sm:text-lg">קרנף <span className="text-brand-700">CRM</span></span>
           </Link>
 
           <nav className="hidden items-center gap-1 md:flex" role="navigation" aria-label={t('app_name')}>
@@ -103,11 +100,12 @@ export function Layout() {
           </nav>
 
           <div className="ms-auto flex items-center gap-2 sm:gap-3">
+            <GlobalSearch />
             <div className="hidden items-center gap-3 sm:flex">
               <div className="text-end">
                 <div className="text-sm font-medium text-slate-700 leading-tight">{auth.user?.email}</div>
                 <div className="flex items-center justify-end gap-1.5 text-xs text-slate-500 leading-tight">
-                  <span>{auth.role}</span>
+                  <span>{roleLabel(auth.role)}</span>
                   {auth.role ? <RoleHelp role={auth.role} /> : null}
                 </div>
               </div>
@@ -178,7 +176,7 @@ export function Layout() {
               <div className="mt-2 flex items-center justify-between gap-3 border-t border-slate-100 px-3 pt-2">
                 <div className="min-w-0 text-sm">
                   <div className="truncate text-slate-700">{auth.user?.email}</div>
-                  <div className="text-xs text-slate-500">{auth.role}</div>
+                  <div className="text-xs text-slate-500">{roleLabel(auth.role)}</div>
                 </div>
                 <button type="button" className="kf-btn shrink-0" onClick={() => auth.signOut()}>{t('sign_out')}</button>
               </div>
@@ -212,14 +210,6 @@ function getInitials(email?: string | null): string {
   return parts.map((p) => p[0]).join('').toUpperCase();
 }
 
-function IconDashboard() {
-  return (
-    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
-      <rect x="3" y="3" width="6" height="8" rx="1.5" /><rect x="11" y="3" width="6" height="4" rx="1.5" />
-      <rect x="11" y="9" width="6" height="8" rx="1.5" /><rect x="3" y="13" width="6" height="4" rx="1.5" />
-    </svg>
-  );
-}
 function IconUsers() {
   return (
     <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
@@ -236,18 +226,19 @@ function IconInbox() {
     </svg>
   );
 }
-function IconChart() {
+function IconSend() {
   return (
     <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
-      <path strokeLinecap="round" d="M3 17V7M8 17V3M13 17v-7M18 17V9" />
+      <path strokeLinejoin="round" d="M17.5 2.5 2.5 8.6l6 2.3 2.3 6 6.7-14.4Z" />
+      <path strokeLinecap="round" d="m8.5 10.9 3.6-3.6" />
     </svg>
   );
 }
-function IconShield() {
+function IconGrid() {
   return (
     <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
-      <path d="M10 2.5l6 2.2v5.6c0 3.7-2.6 6.5-6 7.2-3.4-.7-6-3.5-6-7.2V4.7l6-2.2Z" />
-      <path strokeLinecap="round" d="m7.5 10 1.7 1.8L13 8" />
+      <rect x="3" y="3" width="5.5" height="5.5" rx="1.3" /><rect x="11.5" y="3" width="5.5" height="5.5" rx="1.3" />
+      <rect x="3" y="11.5" width="5.5" height="5.5" rx="1.3" /><rect x="11.5" y="11.5" width="5.5" height="5.5" rx="1.3" />
     </svg>
   );
 }

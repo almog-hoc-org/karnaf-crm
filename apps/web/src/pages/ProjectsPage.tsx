@@ -10,6 +10,7 @@ import { PageIntro } from '@/components/PageIntro';
 // Tier 7.C.1 — central labels.
 import { PROJECT_TYPE_LABELS, PROJECT_STATUS_LABELS } from '@/lib/format';
 import { Modal } from '@/components/Modal';
+import { LoadFailed } from '@/components/LoadFailed';
 const TYPE_LABELS = PROJECT_TYPE_LABELS as Record<ProjectType, string>;
 const STATUS_LABELS = PROJECT_STATUS_LABELS as Record<ProjectStatus, string>;
 
@@ -40,6 +41,9 @@ export function ProjectsPage() {
 
   return (
     <div className="space-y-4">
+      {projectsQ.error ? (
+        <LoadFailed error={projectsQ.error} onRetry={() => void projectsQ.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={projectsQ.isFetching} />
+      ) : null}
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">פרויקטי פריסייל</h1>
         <span className="text-sm text-slate-500">{projects.length} פרויקטים</span>

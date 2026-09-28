@@ -129,7 +129,7 @@ describe('DashboardPage', () => {
       ['ממתינים לתשובה', '3'],
       ['לידים חמים', '5'],
       ['ממתינים לתשלום', '2'],
-      ['סיכון SLA', '1'],
+      ['בסיכון איחור', '1'],
     ];
     for (const [label, value] of kpiPairs) {
       const labelNode = within(kpiSection).getByText(label);
@@ -179,7 +179,7 @@ describe('DashboardPage', () => {
     ]);
     renderDashboard();
     expect(await screen.findByText('⚠️ תהליכים מתוזמנים לא רצים')).toBeInTheDocument();
-    expect(screen.getByText(/ניטור SLA/)).toBeInTheDocument();
+    expect(screen.getByText(/מעקב זמני תגובה/)).toBeInTheDocument();
   });
 
   it('treats a worker that never reported as stale, not as healthy', async () => {

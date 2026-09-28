@@ -9,6 +9,7 @@ import { useToast } from '@/components/Toast';
 import { PageIntro } from '@/components/PageIntro';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
+import { LoadFailed } from '@/components/LoadFailed';
 
 const SLUG_RE = /^[a-z][a-z0-9_]{1,39}$/;
 
@@ -45,6 +46,9 @@ export function SourcesPage() {
 
   return (
     <div className="space-y-4">
+      {sourcesQ.error ? (
+        <LoadFailed error={sourcesQ.error} onRetry={() => void sourcesQ.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={sourcesQ.isFetching} />
+      ) : null}
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">מקורות לידים</h1>
         <span className="text-sm text-slate-500">
@@ -70,10 +74,10 @@ export function SourcesPage() {
         <table className="kf-table kf-table-responsive">
           <thead>
             <tr>
-              <th>Slug</th>
+              <th>מזהה</th>
               <th>שם תצוגה</th>
               <th>סדר</th>
-              <th>חוזי intake</th>
+              <th>חיבורי קליטה</th>
               <th>פעיל</th>
               <th>עדכון אחרון</th>
               <th>פעולות</th>
@@ -108,7 +112,7 @@ export function SourcesPage() {
                       }}
                     />
                   </td>
-                  <td data-label="חוזי intake">
+                  <td data-label="חיבורי קליטה">
                     <IntakeContractsCell source={s} />
                   </td>
                   <td data-label="פעיל">
@@ -149,7 +153,7 @@ export function SourcesPage() {
       <ConfirmDialog
         open={!!pendingDelete}
         title={`מחיקת מקור — ${pendingDelete?.slug ?? ''}`}
-        description="לידים קיימים שמשתמשים ב-slug הזה ימשיכו לעבוד. הסרת ה-slug רק מסירה אותו מרשימת ה-intake החוקיים. ניתן להחזיר ע״י יצירה מחדש."
+        description="לקוחות קיימים מהמקור הזה לא נפגעים. ההסרה רק מונעת כניסת לקוחות חדשים עם המזהה הזה. אפשר להחזיר ע״י יצירה מחדש."
         destructive
         confirmLabel="מחיקה"
         busy={del.isPending}
@@ -206,7 +210,7 @@ function CreateForm({
   return (
     <form onSubmit={submit} className="kf-card grid grid-cols-1 gap-3 p-4 sm:grid-cols-4">
       <label className="text-sm">
-        <span className="text-slate-600">Slug</span>
+        <span className="text-slate-600">מזהה</span>
         <input
           className="kf-input mt-1 ltr"
           placeholder="tiktok_ads"

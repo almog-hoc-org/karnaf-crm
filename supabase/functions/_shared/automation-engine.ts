@@ -591,19 +591,12 @@ export async function runMatchingRules(
       continue;
     }
     if (input.dryRun) continue;
-    if (!passes) {
-      await logAutomationRun(supabase, {
-        ruleCode: rule.code,
-        triggerEvent: input.triggerEvent,
-        contactId: input.contactId,
-        context: input.context,
-        status: 'skipped',
-        reason: 'conditions did not match',
-        durationMs: Date.now() - start,
-        correlationId: input.correlationId,
-      });
-      continue;
-    }
+    // A non-match is not a run. Logging one row per lead × rule × tick is
+    // the sla_breach flood again (migration 123): with the time rules
+    // live, ~300 leads × 5 rules every 10 minutes is ~200k rows a day of
+    // "conditions did not match". The rule tester's dry-run answers "why
+    // didn't it fire?"; automation_runs records what actually happened.
+    if (!passes) continue;
 
     const actions = Array.isArray(rule.actions) ? rule.actions : [];
     const results: ActionResult[] = [];

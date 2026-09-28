@@ -184,39 +184,42 @@ export async function applyOptOut(
   };
   if (scope !== 'all') return result;
 
-  try {
-    const { data: runs } = await supabase
+  // Each cleanup is best-effort and independent: a failure is logged and the
+  // next one still runs (dispatch-outbound's contact guard is the backstop).
+  // supabase-js reports failures in `error`, it does not throw — checking
+  // only for a throw hid that the journey cancel below had never matched a
+  // row: journey_runs keys the lead as contact_id (migration 067), not
+  // lead_id, so every opt-out left the lead's journeys running.
+  {
+    const { data: runs, error: runErr } = await supabase
       .from('journey_runs')
-      .update({ status: 'cancelled', cancellation_reason: 'opt_out' })
-      .eq('lead_id', input.leadId)
+      .update({ status: 'cancelled', cancellation_reason: 'opt_out', cancelled_at: nowIso })
+      .eq('contact_id', input.leadId)
       .eq('status', 'active')
       .select('id');
+    if (runErr) log.warn('opt_out_journey_cancel_failed', { fn: 'opt-out', leadId: input.leadId, err: runErr.message });
     result.cancelledJourneys = runs?.length ?? 0;
-  } catch (err) {
-    log.warn('opt_out_journey_cancel_failed', { fn: 'opt-out', leadId: input.leadId, err: String(err) });
   }
-  try {
-    const { data: rows } = await supabase
+  {
+    const { data: rows, error: dispatchErr } = await supabase
       .from('outbound_dispatch')
       .update({ status: 'failed', last_error: 'opt_out', failed_at: nowIso })
       .eq('lead_id', input.leadId)
       .in('status', ['pending', 'in_flight'])
       .eq('payload->>kind', 'template')
       .select('id');
+    if (dispatchErr) log.warn('opt_out_dispatch_cancel_failed', { fn: 'opt-out', leadId: input.leadId, err: dispatchErr.message });
     result.cancelledDispatches = rows?.length ?? 0;
-  } catch (err) {
-    log.warn('opt_out_dispatch_cancel_failed', { fn: 'opt-out', leadId: input.leadId, err: String(err) });
   }
-  try {
-    const { data: rows } = await supabase
+  {
+    const { data: rows, error: recipientErr } = await supabase
       .from('broadcast_recipients')
       .update({ status: 'skipped', error: 'opt_out' })
       .eq('lead_id', input.leadId)
       .in('status', ['pending', 'enqueued'])
       .select('id');
+    if (recipientErr) log.warn('opt_out_recipient_skip_failed', { fn: 'opt-out', leadId: input.leadId, err: recipientErr.message });
     result.skippedRecipients = rows?.length ?? 0;
-  } catch (err) {
-    log.warn('opt_out_recipient_skip_failed', { fn: 'opt-out', leadId: input.leadId, err: String(err) });
   }
 
   log.info('opt_out_applied', { fn: 'opt-out', leadId: input.leadId, basis: input.basis, channel: input.channel, ...result });

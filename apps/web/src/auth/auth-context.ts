@@ -3,6 +3,27 @@ import type { Session, User } from '@supabase/supabase-js';
 
 export type Role = 'owner' | 'admin' | 'mia' | 'sales_rep' | 'viewer';
 
+// What the header, the 🔒 page and the permissions help call each role.
+// The raw enum ("owner", "sales_rep") used to be printed as-is.
+export const ROLE_LABELS: Record<Role, string> = {
+  owner: 'בעלים',
+  admin: 'מנהל/ת',
+  mia: 'מפעיל/ת ראשי/ת',
+  sales_rep: 'נציג/ת מכירות',
+  viewer: 'צופה',
+};
+
+export function roleLabel(role: Role | null | undefined): string {
+  return role ? ROLE_LABELS[role] ?? role : 'לא ידוע';
+}
+
+// Manager = runs the business screens (reports, broadcasts, automations).
+// Admin = also system configuration and users.
+export const MANAGER_ROLES: Role[] = ['owner', 'admin', 'mia'];
+export const ADMIN_ROLES: Role[] = ['owner', 'admin'];
+export const isManagerRole = (role: Role | null | undefined): boolean => !!role && MANAGER_ROLES.includes(role);
+export const isAdminRole = (role: Role | null | undefined): boolean => !!role && ADMIN_ROLES.includes(role);
+
 export interface SignUpResult {
   error: string | null;
   needsEmailConfirmation: boolean;

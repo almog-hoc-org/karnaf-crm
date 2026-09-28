@@ -87,6 +87,23 @@ jobs:
               order by enabled desc, code""",
             'which rules the report is about')
 
+          q('lead.created rules', """
+              select code, name_he, enabled, source
+              from automation_rules
+              where trigger_event = 'lead.created'
+              order by enabled desc, code""",
+            'from the 28.9 round Facebook Lead Ads and webinar leads fire lead.created too; '
+            'enabled=true here = rules those leads now hit')
+
+          q('automation_runs size', """
+              select count(*) as total,
+                     count(*) filter (where reason = 'conditions did not match') as non_match,
+                     count(*) filter (where status = 'skipped'
+                                        and created_at < now() - interval '14 days') as old_skipped,
+                     count(*) filter (where created_at < now() - interval '90 days') as older_90d
+              from automation_runs""",
+            'migration 131 purges non_match + old_skipped + older_90d (20k per pass, nightly after)')
+
           # ── 3. Cron and the history drain ────────────────────────────
           q('cron jobs', """
               select jobid, jobname, schedule, active from cron.job order by jobid""",

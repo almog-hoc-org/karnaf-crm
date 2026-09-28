@@ -71,6 +71,8 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   test_alert_channels: ['owner', 'admin'],
 };
 
+const WON_TRACKS = new Set(['program', 'presale', 'investor_mentorship']);
+
 interface ActionPayload {
   action: ActionName;
   leadId?: string;
@@ -93,6 +95,8 @@ interface ActionPayload {
   snoozeUntil?: string;
   outcome?: 'program' | 'investor_mentorship' | 'consultation' | 'other' | null;
   outcomeNote?: string | null;
+  // mark_won: what was bought, used to open the deal when none is open.
+  wonTrack?: 'program' | 'presale' | 'investor_mentorship' | null;
   enabled?: boolean;
   metaUpdates?: {
     goal_summary?: string | null;
@@ -235,6 +239,7 @@ Deno.serve(async (req) => {
     snoozeUntil,
     outcome,
     outcomeNote,
+    wonTrack,
     enabled,
   } = body;
 
@@ -477,12 +482,12 @@ Deno.serve(async (req) => {
       break;
     }
     case 'mark_won': {
-      // Tier 5.B/C — refuse mark_won when no open deal exists.
-      // Without an open deal we have no track to start a journey for
-      // and no commission to create; the post-sale chain silently
-      // breaks. Better to fail loud at the API level and force the
-      // operator to create the deal first.
-      const { data: openDeal } = await supabase
+      // Without a deal there is no track to start the onboarding journey for
+      // and no commission to create, so the won chain needs one. It used to
+      // refuse ("create a deal first") and send the owner hunting for a
+      // collapsed card; now the operator says what was bought and the deal
+      // is opened here — the same rule set_outcome already follows.
+      const { data: existingDeal } = await supabase
         .from('deals')
         .select('id, track')
         .eq('lead_id', leadId)
@@ -490,9 +495,26 @@ Deno.serve(async (req) => {
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+      let openDeal = existingDeal as { id: string; track: string } | null;
+      if (!openDeal && wonTrack && WON_TRACKS.has(wonTrack)) {
+        const { data: createdDeal, error: createErr } = await supabase
+          .from('deals')
+          .insert({
+            lead_id: leadId,
+            track: wonTrack,
+            status: 'open',
+            stage: 'new',
+            source: 'manual_mark_won',
+            metadata: { correlationId },
+          })
+          .select('id, track')
+          .single();
+        if (createErr) return jsonResponse(req, { error: createErr.message }, 400);
+        openDeal = createdDeal as { id: string; track: string };
+      }
       if (!openDeal) {
         return jsonResponse(req, {
-          error: 'אין עסקה פתוחה לליד הזה. צור עסקה לפני סימון כסגירה כדי שהאוטומציות (מסע אונבורדינג, עמלות) יעבדו.',
+          error: 'אין עסקה פתוחה לליד הזה. בחרו מה נרכש כדי לסמן סגירה.',
           code: 'no_open_deal',
         }, 400);
       }

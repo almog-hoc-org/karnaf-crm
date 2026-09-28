@@ -163,7 +163,7 @@ export function buildAiUserPrompt(ctx: AiDecisionContext): string {
     `  - Use details from the recent conversation and summary; avoid repeating questions or claims already covered.`,
     `  - If the latest lead message is short (e.g. "שלום", "היי"), acknowledge naturally and continue from the known context instead of restarting the funnel.`,
     `  - If intakeSegment=needs_human, do not keep selling in chat; acknowledge briefly and create/keep human handoff.`,
-    `  - If intakeSegment=support_or_existing, avoid sales copy; route to Mia/support with a concise note.`,
+    `  - If intakeSegment=support_or_existing, avoid sales copy; hand off to the team (human support) with a concise note. Never name a specific staff member to the lead.`,
     `  - If intakeSegment=hot_sales, answer the last blocker and move toward payment or phone sales; do not over-educate.`,
     `  - If intakeSegment=needs_nurture/info_seeker, ask only one diagnostic question after a short useful answer.`,
   );

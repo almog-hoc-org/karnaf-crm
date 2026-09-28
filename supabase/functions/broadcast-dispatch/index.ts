@@ -19,6 +19,7 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
+import { chunk } from '../_shared/paginate.ts';
 import { enqueueAllowance, resolvePacing, shouldPauseBroadcast } from '../_shared/broadcast-pacing.ts';
 import { notifyOperator } from '../_shared/operator-alert.ts';
 import {
@@ -43,7 +44,10 @@ import { unsubscribeHeaders, unsubscribeUrl } from '../_shared/email-unsubscribe
 // of tripping Meta's messaging-limit tier; combined with LOW priority it
 // keeps the bot responsive.
 const MAX_BROADCASTS_PER_TICK = 3;
-const SEGMENT_FETCH_LIMIT = 5000;
+// Upper bound on one broadcast's audience. fetchSegmentLeads pages past the
+// API's 1,000-row cap, so this is a real ceiling now (a warning fires when
+// it's hit), not the silent 1,000 it used to be.
+const SEGMENT_FETCH_LIMIT = 20000;
 const BROADCAST_PRIORITY = 10;
 // Resend's default plan allows 2 requests/second. One send per recipient
 // means the dispatcher is the rate limiter; 600ms keeps a safety margin
@@ -128,12 +132,7 @@ Deno.serve(async (req) => {
             fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, cap: SEGMENT_FETCH_LIMIT,
           });
         }
-        if (leads.length > 0) {
-          await supabase.from('broadcast_recipients').upsert(
-            leads.map((l) => ({ broadcast_id: b.id, lead_id: l.id, status: 'pending' })),
-            { onConflict: 'broadcast_id,lead_id', ignoreDuplicates: true },
-          );
-        }
+        await materialiseRecipients(supabase, b.id as string, leads);
         await supabase.from('broadcasts')
           .update({ status: 'sending', recipients_count: leads.length, started_at: new Date().toISOString(), last_error: null })
           .eq('id', b.id);
@@ -277,7 +276,9 @@ Deno.serve(async (req) => {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error('broadcast_advance_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, err: message });
-      await supabase.from('broadcasts').update({ status: 'failed' }).eq('id', b.id);
+      await supabase.from('broadcasts')
+        .update({ status: 'failed', last_error: message.slice(0, 500), finished_at: new Date().toISOString() })
+        .eq('id', b.id);
     }
   }
 
@@ -302,14 +303,35 @@ Deno.serve(async (req) => {
 // linked messages rows (see broadcasts/index.ts recipientStats), so a
 // recipient is counted exactly once here.
 async function finalCounts(supabase: ReturnType<typeof getServiceSupabase>, broadcastId: string) {
-  const { data } = await supabase
-    .from('broadcast_recipients').select('status').eq('broadcast_id', broadcastId);
-  const rows = (data ?? []) as Array<{ status: string }>;
-  return {
-    sent: rows.filter((r) => r.status === 'sent').length,
-    failed: rows.filter((r) => r.status === 'failed').length,
-    skipped: rows.filter((r) => r.status === 'skipped').length,
+  // Head-only counts: reading the rows back was truncated at 1,000 by the
+  // API's max_rows, so a big broadcast reported the wrong totals.
+  const count = async (status: string) => {
+    const { count: n, error } = await supabase
+      .from('broadcast_recipients')
+      .select('id', { count: 'exact', head: true })
+      .eq('broadcast_id', broadcastId)
+      .eq('status', status);
+    if (error) throw error;
+    return n ?? 0;
   };
+  const [sent, failed, skipped] = await Promise.all([count('sent'), count('failed'), count('skipped')]);
+  return { sent, failed, skipped };
+}
+
+// Write the audience into broadcast_recipients in bounded batches. Idempotent
+// (a re-run after a crash mid-materialise only adds the missing rows).
+async function materialiseRecipients(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  broadcastId: string,
+  leads: Array<{ id: string }>,
+) {
+  for (const batch of chunk(leads)) {
+    const { error } = await supabase.from('broadcast_recipients').upsert(
+      batch.map((l) => ({ broadcast_id: broadcastId, lead_id: l.id, status: 'pending' })),
+      { onConflict: 'broadcast_id,lead_id', ignoreDuplicates: true },
+    );
+    if (error) throw error;
+  }
 }
 
 // Email broadcasts, both providers.
@@ -334,12 +356,12 @@ async function advanceEmailBroadcast(
       supabase, (b.segment ?? {}) as BroadcastSegment, SEGMENT_FETCH_LIMIT,
       { channel: 'email', requireEmailConsent: emailCfg.requireConsent },
     );
-    if (leads.length > 0) {
-      await supabase.from('broadcast_recipients').upsert(
-        leads.map((l) => ({ broadcast_id: broadcastId, lead_id: l.id, status: 'pending' })),
-        { onConflict: 'broadcast_id,lead_id', ignoreDuplicates: true },
-      );
+    if (leads.length === SEGMENT_FETCH_LIMIT) {
+      log.warn('broadcast_segment_capped', {
+        fn: 'broadcast-dispatch', correlationId, broadcastId, cap: SEGMENT_FETCH_LIMIT,
+      });
     }
+    await materialiseRecipients(supabase, broadcastId, leads);
     await supabase.from('broadcasts')
       .update({ status: 'sending', recipients_count: leads.length, started_at: new Date().toISOString(), last_error: null })
       .eq('id', broadcastId);

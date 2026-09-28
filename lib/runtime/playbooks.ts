@@ -86,7 +86,7 @@ export const PLAYBOOKS: Playbook[] = [
     guidance: [
       'הזכר את הערך בקצרה (1 משפט).',
       'הוסף את קריאה לפעולה ברורה.',
-      'אם יש חיכוך, הצע handoff למיה.',
+      'אם יש חיכוך, הצע שיחה עם הצוות (handoff לאדם).',
     ],
     forbidden: ['התחייבות לרכישה', 'הבטחת תוצאה'],
     allowedNextStatuses: ['checkout_pushed', 'human_handoff'],
@@ -94,10 +94,10 @@ export const PLAYBOOKS: Playbook[] = [
   {
     name: 'payment_pending_rescue',
     trigger: 'lead_status=payment_pending more than X hours',
-    objective: 'לסייע להשלים תשלום או להעביר למיה.',
+    objective: 'לסייע להשלים תשלום או להעביר לצוות.',
     guidance: [
       'שאל אם יש קושי טכני או החלטתי.',
-      'אם החלטתי - שלוף ל-Mia מיידית.',
+      'אם החלטתי - העבר לצוות (handoff לאדם) מיידית.',
     ],
     forbidden: ['לחץ אגרסיבי', 'הבטחת מבצע מיוחד'],
     allowedNextStatuses: ['won', 'human_handoff', 'lost'],
@@ -105,7 +105,7 @@ export const PLAYBOOKS: Playbook[] = [
   {
     name: 'phone_request',
     trigger: 'lead asks for a call or human',
-    objective: 'לאסוף את הבקשה ולסמן ל-Mia + phone escalation.',
+    objective: 'לאסוף את הבקשה ולסמן לצוות + phone escalation.',
     guidance: [
       'אישור קצר של הבקשה.',
       'הבטחה למעקב מיידי בשעות הפעילות.',

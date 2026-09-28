@@ -6,6 +6,7 @@ import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { PageIntro } from '@/components/PageIntro';
 import { Modal } from '@/components/Modal';
+import { LoadFailed } from '@/components/LoadFailed';
 
 // דפי נחיתה פנימיים: כל שורה כאן היא דף ציבורי חי ב-/api/lp/{slug}.
 // הרשמות מהדף נכנסות ישר ללידים עם source_campaign = הקמפיין של הדף,
@@ -32,6 +33,9 @@ export function LandingPagesPage() {
 
   return (
     <div className="space-y-4">
+      {pagesQ.error ? (
+        <LoadFailed error={pagesQ.error} onRetry={() => void pagesQ.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={pagesQ.isFetching} />
+      ) : null}
       <header className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">דפי נחיתה</h1>
         <button type="button" className="kf-btn kf-btn-primary" onClick={() => setEditing('new')}>

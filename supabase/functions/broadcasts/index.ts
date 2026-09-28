@@ -15,6 +15,7 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { countSegment, fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
+import { chunk, fetchAllPages } from '../_shared/paginate.ts';
 import { resolvePacing } from '../_shared/broadcast-pacing.ts';
 import { sanitizeEmailHtml } from '../_shared/email-html.ts';
 import { loadEmailChannel, preflightEmailChannel } from '../_shared/email-channel.ts';
@@ -238,6 +239,20 @@ Deno.serve(async (req) => {
       patch.template_key = body.template_key;
       patch.body_snapshot = await bodyForTemplate(supabase, body.template_key as string, channel);
     }
+    // Email content was create-only: a typo in a draft's subject meant
+    // deleting the draft and starting over. Same rules as create — the
+    // subject can't be emptied and the HTML is sanitized server-side.
+    if (body.subject !== undefined) {
+      const subject = (body.subject as string | null)?.trim() || null;
+      if (channel === 'email' && !subject) {
+        return jsonResponse(req, { error: 'תפוצת מייל דורשת שורת נושא' }, 400);
+      }
+      patch.subject = subject;
+    }
+    if (body.body_html !== undefined) {
+      const rawHtml = (body.body_html as string | null) ?? null;
+      patch.body_html = rawHtml ? sanitizeEmailHtml(rawHtml) : null;
+    }
     if (Object.keys(patch).length === 0) return jsonResponse(req, { error: 'no fields to update' }, 400);
     const { data, error } = await supabase.from('broadcasts').update(patch).eq('id', id).select('*').single();
     if (error) return jsonResponse(req, { error: error.message }, 400);
@@ -330,11 +345,34 @@ Deno.serve(async (req) => {
     if (!id) return jsonResponse(req, { error: 'id required' }, 400);
     const { data, error } = await supabase
       .from('broadcasts')
-      .update({ status: 'cancelled' })
+      .update({ status: 'cancelled', finished_at: new Date().toISOString() })
       .eq('id', id).in('status', ['scheduled', 'sending']).select('*').maybeSingle();
     if (error) return jsonResponse(req, { error: error.message }, 400);
     if (!data) return jsonResponse(req, { error: 'not found or not cancellable' }, 409);
-    return jsonResponse(req, { ok: true, broadcast: data });
+    // Cancelling used to stop only the NEXT enqueue: messages already in
+    // outbound_dispatch went out anyway, minutes after "בוטל". Pull the
+    // pending ones back (an in-flight send can't be recalled) and close
+    // the recipients that never got a message.
+    const { data: pulled, error: pullErr } = await supabase
+      .from('outbound_dispatch')
+      .update({ status: 'failed', last_error: 'broadcast_cancelled', failed_at: new Date().toISOString() })
+      .eq('payload->>broadcast_id', id)
+      .eq('status', 'pending')
+      .select('id');
+    if (pullErr) log.warn('broadcast_cancel_dispatch_failed', { fn: 'broadcasts', correlationId, id, err: pullErr.message });
+    const nowSkipped = { status: 'skipped', error: 'broadcast_cancelled' };
+    const { error: skipErr } = await supabase
+      .from('broadcast_recipients').update(nowSkipped)
+      .eq('broadcast_id', id).eq('status', 'pending');
+    if (skipErr) log.warn('broadcast_cancel_recipients_failed', { fn: 'broadcasts', correlationId, id, err: skipErr.message });
+    for (const batch of chunk((pulled ?? []).map((r) => r.id as string), 200)) {
+      const { error: pulledErr } = await supabase
+        .from('broadcast_recipients').update(nowSkipped)
+        .eq('broadcast_id', id).eq('status', 'enqueued').in('dispatch_id', batch);
+      if (pulledErr) log.warn('broadcast_cancel_recipients_failed', { fn: 'broadcasts', correlationId, id, err: pulledErr.message });
+    }
+    log.info('broadcast_cancelled', { fn: 'broadcasts', correlationId, id, by: staff.userId, pulledDispatches: pulled?.length ?? 0 });
+    return jsonResponse(req, { ok: true, broadcast: data, pulled_dispatches: pulled?.length ?? 0 });
   }
 
   if (action === 'delete') {
@@ -354,11 +392,17 @@ async function recipientStats(
   supabase: ReturnType<typeof getServiceSupabase>,
   broadcastId: string,
 ) {
-  const { data } = await supabase
-    .from('broadcast_recipients')
-    .select('status, sent_at, messages(delivered_at, read_at, provider_status)')
-    .eq('broadcast_id', broadcastId);
-  const rows = (data ?? []) as unknown as Array<{
+  // Paged: a single read stops at the API's 1,000-row cap, so every
+  // broadcast above 1,000 recipients showed 1,000 as its total.
+  const data = await fetchAllPages<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('broadcast_recipients')
+      .select('id, status, sent_at, messages(delivered_at, read_at, provider_status)')
+      .eq('broadcast_id', broadcastId)
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+  const rows = data as unknown as Array<{
     status: string;
     messages: { delivered_at: string | null; read_at: string | null; provider_status: string | null } | null;
   }>;

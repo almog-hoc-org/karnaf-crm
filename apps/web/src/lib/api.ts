@@ -437,6 +437,8 @@ export async function postAdminAction(payload: {
   targetStatus?: ReopenTarget;
   dealId?: string | null;
   targetStage?: string;
+  // mark_won: what was bought — opens the deal when none is open.
+  wonTrack?: 'program' | 'presale' | 'investor_mentorship' | null;
   callOutcome?: CallOutcome;
   callDurationMinutes?: number;
   meetingType?: MeetingRow['meeting_type'];

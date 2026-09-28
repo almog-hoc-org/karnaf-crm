@@ -12,6 +12,7 @@ vi.mock('@/lib/api', () => ({
   postQueueResolve: vi.fn(),
   postSendReply: vi.fn(async () => ({ ok: true, mode: 'sent' })),
   fetchMessageTemplates: vi.fn(async () => ({ templates: [] })),
+  fetchHeartbeats: vi.fn(async () => []),
 }));
 
 const mockedFetchAttentionInbox = vi.mocked(fetchAttentionInbox);
@@ -85,13 +86,11 @@ describe('InboxPage', () => {
   it('shows first-day operating guidance for employees', async () => {
     renderInbox();
 
-    expect(screen.getByRole('heading', { name: 'היום שלי' })).toBeInTheDocument();
-    expect(screen.getByText('הדרך הקצרה לעבודה נכונה')).toBeInTheDocument();
-    expect(screen.getByText('פותחים כרטיס, מטפלים, וסוגרים — בלי לחפש ידנית.')).toBeInTheDocument();
-    expect(screen.getByText('לטפל לפי דחיפות')).toBeInTheDocument();
-    expect(screen.getByText('פותחים את הליד')).toBeInTheDocument();
-    expect(screen.getByText('סוגרים נכון')).toBeInTheDocument();
-    expect(screen.getByText(/הוחזר ל-AI/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'היום' })).toBeInTheDocument();
+    expect(screen.getByText('איך עובדים כאן?')).toBeInTheDocument();
+    expect(screen.getByText('לפי דחיפות')).toBeInTheDocument();
+    expect(screen.getByText('פותחים את הלקוח')).toBeInTheDocument();
+    expect(screen.getByText(/הוחזר לבוט/)).toBeInTheDocument();
   });
 
   it('opens the lane requested in the URL', () => {
@@ -155,7 +154,7 @@ describe('InboxPage', () => {
       leadId: '11111111-1111-1111-1111-111111111111',
       callOutcome: 'no_answer',
       callDurationMinutes: 0,
-      note: 'סומן אין מענה מתוך היום שלי',
+      note: 'סומן אין מענה מתוך מסך היום',
     }));
   });
 
@@ -298,7 +297,9 @@ describe('InboxPage', () => {
 
     renderInbox();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'סיווג ⚡' }));
+    // Classification is a secondary action: behind the card's "עוד ⋯".
+    fireEvent.click(await screen.findByRole('button', { name: 'עוד ⋯' }));
+    fireEvent.click(screen.getByRole('button', { name: 'סיווג ⚡' }));
     fireEvent.click(screen.getByRole('button', { name: 'חם' }));
 
     await waitFor(() => expect(mockedPostAdminAction).toHaveBeenCalledWith({
@@ -322,7 +323,7 @@ describe('InboxPage', () => {
     await waitFor(() => expect(mockedPostAdminAction).toHaveBeenCalledWith({
       action: 'mark_reviewed',
       leadId: '44444444-4444-4444-4444-444444444444',
-      note: 'טופל מתוך היום שלי',
+      note: 'טופל מתוך מסך היום',
     }));
   });
 
@@ -344,7 +345,41 @@ describe('InboxPage', () => {
 
     renderInbox('/inbox', 'sales_rep');
 
-    expect(await screen.findByText('נועה בר')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'עוד ⋯' }));
     expect(screen.queryByRole('button', { name: 'סיווג ⚡' })).not.toBeInTheDocument();
+  });
+
+  // One customer, three open items (waiting reply + handoff task + first
+  // response task) used to be three cards that read as three customers.
+  it('shows one card per lead and counts the other open items on it', async () => {
+    mockedFetchAttentionInbox.mockResolvedValue([
+      replyRow(),
+      replyRow({ kind: 'queue', ref_id: 'q-handoff', queue_type: 'human_handoff', reason: 'הועבר לטיפול אנושי' }),
+      replyRow({ kind: 'queue', ref_id: 'q-first', queue_type: 'first_response_due', reason: 'נדרש מענה ראשוני' }),
+    ]);
+
+    renderInbox();
+
+    expect(await screen.findAllByText('נועה בר')).toHaveLength(1);
+    expect(screen.getByText('+2 פתוחים נוספים ללקוח הזה')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'טופל ✓' })).toHaveLength(1);
+    // The "הכל" lane counts customers, not rows.
+    expect(screen.getByRole('button', { name: /^הכל/ })).toHaveTextContent('1');
+  });
+
+  it('keeps secondary actions behind the card menu', async () => {
+    mockedFetchAttentionInbox.mockResolvedValue([replyRow()]);
+
+    renderInbox();
+
+    expect(await screen.findByRole('button', { name: 'השב כאן 💬' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'טופל ✓' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'ללא פנייה יזומה' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /פתיחת WhatsApp/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'עוד ⋯' }));
+    expect(screen.getByRole('button', { name: 'ללא פנייה יזומה' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'פתיחת WhatsApp עבור נועה בר' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'פתיחת כרטיס לקוח' })).toHaveAttribute('href', '/leads/44444444-4444-4444-4444-444444444444');
   });
 });
