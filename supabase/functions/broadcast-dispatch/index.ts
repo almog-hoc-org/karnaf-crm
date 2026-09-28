@@ -28,7 +28,8 @@ import {
   createRavmesserMessage,
   sendRavmesserMessage,
 } from '../_shared/ravmesser.ts';
-import { renderEmailHtml, sanitizeEmailHtml, wrapEmailShell } from '../_shared/email-html.ts';
+import { sanitizeEmailHtml, wrapEmailShell } from '../_shared/email-html.ts';
+import { broadcastBodyHtml, broadcastSubject, renderBroadcastEmail } from '../_shared/broadcast-email.ts';
 import {
   type EmailChannelConfig,
   formatFromAddress,
@@ -36,7 +37,6 @@ import {
   preflightEmailChannel,
 } from '../_shared/email-channel.ts';
 import { sendResendEmail } from '../_shared/resend.ts';
-import { unsubscribeHeaders, unsubscribeUrl } from '../_shared/email-unsubscribe.ts';
 
 // How many broadcasts to advance per tick. The per-tick enqueue rate and
 // the rolling-24h cap come from crm_config 'broadcast_pacing' (see
@@ -426,16 +426,6 @@ function emailSkipReason(
   return null;
 }
 
-/** The campaign body, ready to personalise per recipient. */
-function broadcastBodyHtml(b: Record<string, unknown>): string {
-  return (b.body_html as string | null) ??
-    `<p>${String(b.body_snapshot ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br />')}</p>`;
-}
-
-function broadcastSubject(b: Record<string, unknown>): string {
-  return String(b.subject ?? b.name ?? 'עדכון מקרנף נדל"ן');
-}
-
 // Resend path: one email per recipient, sent by us.
 //   scheduled → recipients materialised (above),
 //   each tick sends up to the pacing allowance, spaced for the rate limit,
@@ -454,8 +444,6 @@ async function advanceResendBroadcast(
 ): Promise<number> {
   const broadcastId = b.id as string;
   const from = formatFromAddress(emailCfg);
-  const subject = broadcastSubject(b);
-  const bodyHtml = broadcastBodyHtml(b);
   let sentThisTick = 0;
 
   if (allowance > 0) {
@@ -471,25 +459,17 @@ async function advanceResendBroadcast(
       }
       if (index > 0) await new Promise((resolve) => setTimeout(resolve, RESEND_SEND_SPACING_MS));
 
-      const fullName = lead?.full_name ?? '';
-      const personalised = renderEmailHtml(bodyHtml, {
-        first_name: fullName.split(' ')[0] ?? '',
-        full_name: fullName,
-      });
-      const optOutUrl = await unsubscribeUrl(r.lead_id, broadcastId);
-      const html = wrapEmailShell(
-        sanitizeEmailHtml(personalised),
-        emailCfg.fromName,
-        { unsubscribeUrl: optOutUrl },
+      const rendered = await renderBroadcastEmail(
+        b, { leadId: r.lead_id, fullName: lead?.full_name ?? null }, emailCfg.fromName,
       );
 
       const result = await sendResendEmail({
         from,
         to: lead!.email as string,
-        subject,
-        html,
+        subject: rendered.subject,
+        html: rendered.html,
         replyTo: emailCfg.replyTo || undefined,
-        headers: unsubscribeHeaders(optOutUrl),
+        headers: rendered.headers,
         tags: [{ name: 'broadcast_id', value: broadcastId }, { name: 'lead_id', value: r.lead_id }],
         // Resend dedupes an identical key for 24h, so a crash between the
         // send and the status write can never send the same person twice.

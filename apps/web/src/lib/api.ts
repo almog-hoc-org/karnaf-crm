@@ -876,6 +876,30 @@ export async function postUpdateEmailChannel(payload: EmailChannelConfig) {
   });
 }
 
+export interface EmailChannelStatus {
+  ok: true;
+  emailChannel: EmailChannelConfig;
+  readyToSend: boolean;
+  preflight: { ok: boolean; code?: string; error?: string };
+  senderDomain: string;
+  domains: Array<{ name: string; status: string }>;
+  domainsError: string | null;
+  suggestedFromEmail: string | null;
+}
+
+/** What Resend itself says about the sending domains + whether a campaign can go out. */
+export async function fetchEmailChannelStatus() {
+  return getJson<EmailChannelStatus>('/email-channel-status');
+}
+
+/** One test email to the signed-in owner's own address (never to a customer). */
+export async function postEmailTestSend(broadcastId?: string) {
+  return postJson<{ ok: true; to: string; id: string | null; subject: string }>('/email-channel-status', {
+    action: 'test_send',
+    ...(broadcastId ? { broadcast_id: broadcastId } : {}),
+  });
+}
+
 export async function postUpdateSafetyNet(payload: SafetyNetConfig) {
   return postJson<{ ok: true }>('/runtime-config', { action: 'update_ai_safety_net', ...payload });
 }
