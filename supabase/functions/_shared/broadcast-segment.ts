@@ -6,6 +6,7 @@
 // worker (materialise recipients).
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { fetchAllPages } from './paginate.ts';
 
 export interface BroadcastSegment {
   source?: string | null;
@@ -67,6 +68,11 @@ export function applySegment<T>(query: T, segment: BroadcastSegment, opts: Segme
     // WhatsApp is the default channel; a lead with no phone is counted in
     // the preview and then skipped at send time — the numbers never matched.
     q = q.not('phone', 'is', null);
+    // An explicit WhatsApp opt-out (the lead page / bulk "הסכמת דיוור")
+    // excludes the lead. NULL means "never recorded" and stays reachable,
+    // same rule as contact-guard. `IS NOT FALSE` keeps NULL and true, and
+    // avoids a second .or() next to the snooze one.
+    q = q.not('consent_whatsapp', 'is', false);
   }
   for (const field of ALLOWED_FIELDS) {
     const value = segment?.[field];
@@ -96,19 +102,26 @@ export async function countSegment(
   return count ?? 0;
 }
 
-// Fetch a page of leads matching a segment (id + display fields).
+// Fetch every lead matching a segment (id + display fields), up to `limit`.
+// Pages past the API's 1,000-row cap (config.toml max_rows): a single
+// `.limit(5000)` request used to come back with 1,000 rows and no error.
 export async function fetchSegmentLeads(
   supabase: SupabaseClient,
   segment: BroadcastSegment,
   limit = 1000,
   opts: SegmentChannelOptions = {},
 ): Promise<Array<{ id: string; full_name: string | null; phone: string | null; email: string | null }>> {
-  const base = supabase
-    .from('leads')
-    .select('id, full_name, phone, email')
-    .order('created_at', { ascending: true })
-    .limit(limit);
-  const { data, error } = await applySegment(base, segment, opts);
-  if (error) throw error;
-  return (data ?? []) as Array<{ id: string; full_name: string | null; phone: string | null; email: string | null }>;
+  return await fetchAllPages<{ id: string; full_name: string | null; phone: string | null; email: string | null }>(
+    (from, to) => applySegment(
+      supabase
+        .from('leads')
+        .select('id, full_name, phone, email')
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+      segment,
+      opts,
+    ),
+    { max: limit },
+  );
 }

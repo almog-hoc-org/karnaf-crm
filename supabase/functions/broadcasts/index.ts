@@ -15,6 +15,7 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { countSegment, fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
+import { fetchAllPages } from '../_shared/paginate.ts';
 import { resolvePacing } from '../_shared/broadcast-pacing.ts';
 import { sanitizeEmailHtml } from '../_shared/email-html.ts';
 import { loadEmailChannel, preflightEmailChannel } from '../_shared/email-channel.ts';
@@ -354,11 +355,17 @@ async function recipientStats(
   supabase: ReturnType<typeof getServiceSupabase>,
   broadcastId: string,
 ) {
-  const { data } = await supabase
-    .from('broadcast_recipients')
-    .select('status, sent_at, messages(delivered_at, read_at, provider_status)')
-    .eq('broadcast_id', broadcastId);
-  const rows = (data ?? []) as unknown as Array<{
+  // Paged: a single read stops at the API's 1,000-row cap, so every
+  // broadcast above 1,000 recipients showed 1,000 as its total.
+  const data = await fetchAllPages<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('broadcast_recipients')
+      .select('id, status, sent_at, messages(delivered_at, read_at, provider_status)')
+      .eq('broadcast_id', broadcastId)
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+  const rows = data as unknown as Array<{
     status: string;
     messages: { delivered_at: string | null; read_at: string | null; provider_status: string | null } | null;
   }>;
