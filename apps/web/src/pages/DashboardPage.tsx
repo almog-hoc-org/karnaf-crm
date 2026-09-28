@@ -166,7 +166,7 @@ function todayPriority(summary: DashboardSummary, queues: QueueRow[]) {
   if (summary.slaRiskCount > 0) {
     return {
       title: `יש ${summary.slaRiskCount} פריטי סיכון שדורשים בדיקה`,
-      detail: 'בדקי קודם פריטים בסיכון SLA או אוטומציה תקועה, כדי לוודא שאף ליד לא נופל בין הכיסאות.',
+      detail: 'קודם פריטים בסיכון איחור או אוטומציה תקועה, כדי שאף לקוח לא ייפול בין הכיסאות.',
       cta: 'לפתוח פריטי סיכון',
       href: '/inbox?lane=risk',
     };

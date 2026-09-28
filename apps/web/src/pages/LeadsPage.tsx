@@ -338,7 +338,7 @@ function leadListGuidance(lead: LeadRow) {
   if (lead.ownership_mode === 'ai_active') {
     return {
       label: 'AI מטפל',
-      detail: 'אין צורך להתערב כרגע. המערכת ממשיכה את השיחה לפי ה-playbook הפעיל.',
+      detail: 'אין צורך להתערב כרגע. הבוט ממשיך את השיחה לפי התסריט הפעיל.',
       tone: 'kf-tone-info',
     };
   }

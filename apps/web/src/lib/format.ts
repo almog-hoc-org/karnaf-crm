@@ -274,7 +274,7 @@ function landingPagePath(value: string | null | undefined): string | null {
 export const QUEUE_LABELS: Record<string, string> = {
   first_response_due: 'מענה ראשוני',
   hot_lead: 'ליד חם',
-  sla_risk: 'סיכון SLA',
+  sla_risk: 'בסיכון איחור',
   human_handoff: 'העברת ליד לאדם',
   payment_pending: 'ממתין לתשלום',
   phone_escalation: 'מועמד לשיחה',
@@ -284,7 +284,7 @@ export const QUEUE_LABELS: Record<string, string> = {
   weekend_carryover: 'העברה לאחרי סוף שבוע',
   low_fit_cleanup: 'ניקוי לידים לא מתאימים',
   manual_review_required: 'בדיקה ידנית',
-  ai_stuck: 'AI תקוע',
+  ai_stuck: 'הבוט תקוע',
   whatsapp_topic_unselected: 'וואטסאפ — לא בחר נושא',
   whatsapp_human_requested: 'וואטסאפ — ביקש נציג',
   presale_followup_due: 'פריסייל — טיפול נציג',

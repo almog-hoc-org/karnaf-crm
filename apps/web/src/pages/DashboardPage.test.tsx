@@ -129,7 +129,7 @@ describe('DashboardPage', () => {
       ['ממתינים לתשובה', '3'],
       ['לידים חמים', '5'],
       ['ממתינים לתשלום', '2'],
-      ['סיכון SLA', '1'],
+      ['בסיכון איחור', '1'],
     ];
     for (const [label, value] of kpiPairs) {
       const labelNode = within(kpiSection).getByText(label);

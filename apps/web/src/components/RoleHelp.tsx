@@ -7,8 +7,8 @@ const ROLE_PERMISSIONS: Record<Role, { label: string; can: string[]; cannot: str
     can: [
       'גישה מלאה: דאשבורד, לידים, תור, ניתוח, ניהול משתמשים, ניהול פרומפטים',
       'יצירת משתמשים חדשים והגדרת תפקידים',
-      'סימון לידים כסגירה / אבוד / DNC',
-      'עריכת A/B prompt variants',
+      'סימון לקוחות כסגירה / לא רלוונטי / לא ליצור קשר',
+      'עריכת תסריטי הבוט וניסויים ביניהם',
     ],
     cannot: ['שינוי הגדרות בסיס נתונים (דורש הרשאות supabase)'],
   },
@@ -17,8 +17,8 @@ const ROLE_PERMISSIONS: Record<Role, { label: string; can: string[]; cannot: str
     can: [
       'גישה מלאה לתפעול שוטף',
       'יצירה ועריכה של משתמשים אחרים',
-      'עריכת A/B prompt variants',
-      'סימון won / lost / DNC',
+      'עריכת תסריטי הבוט וניסויים ביניהם',
+      'סימון סגירה / לא רלוונטי / לא ליצור קשר',
     ],
     cannot: ['ביטול חשבון בעלים'],
   },
@@ -27,9 +27,9 @@ const ROLE_PERMISSIONS: Record<Role, { label: string; can: string[]; cannot: str
     can: [
       'דאשבורד, לידים, תור, ניתוח',
       'שליחת הודעות ידניות, תיעוד שיחות טלפון',
-      'סימון won / lost / DNC, העברת לידים בין AI לטיפול אנושי',
+      'סימון סגירה / לא רלוונטי / לא ליצור קשר, העברה בין הבוט לטיפול אישי',
     ],
-    cannot: ['ניהול משתמשים', 'עריכת prompt variants'],
+    cannot: ['ניהול משתמשים', 'עריכת תסריטי הבוט'],
   },
   sales_rep: {
     label: 'נציג/ת מכירות',
@@ -38,7 +38,7 @@ const ROLE_PERMISSIONS: Record<Role, { label: string; can: string[]; cannot: str
       'שליחת הודעות ידניות',
       'תיעוד שיחות טלפון',
     ],
-    cannot: ['סימון won / lost / DNC', 'גישה לניהול משתמשים', 'עריכת prompt variants'],
+    cannot: ['סימון סגירה / לא רלוונטי / לא ליצור קשר', 'גישה לניהול משתמשים', 'עריכת תסריטי הבוט'],
   },
   viewer: {
     label: 'צופה',

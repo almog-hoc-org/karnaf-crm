@@ -1465,7 +1465,7 @@ function PipelineOverviewCard({
           })}
         </ul>
       ) : (
-        <p className="mt-3 text-sm text-slate-500">עדיין אין Deal פתוח/היסטורי לליד הזה.</p>
+        <p className="mt-3 text-sm text-slate-500">עדיין אין עסקה ללקוח הזה.</p>
       )}
     </div>
   );
@@ -1538,7 +1538,7 @@ function ScheduleMeetingForm({
           <input className="kf-input mt-1" type="number" min={5} max={240} value={duration} onChange={(e) => setDuration(e.target.value)} />
         </label>
         <label className="block">
-          <span className="text-slate-600">Deal לקישור</span>
+          <span className="text-slate-600">עסקה לקישור</span>
           <select className="kf-input mt-1" value={dealId} onChange={(e) => setDealId(e.target.value)}>
             <option value="">ללא קישור</option>
             {deals.map((deal) => (
@@ -1698,11 +1698,11 @@ function leadResolutionGuide(
       {
         title: 'לא לפנות יותר',
         when: 'הלקוח ביקש הסרה, חסימה או שלא יצרו איתו קשר.',
-        action: 'להשאיר DNC/הוסר פעיל. לא לשלוח הודעה ולא להחזיר ל-AI.',
+        action: 'להשאיר את החסימה בתוקף. לא לשלוח הודעה ולא להחזיר לבוט.',
       },
       {
         title: 'חריג בלבד',
-        when: 'רק אם הלקוח פונה מחדש בעצמו או שסימון DNC היה טעות.',
+        when: 'רק אם הלקוח פונה מחדש בעצמו או שסימון ״לא ליצור קשר״ היה טעות.',
         action: 'בעלים/אדמין פותח מחדש במודע ומתעד סיבה.',
       },
     ];
@@ -1742,7 +1742,7 @@ function leadResolutionGuide(
     {
       title: 'לסגור / לסמן כאבוד',
       when: 'הלקוח לא רלוונטי, לא מתאים, ביקש לא לפנות, או אין המשך מסחרי.',
-      action: 'לא להשאיר במעקב עמום: לסמן Lost או DNC לפי המקרה.',
+      action: 'לא להשאיר במעקב עמום: לסמן ״לא רלוונטי״ או ״לא ליצור קשר״ לפי המקרה.',
     },
   ];
 }

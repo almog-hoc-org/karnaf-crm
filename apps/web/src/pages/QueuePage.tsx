@@ -134,9 +134,9 @@ export function QueuePage() {
                   <td data-primary>
                     <strong>{queueDisplayLabel(row)}</strong>
                     {sla.state === 'overdue' ? (
-                      <span className="ms-2 inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">SLA</span>
+                      <span className="ms-2 inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">זמן תגובה</span>
                     ) : sla.state === 'warning' ? (
-                      <span className="ms-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">בקרוב SLA</span>
+                      <span className="ms-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">מתקרב לאיחור</span>
                     ) : null}
                   </td>
                   <td data-label="ליד">

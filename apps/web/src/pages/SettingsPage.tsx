@@ -242,7 +242,7 @@ function SlaThresholdsCard({
   useEffect(() => { if (value) setDraft(value); }, [value]);
   const save = useMutation({
     mutationFn: postUpdateSlaThresholds,
-    onSuccess: () => { onSaved(); toast.success('ספי SLA נשמרו'); },
+    onSuccess: () => { onSaved(); toast.success('ספי זמני התגובה נשמרו'); },
     onError: (err) => toast.error((err as Error).message),
   });
   return (
@@ -251,7 +251,7 @@ function SlaThresholdsCard({
       onSubmit={(e) => { e.preventDefault(); save.mutate(draft); }}
     >
       <div>
-        <h2 className="text-lg font-semibold">ספי SLA</h2>
+        <h2 className="text-lg font-semibold">ספי זמני תגובה</h2>
         <p className="mt-1 text-sm text-slate-500">מתי ליד בלי מענה נחשב באזהרה / אזהרה גבוהה / חריגה. הסדר חייב להיות עולה.</p>
       </div>
       {loading ? (
@@ -357,7 +357,7 @@ function EmailChannelCard({
               />
             </label>
             <label className="block text-sm">
-              <span className="mb-1 block text-slate-600">כתובת לתשובות (Reply-To)</span>
+              <span className="mb-1 block text-slate-600">כתובת שאליה יגיעו תשובות</span>
               <input
                 className="kf-input w-full"
                 dir="ltr"
@@ -498,7 +498,7 @@ function WhatsAppTemplateReadiness({
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-xl bg-slate-50 p-3 text-sm">
-            <div className="text-slate-500">שם תבנית fallback</div>
+            <div className="text-slate-500">שם תבנית גיבוי</div>
             <code className="mt-1 block text-slate-900" dir="ltr">{session?.fallbackTemplateName || '—'}</code>
           </div>
           <div className="rounded-xl bg-slate-50 p-3 text-sm">

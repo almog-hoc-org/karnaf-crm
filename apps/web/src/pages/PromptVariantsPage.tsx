@@ -331,7 +331,7 @@ function CreateVariantForm({
   return (
     <form onSubmit={submit} className="kf-card grid grid-cols-1 items-end gap-3 p-4 sm:grid-cols-2 md:grid-cols-6">
       <label className="block text-sm md:col-span-2">
-        <span className="text-slate-700">Playbook</span>
+        <span className="text-slate-700">תסריט</span>
         <select className="kf-input mt-1" value={playbook} onChange={(e) => setPlaybook(e.target.value as PlaybookName)}>
           {PLAYBOOKS.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
