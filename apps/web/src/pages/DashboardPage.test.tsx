@@ -179,7 +179,7 @@ describe('DashboardPage', () => {
     ]);
     renderDashboard();
     expect(await screen.findByText('⚠️ תהליכים מתוזמנים לא רצים')).toBeInTheDocument();
-    expect(screen.getByText(/ניטור SLA/)).toBeInTheDocument();
+    expect(screen.getByText(/מעקב זמני תגובה/)).toBeInTheDocument();
   });
 
   it('treats a worker that never reported as stale, not as healthy', async () => {

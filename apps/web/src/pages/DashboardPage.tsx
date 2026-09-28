@@ -1,25 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
-import { fetchDashboardSummary, fetchHeartbeats, fetchQueueList } from '@/lib/api';
+import { fetchDashboardSummary, fetchQueueList } from '@/lib/api';
 import type { DashboardSummary, QueueRow } from '@/lib/types';
 import { QUEUE_LABELS } from '@/lib/format';
 import { Link } from 'react-router-dom';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
-import { useAuth } from '@/auth/auth-context';
+import { isAdminRole, useAuth } from '@/auth/auth-context';
 import { WelcomeCard } from '@/components/WelcomeCard';
+import { SystemHealthBanner } from '@/components/SystemHealthBanner';
 
 export function DashboardPage() {
   const auth = useAuth();
   const summaryQ = useQuery({ queryKey: ['dashboard-summary'], queryFn: fetchDashboardSummary });
   const queueQ = useQuery({ queryKey: ['queue', 'pending'], queryFn: () => fetchQueueList({ status: 'pending' }) });
-  // Tier 7.B.3 — heartbeat health check. Refetches every minute so
-  // the banner appears within a tick or two of cron drift. RLS-gated
-  // to staff via system_heartbeats select policy.
-  const heartbeatsQ = useQuery({
-    queryKey: ['heartbeats'],
-    queryFn: fetchHeartbeats,
-    refetchInterval: 60_000,
-  });
   useDocumentTitle(t('dashboard_title'));
 
   if (summaryQ.isLoading) return <p className="text-slate-500">{t('loading')}</p>;
@@ -27,71 +20,9 @@ export function DashboardPage() {
 
   const s = summaryQ.data!;
 
-  // Heartbeat health. Every scheduled worker that can silently stop is
-  // watched, with a threshold matched to its cron cadence — the banner
-  // used to watch automation_tick alone, so a dead SLA worker or a
-  // nightly job that stopped running was invisible.
-  //
-  // A MISSING row counts as stale: a worker that has never once succeeded
-  // is the most broken state there is, and it used to read as healthy.
-  const WATCHED_WORKERS: Array<{ name: string; label: string; maxAgeMs: number }> = [
-    { name: 'automation_tick', label: 'מנוע אוטומציות', maxAgeMs: 15 * 60_000 },
-    { name: 'sla_worker', label: 'ניטור SLA', maxAgeMs: 30 * 60_000 },
-    { name: 'ai_watchdog', label: 'שומר AI', maxAgeMs: 20 * 60_000 },
-    { name: 'nightly_jobs', label: 'עבודות לילה', maxAgeMs: 26 * 60 * 60_000 },
-  ];
-  // An EMPTY result is not four dead workers — it is far more likely an RLS
-  // filter or a failed request, and rendering "כל התהליכים לא רצים" over a
-  // perfectly healthy system is worse than saying nothing, because it
-  // teaches the operator to ignore the banner. Distinguish the two.
-  const heartbeatsUnavailable = !!heartbeatsQ.error
-    || (Array.isArray(heartbeatsQ.data) && heartbeatsQ.data.length === 0);
-  const staleWorkers = heartbeatsQ.data && !heartbeatsUnavailable
-    ? WATCHED_WORKERS.filter((w) => {
-      const hb = heartbeatsQ.data!.find((h) => h.name === w.name);
-      if (!hb) return true;
-      return Date.now() - Date.parse(hb.last_ok_at) > w.maxAgeMs;
-    })
-    : [];
-  const heartbeatStale = staleWorkers.length > 0;
-  const lastOkFor = (name: string) => heartbeatsQ.data?.find((h) => h.name === name)?.last_ok_at ?? null;
-
   return (
     <div className="space-y-4 sm:space-y-6">
-      {heartbeatsUnavailable ? (
-        <section className="kf-tone-warning rounded-xl p-4 text-sm ring-1 ring-inset" role="status">
-          <strong className="block text-base">מצב התהליכים המתוזמנים לא זמין</strong>
-          <p className="mt-1">
-            לא הצלחנו לקרוא את דיווחי החיים של העובדים. ייתכן שזו תקלת הרשאות או תקלת רשת —
-            זה לא אומר שהתהליכים אינם רצים.
-          </p>
-        </section>
-      ) : null}
-      {heartbeatStale ? (
-        <section className="kf-tone-danger rounded-xl p-4 text-sm ring-1 ring-inset" role="alert">
-          <div className="flex items-baseline justify-between gap-3">
-            <div>
-              <strong className="block text-base">⚠️ תהליכים מתוזמנים לא רצים</strong>
-              <ul className="mt-1 space-y-0.5 text-sm">
-                {staleWorkers.map((w) => {
-                  const lastOk = lastOkFor(w.name);
-                  return (
-                    <li key={w.name}>
-                      {w.label} — ריצה אחרונה:{' '}
-                      <span className="tabular-nums">
-                        {lastOk ? new Date(lastOk).toLocaleString('he-IL') : 'אף פעם'}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              <p className="mt-1 text-sm">
-                אם הסטטוס לא חוזר, בדוק את ה-cron job ואת secrets האדג׳ פאנקשן.
-              </p>
-            </div>
-          </div>
-        </section>
-      ) : null}
+      <SystemHealthBanner showStatusLink={isAdminRole(auth.role)} />
       <WelcomeCard role={auth.role} userEmail={auth.user?.email ?? null} />
       <header className="flex flex-wrap items-baseline justify-between gap-3">
         <div className="flex items-baseline gap-3">
@@ -158,7 +89,7 @@ export function DashboardPage() {
         </div>
       </section>
 
-      <SourceHealthSection sourceHealth={s.sourceHealth} />
+      <SourceHealthSection sourceHealth={s.sourceHealth} canManageSources={isAdminRole(auth.role)} />
     </div>
   );
 }
@@ -266,7 +197,8 @@ function todayPriority(summary: DashboardSummary, queues: QueueRow[]) {
 
 function SourceHealthSection({
   sourceHealth,
-}: { sourceHealth: DashboardSummary['sourceHealth'] }) {
+  canManageSources,
+}: { sourceHealth: DashboardSummary['sourceHealth']; canManageSources: boolean }) {
   const entries = Object.entries(sourceHealth ?? {})
     .map(([source, v]) => ({ source, h24: v.h24, d7: v.d7 }))
     .sort((a, b) => b.d7 - a.d7 || b.h24 - a.h24);
@@ -274,7 +206,9 @@ function SourceHealthSection({
     <section className="kf-card p-4 sm:p-5">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">בריאות מקורות לידים</h2>
-        <Link to="/admin/sources" className="text-xs text-brand-700 hover:underline">ניהול מקורות</Link>
+        {canManageSources ? (
+          <Link to="/admin/sources" className="text-xs text-brand-700 hover:underline">ניהול מקורות</Link>
+        ) : null}
       </div>
       {entries.length === 0 ? (
         <p className="mt-3 text-sm text-slate-500">לא נכנסו לידים בטווח האחרון.</p>

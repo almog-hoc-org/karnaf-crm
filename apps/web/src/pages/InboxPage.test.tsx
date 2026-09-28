@@ -12,6 +12,7 @@ vi.mock('@/lib/api', () => ({
   postQueueResolve: vi.fn(),
   postSendReply: vi.fn(async () => ({ ok: true, mode: 'sent' })),
   fetchMessageTemplates: vi.fn(async () => ({ templates: [] })),
+  fetchHeartbeats: vi.fn(async () => []),
 }));
 
 const mockedFetchAttentionInbox = vi.mocked(fetchAttentionInbox);
@@ -85,13 +86,11 @@ describe('InboxPage', () => {
   it('shows first-day operating guidance for employees', async () => {
     renderInbox();
 
-    expect(screen.getByRole('heading', { name: 'היום שלי' })).toBeInTheDocument();
-    expect(screen.getByText('הדרך הקצרה לעבודה נכונה')).toBeInTheDocument();
-    expect(screen.getByText('פותחים כרטיס, מטפלים, וסוגרים — בלי לחפש ידנית.')).toBeInTheDocument();
-    expect(screen.getByText('לטפל לפי דחיפות')).toBeInTheDocument();
-    expect(screen.getByText('פותחים את הליד')).toBeInTheDocument();
-    expect(screen.getByText('סוגרים נכון')).toBeInTheDocument();
-    expect(screen.getByText(/הוחזר ל-AI/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'היום' })).toBeInTheDocument();
+    expect(screen.getByText('איך עובדים כאן?')).toBeInTheDocument();
+    expect(screen.getByText('לפי דחיפות')).toBeInTheDocument();
+    expect(screen.getByText('פותחים את הלקוח')).toBeInTheDocument();
+    expect(screen.getByText(/הוחזר לבוט/)).toBeInTheDocument();
   });
 
   it('opens the lane requested in the URL', () => {
@@ -155,7 +154,7 @@ describe('InboxPage', () => {
       leadId: '11111111-1111-1111-1111-111111111111',
       callOutcome: 'no_answer',
       callDurationMinutes: 0,
-      note: 'סומן אין מענה מתוך היום שלי',
+      note: 'סומן אין מענה מתוך מסך היום',
     }));
   });
 
@@ -322,7 +321,7 @@ describe('InboxPage', () => {
     await waitFor(() => expect(mockedPostAdminAction).toHaveBeenCalledWith({
       action: 'mark_reviewed',
       leadId: '44444444-4444-4444-4444-444444444444',
-      note: 'טופל מתוך היום שלי',
+      note: 'טופל מתוך מסך היום',
     }));
   });
 

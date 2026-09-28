@@ -56,51 +56,36 @@ function renderLayout(opts: RenderOpts = {}) {
 }
 
 describe('Layout', () => {
-  it('renders the always-visible operator nav links and the outlet', () => {
+  it('renders the operator nav (היום, לקוחות) and the outlet', () => {
     renderLayout({ role: 'viewer' });
-    expect(screen.queryByRole('link', { name: 'היום' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'היום שלי' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'כל הלידים' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'תורים טכניים' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'דוחות' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'היום' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'לקוחות' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'דיוור' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'עוד' })).not.toBeInTheDocument();
     expect(screen.getByText('leads outlet')).toBeInTheDocument();
   });
 
-  it('keeps manager-level links visible for Mia operators', () => {
-    renderLayout({ role: 'mia' });
-    expect(screen.getByRole('link', { name: 'היום' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'דוחות' })).toBeInTheDocument();
+  it.each(['owner', 'admin', 'mia'] as const)('shows the four-item nav to %s', (role) => {
+    renderLayout({ role });
+    for (const name of ['היום', 'לקוחות', 'דיוור', 'עוד']) {
+      expect(screen.getByRole('link', { name })).toBeInTheDocument();
+    }
+    // The retired items are gone: the dashboard is reached from the hub.
     expect(screen.queryByRole('link', { name: 'ניהול' })).not.toBeInTheDocument();
-  });
-
-  it('hides the admin hub link from non-admin roles', () => {
-    renderLayout({ role: 'sales_rep' });
-    expect(screen.queryByRole('link', { name: 'ניהול' })).not.toBeInTheDocument();
-  });
-
-  it('hides manager and admin links from sales representatives', () => {
-    renderLayout({ role: 'sales_rep' });
-    expect(screen.queryByRole('link', { name: 'היום' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'דוחות' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'ניהול' })).not.toBeInTheDocument();
   });
 
-  it('shows the admin-only Admin hub link for admins', () => {
-    renderLayout({ role: 'admin' });
-    // Tier 5 — the /admin hub replaces the per-page admin nav items.
-    // Users page lives inside the hub now (AdminHubPage), not in top nav.
-    expect(screen.getByRole('link', { name: 'ניהול' })).toBeInTheDocument();
+  it('hides manager links from sales representatives', () => {
+    renderLayout({ role: 'sales_rep' });
+    expect(screen.queryByRole('link', { name: 'דיוור' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'עוד' })).not.toBeInTheDocument();
   });
 
-  it('shows the admin-only Admin hub link for owners', () => {
-    renderLayout({ role: 'owner' });
-    expect(screen.getByRole('link', { name: 'ניהול' })).toBeInTheDocument();
-  });
-
-  it('renders the user email and role badge', () => {
+  it('renders the user email and the role in Hebrew', () => {
     renderLayout({ role: 'admin', email: 'admin@karnaf.io' });
     expect(screen.getByText('admin@karnaf.io')).toBeInTheDocument();
-    expect(screen.getByText('admin')).toBeInTheDocument();
+    expect(screen.getByText('מנהל/ת')).toBeInTheDocument();
+    expect(screen.queryByText('admin')).not.toBeInTheDocument();
   });
 
   it('shows a red attention badge on the inbox link and prefixes the title', async () => {

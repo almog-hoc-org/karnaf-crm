@@ -45,7 +45,7 @@ export function UsersPage() {
   });
 
   if (auth.role !== 'owner' && auth.role !== 'admin') {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/inbox" replace />;
   }
 
   return (

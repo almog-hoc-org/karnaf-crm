@@ -41,7 +41,7 @@ export function PromptVariantsPage() {
   });
 
   if (auth.role !== 'owner' && auth.role !== 'admin') {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/inbox" replace />;
   }
 
   const variantsByPlaybook = (list.data ?? []).reduce<Record<string, PromptVariantRow[]>>((acc, v) => {
