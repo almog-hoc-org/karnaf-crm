@@ -6,11 +6,17 @@
 // arrived produces no message at all — which is what makes the ones that do
 // arrive worth opening.
 //
-// Also acts as the zero-traffic watchdog: if the whole system has not seen
-// an inbound message for `SILENCE_ALERT_HOURS` during active hours, that is
-// itself the news. Nothing detected that before — every watchdog counted
-// existing work items, so an intake outage produced *fewer* alerts than
-// normal operation, and the silence from 2026-08-28 onward went unnoticed.
+// Also acts as the WhatsApp connection watchdog. It used to alert when no
+// CUSTOMER message arrived for 6 hours. On 28.9 the owner moved the
+// website's WhatsApp button to his own business number (few inquiries, he
+// answers them himself), so customer silence on the CRM number is now the
+// normal state and that alert fired every 6 hours for nothing. What still
+// proves the connection is alive: Meta sends a delivery receipt to
+// whatsapp-webhook for every message the CRM sends (the 05:00 daily summary
+// alone guarantees one a day), and since #93 those receipts are recorded.
+// So the alert is now "Meta sent us nothing at all for
+// WEBHOOK_SILENCE_ALERT_HOURS" — a lapsed subscription, token or webhook
+// override — and customer silence alone never alerts.
 
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
@@ -21,9 +27,10 @@ import { lastAlertAt, notifyOperator } from '../_shared/operator-alert.ts';
 
 const APP_BASE_URL = 'https://karnaf-crm.vercel.app';
 
-// How long the system may go without a single inbound before that becomes
-// the alert. Six hours spans a normal quiet evening but not a working day.
-const SILENCE_ALERT_HOURS = 6;
+// How long whatsapp-webhook may go without ANY delivery from Meta (receipt
+// or customer message) before that becomes the alert. 36h tolerates a quiet
+// day with only the daily summary going out, but not two.
+const WEBHOOK_SILENCE_ALERT_HOURS = 36;
 
 // First run has no watermark. Look back one hour rather than over all of
 // history, so enabling this does not open with a report on the whole year.
@@ -51,33 +58,37 @@ Deno.serve(async (req) => {
     const watermark = await lastAlertAt(supabase, 'hourly_digest');
     const since = watermark ?? new Date(now - DEFAULT_LOOKBACK_HOURS * 3600_000).toISOString();
 
-    const [inbound, newLeads, newQueue, dlq, lastInbound] = await Promise.all([
+    const [inbound, newLeads, newQueue, dlq, lastDelivery] = await Promise.all([
       countSince(supabase, 'messages', 'created_at', since, (q) => q.eq('direction', 'inbound')),
       countSince(supabase, 'leads', 'created_at', since),
       countSince(supabase, 'work_queue', 'created_at', since, (q) => q.eq('status', 'pending')),
       countSince(supabase, 'outbound_dispatch', 'created_at', since, (q) => q.eq('status', 'dlq')),
-      newestInboundAt(supabase),
+      newestWebhookDeliveryAt(supabase),
     ]);
 
-    // ── The silence watchdog runs regardless of whether the digest fires ──
-    const silentHours = lastInbound
-      ? (now - Date.parse(lastInbound)) / 3600_000
-      : Number.POSITIVE_INFINITY;
+    // ── The connection watchdog runs regardless of whether the digest fires ──
+    // A failed lookup (ok=false) never alerts: a database hiccup must not
+    // page the owner about WhatsApp.
+    const webhookSilentHours = !lastDelivery.ok
+      ? null
+      : lastDelivery.at
+        ? (now - Date.parse(lastDelivery.at)) / 3600_000
+        : Number.POSITIVE_INFINITY;
     let silenceAlerted = false;
-    if (silentHours >= SILENCE_ALERT_HOURS) {
+    if (webhookSilentHours !== null && webhookSilentHours >= WEBHOOK_SILENCE_ALERT_HOURS) {
       const result = await notifyOperator(supabase, {
         kind: 'intake_silence',
         dedupeKey: 'intake_silence',
-        // Once every six hours while the silence lasts: enough to keep it
-        // present without becoming the noise it is meant to cut through.
-        throttleMinutes: SILENCE_ALERT_HOURS * 60,
+        // Twice a day while it lasts: present, not noise.
+        throttleMinutes: (WEBHOOK_SILENCE_ALERT_HOURS / 3) * 60,
         severity: 'critical',
-        title: '🔇 אין הודעות נכנסות — ייתכן שהקליטה מנותקת',
+        title: '🔌 מטא הפסיקה לשלוח עדכונים ל-CRM — ייתכן שהחיבור לוואטסאפ נותק',
         lines: [
-          lastInbound
-            ? `ההודעה הנכנסת האחרונה: ${new Date(lastInbound).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })} (לפני ${Math.round(silentHours)} שעות)`
-            : 'לא נרשמה שום הודעה נכנסת במערכת.',
-          'בדקו את חיבור ה-Webhook של WhatsApp במטא ואת מצב מספר הטלפון.',
+          lastDelivery.at
+            ? `העדכון האחרון ממטא: ${new Date(lastDelivery.at).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })} (לפני ${Math.round(webhookSilentHours)} שעות)`
+            : 'מעולם לא התקבל עדכון ממטא.',
+          'הודעות שנשלחות מה-CRM לא מקבלות אישור מסירה, ותשובות של לקוחות למספר ה-CRM לא יגיעו.',
+          'לבדיקה: דוח ה-ops, חלק "whatsapp channel status (from Meta)".',
         ],
         link: `${APP_BASE_URL}/settings`,
         correlationId,
@@ -87,9 +98,11 @@ Deno.serve(async (req) => {
 
     const hasNews = inbound > 0 || newLeads > 0 || newQueue > 0 || dlq > 0;
     if (!hasNews) {
-      log.info('operator_digest_quiet', { fn: 'operator-digest', correlationId, since, silentHours });
+      log.info('operator_digest_quiet', { fn: 'operator-digest', correlationId, since, webhookSilentHours });
       return jsonResponse(req, {
-        ok: true, sent: false, reason: 'nothing_new', since, silenceAlerted, correlationId,
+        ok: true, sent: false, reason: 'nothing_new', since, silenceAlerted,
+        webhookSilentHours: webhookSilentHours === null ? null : Math.round(webhookSilentHours * 10) / 10,
+        correlationId,
       });
     }
 
@@ -119,7 +132,9 @@ Deno.serve(async (req) => {
     });
     return jsonResponse(req, {
       ok: true, sent: true, delivered: result.delivered, channels: result.channels,
-      since, counts: { inbound, newLeads, newQueue, dlq }, silenceAlerted, correlationId,
+      since, counts: { inbound, newLeads, newQueue, dlq }, silenceAlerted,
+      webhookSilentHours: webhookSilentHours === null ? null : Math.round(webhookSilentHours * 10) / 10,
+      correlationId,
     });
   } catch (err) {
     const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -150,19 +165,20 @@ async function countSince(
   return count ?? 0;
 }
 
-async function newestInboundAt(
+/** Newest call Meta made to whatsapp-webhook — receipt or customer message. */
+async function newestWebhookDeliveryAt(
   supabase: ReturnType<typeof getServiceSupabase>,
-): Promise<string | null> {
+): Promise<{ ok: boolean; at: string | null }> {
   const { data, error } = await supabase
-    .from('messages')
-    .select('created_at')
-    .eq('direction', 'inbound')
-    .order('created_at', { ascending: false })
+    .from('webhook_inbox')
+    .select('received_at')
+    .eq('source', 'whatsapp-webhook')
+    .order('received_at', { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) {
-    log.warn('operator_digest_last_inbound_failed', { fn: 'operator-digest', err: error.message });
-    return null;
+    log.warn('operator_digest_last_delivery_failed', { fn: 'operator-digest', err: error.message });
+    return { ok: false, at: null };
   }
-  return (data?.created_at as string | undefined) ?? null;
+  return { ok: true, at: (data?.received_at as string | undefined) ?? null };
 }
