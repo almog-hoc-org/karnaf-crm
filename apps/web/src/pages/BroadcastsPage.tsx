@@ -24,6 +24,7 @@ import { PageIntro } from '@/components/PageIntro';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { SOURCE_LABELS, formatRelative } from '@/lib/format';
 import { Modal } from '@/components/Modal';
+import { LoadFailed } from '@/components/LoadFailed';
 
 const STATUS_LABELS: Record<BroadcastStatus, string> = {
   draft: 'טיוטה',
@@ -96,6 +97,9 @@ export function BroadcastsPage() {
 
   return (
     <div className="space-y-4">
+      {q.error ? (
+        <LoadFailed error={q.error} onRetry={() => void q.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={q.isFetching} />
+      ) : null}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">הודעות תפוצה</h1>
         <button className="kf-btn kf-btn-primary" onClick={() => setComposing(true)}>

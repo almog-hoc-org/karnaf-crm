@@ -10,6 +10,7 @@ import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { COMMISSION_STATUS_LABELS, formatRelative } from '@/lib/format';
 import { t } from '@/lib/i18n';
 import { Modal } from '@/components/Modal';
+import { LoadFailed } from '@/components/LoadFailed';
 
 // Tier 7.C.1 — labels live in lib/format.ts. Local alias keeps the
 // rest of the file readable without rewriting every reference.
@@ -73,6 +74,9 @@ export function CommissionsPage() {
 
   return (
     <div className="space-y-4">
+      {q.error ? (
+        <LoadFailed error={q.error} onRetry={() => void q.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={q.isFetching} />
+      ) : null}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">עמלות</h1>
       </header>

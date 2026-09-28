@@ -87,3 +87,16 @@ describe('SettingsPage — email channel', () => {
     });
   });
 });
+
+describe('SettingsPage — load failure', () => {
+  // A failed config read used to render the settings cards with no values,
+  // which reads as "nothing is configured".
+  it('says the load failed instead of showing empty settings', async () => {
+    vi.mocked(fetchRuntimeConfig).mockRejectedValue(new Error('gateway 502'));
+    renderPage();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('לא הצלחנו לטעון את הנתונים');
+    expect(alert).toHaveTextContent('gateway 502');
+    expect(alert).toHaveTextContent('שום דבר לא נמחק');
+  });
+});

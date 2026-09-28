@@ -9,6 +9,7 @@ import { useToast } from '@/components/Toast';
 import { PageIntro } from '@/components/PageIntro';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
+import { LoadFailed } from '@/components/LoadFailed';
 
 const SLUG_RE = /^[a-z][a-z0-9_]{1,39}$/;
 
@@ -45,6 +46,9 @@ export function SourcesPage() {
 
   return (
     <div className="space-y-4">
+      {sourcesQ.error ? (
+        <LoadFailed error={sourcesQ.error} onRetry={() => void sourcesQ.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={sourcesQ.isFetching} />
+      ) : null}
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">מקורות לידים</h1>
         <span className="text-sm text-slate-500">

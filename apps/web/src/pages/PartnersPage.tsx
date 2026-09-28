@@ -10,6 +10,7 @@ import { PageIntro } from '@/components/PageIntro';
 // Tier 7.C.1 — central labels.
 import { PARTNER_DOMAIN_LABELS, PARTNER_STATUS_LABELS } from '@/lib/format';
 import { Modal } from '@/components/Modal';
+import { LoadFailed } from '@/components/LoadFailed';
 const DOMAIN_LABELS = PARTNER_DOMAIN_LABELS as Record<PartnerDomain, string>;
 const STATUS_LABELS = PARTNER_STATUS_LABELS as Record<PartnerStatus, string>;
 
@@ -43,6 +44,9 @@ export function PartnersPage() {
 
   return (
     <div className="space-y-4">
+      {partnersQ.error ? (
+        <LoadFailed error={partnersQ.error} onRetry={() => void partnersQ.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={partnersQ.isFetching} />
+      ) : null}
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">פרילנסרים ושותפים</h1>
         <span className="text-sm text-slate-500">{partners.length} שותפים</span>

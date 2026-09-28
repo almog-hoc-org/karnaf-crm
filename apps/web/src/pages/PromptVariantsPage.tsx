@@ -10,6 +10,7 @@ import { useAuth } from '@/auth/auth-context';
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { formatDateTime } from '@/lib/format';
+import { LoadFailed } from '@/components/LoadFailed';
 
 const PLAYBOOKS: PlaybookName[] = [
   'first_contact_whatsapp_inbound', 'first_contact_form_lead', 'qualification',
@@ -53,6 +54,9 @@ export function PromptVariantsPage() {
 
   return (
     <div className="space-y-4">
+      {list.error ? (
+        <LoadFailed error={list.error} onRetry={() => void list.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={list.isFetching} />
+      ) : null}
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">תבניות AI</h1>
         <p className="text-sm text-slate-500">

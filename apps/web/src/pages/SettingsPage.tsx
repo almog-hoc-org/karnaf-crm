@@ -17,6 +17,7 @@ import {
 import { useToast } from '@/components/Toast';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
 import { t } from '@/lib/i18n';
+import { LoadFailed } from '@/components/LoadFailed';
 
 const DAY_LABELS = [
   { value: 0, label: 'ראשון' },
@@ -67,6 +68,9 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-4">
+      {configQ.error ? (
+        <LoadFailed error={configQ.error} onRetry={() => void configQ.refetch()} hint="זו תקלת טעינה — שום דבר לא נמחק. נסו שוב בעוד רגע." retrying={configQ.isFetching} />
+      ) : null}
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">הגדרות מערכת</h1>
         <p className="mt-1 text-sm text-slate-500">הגדרות תפעוליות שמשפיעות על ניתוב ותורי עבודה.</p>

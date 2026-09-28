@@ -12,11 +12,15 @@ export function LoadFailed({
   onRetry,
   retrying = false,
   title = 'לא הצלחנו לטעון את הנתונים',
+  hint,
 }: {
   error: unknown;
   onRetry?: () => void;
   retrying?: boolean;
   title?: string;
+  // What the failure does NOT mean on this screen. Defaults to the work
+  // screens' "no work" misreading.
+  hint?: string;
 }) {
   const message = error instanceof Error ? error.message : String(error ?? '');
   return (
@@ -27,7 +31,9 @@ export function LoadFailed({
       <span aria-hidden="true" className="text-3xl opacity-80">⚠️</span>
       <p className="font-semibold">{title}</p>
       <p className="text-sm">
-        זו תקלת טעינה — <strong>לא</strong> אומר שאין עבודה. ייתכן שיש לידים שממתינים ואינם מוצגים.
+        {hint ?? (
+          <>זו תקלת טעינה — <strong>לא</strong> אומר שאין עבודה. ייתכן שיש לידים שממתינים ואינם מוצגים.</>
+        )}
       </p>
       {message ? <p className="max-w-lg break-words text-xs opacity-80">{message}</p> : null}
       {onRetry ? (
