@@ -11,6 +11,7 @@
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { logLeadEvent, upsertLead } from '../_shared/lead-service.ts';
+import { emitLeadCreated, isNewLeadRow } from '../_shared/lead-created.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { verifyMetaSignature } from '../_shared/webhook-signature.ts';
 import { normalizeIsraeliPhone } from '../_shared/phone.ts';
@@ -150,6 +151,7 @@ Deno.serve(async (req) => {
       };
 
       let leadId: string;
+      let isNewLead = false;
       if (phone || email) {
         const lead = await upsertLead(supabase, {
           phone, email, fullName,
@@ -158,6 +160,7 @@ Deno.serve(async (req) => {
           metadata,
         });
         leadId = lead.id;
+        isNewLead = isNewLeadRow(lead);
         // Backfill source_campaign so the Analytics view can attribute later.
         if (v.campaign_id || v.ad_id) {
           await supabase.from('leads').update({
@@ -207,6 +210,11 @@ Deno.serve(async (req) => {
         payloadJson: { leadgen_id: v.leadgen_id, hydrated: !!hydrated, correlationId },
         dueAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
       });
+
+      // Only hydrated leads: a placeholder has no phone/email for a welcome
+      // rule to reach. Emitted after the source_campaign backfill so rules
+      // can segment on it.
+      if (isNewLead) await emitLeadCreated(supabase, leadId, { fn: 'fb-leadgen-webhook', correlationId });
 
       created.push({ leadId, leadgenId: v.leadgen_id, hydrated: !!hydrated });
     }

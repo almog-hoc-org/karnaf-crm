@@ -5,6 +5,7 @@ import { verifyHmacHeader } from '../_shared/webhook-signature.ts';
 import { env, optional } from '../_shared/env.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { logLeadEvent, upsertLead } from '../_shared/lead-service.ts';
+import { emitLeadCreated, isNewLeadRow } from '../_shared/lead-created.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 
 Deno.serve(async (req) => {
@@ -61,6 +62,8 @@ Deno.serve(async (req) => {
     leadUpdates.consent_updated_at = new Date().toISOString();
   }
   await supabase.from('leads').update(leadUpdates).eq('id', lead.id);
+  // After the track/consent update so rules see the final lead.
+  if (isNewLeadRow(lead)) await emitLeadCreated(supabase, lead.id, { fn: 'webinar-events', correlationId });
 
   const externalWebinarId = typeof payload.webinar_external_id === 'string' ? payload.webinar_external_id : null;
   let webinarId: string | null = null;
