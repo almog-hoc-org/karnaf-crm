@@ -39,6 +39,16 @@ function sanitize(val: unknown, maxLen: number): string {
   return typeof val === 'string' ? val.trim().slice(0, maxLen) : '';
 }
 
+// supabase-js errors are plain objects; String() on one logs
+// "[object Object]" and hides the Postgres message.
+function describeError(err: unknown): Record<string, unknown> {
+  if (err && typeof err === 'object') {
+    const e = err as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
+    return { err: String(e.message ?? err), code: e.code ?? null, details: e.details ?? null, hint: e.hint ?? null };
+  }
+  return { err: String(err) };
+}
+
 function sourceToCrm(source: string, service: string): string {
   if (source.includes('webinar') || service === 'webinar') return 'webinar';
   if (service === 'waitlist') return 'lead_magnet';
@@ -67,6 +77,11 @@ Deno.serve(async (req) => {
   const message = sanitize(payload.message, MAX_MESSAGE);
   const stage = sanitize(payload.stage, MAX_DETAIL);
   const equity = sanitize(payload.equity, MAX_DETAIL);
+  // The site's marketing checkbox (karnaf_website lib/consent.ts): unticked
+  // by default, never required, and its copy promises email/SMS/WhatsApp
+  // marketing only to those who tick it. Absent from older callers, where
+  // the default-consent rule of migration 128 stands.
+  const marketingConsent = typeof payload.marketing_consent === 'boolean' ? payload.marketing_consent : null;
 
   if (!name || !phone) {
     return jsonResponse(req, { error: 'Missing required name or phone' }, 400);
@@ -156,8 +171,33 @@ Deno.serve(async (req) => {
     // Presale landing pages carry a known track so the AI bot converses about
     // the presale project (not the flagship program). resolveTrackContext reads primary_track.
     if (source === 'presale_form') updates.primary_track = 'presale';
+    // Marketing consent from the checkbox. Ticked: both channels on, for
+    // any lead. Unticked: a NEW lead is not opted in (overriding the insert
+    // trigger's default grant), so journeys and broadcasts skip it; the
+    // operator's own replies are never gated by consent. An existing lead
+    // who leaves it unticked keeps what it had: not ticking is not "הסר".
+    const isNewLead = lead.created_at === lead.updated_at;
+    const consentChange = marketingConsent === true || (marketingConsent === false && isNewLead)
+      ? marketingConsent
+      : null;
+    if (consentChange !== null) {
+      updates.consent_email = consentChange;
+      updates.consent_whatsapp = consentChange;
+      updates.consent_updated_at = new Date().toISOString();
+    }
     const { error: updateErr } = await supabase.from('leads').update(updates).eq('id', lead.id);
-    if (updateErr) log.warn('website_lead_update_failed', { fn: 'website-leads-intake', correlationId, err: updateErr.message });
+    if (updateErr) log.warn('website_lead_update_failed', { fn: 'website-leads-intake', correlationId, ...describeError(updateErr) });
+    if (consentChange !== null && !updateErr) {
+      await logLeadEvent(supabase, lead.id, consentChange ? 'consent_granted' : 'consent_not_given', 'system', {
+        channels: ['email', 'whatsapp'],
+        basis: consentChange ? 'website_checkbox' : 'website_checkbox_unticked',
+        text: sanitize(payload.marketing_consent_text, 400) || null,
+        version: sanitize(payload.marketing_consent_version, 40) || null,
+        at: sanitize(payload.marketing_consent_at, 40) || null,
+        source_detail: sourceDetail,
+        correlation_id: correlationId,
+      });
+    }
 
     await logLeadEvent(supabase, lead.id, 'intake_received', 'system', {
       source,
@@ -242,7 +282,7 @@ Deno.serve(async (req) => {
     log.info('website_lead_accepted', { fn: 'website-leads-intake', correlationId, leadId: lead.id, source, sourceDetail });
     return jsonResponse(req, { ok: true, leadId: lead.id, correlationId });
   } catch (err) {
-    log.error('website_lead_failed', { fn: 'website-leads-intake', correlationId, err: String(err) });
+    log.error('website_lead_failed', { fn: 'website-leads-intake', correlationId, ...describeError(err) });
     return jsonResponse(req, { error: 'Failed to save lead' }, 500);
   }
 });

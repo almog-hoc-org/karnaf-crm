@@ -62,3 +62,25 @@ jobs:
               deno check --no-lock "$fn/index.ts"
             fi
           done
+
+  # Applies every migration to a real Postgres and creates a lead the way
+  # the intakes do. Without it, a trigger that raises on every insert
+  # (migration 128) passed CI and deploy, and no new lead could be saved
+  # in production for two weeks. See scripts/db-smoke.sh.
+  db-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the runner's PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "alter user postgres password 'postgres'"
+      - name: Apply migrations and exercise the lead path
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+        run: |
+          export PG_EXTENSION_DIR="$(ls -d /usr/share/postgresql/*/extension | sort -V | tail -1)"
+          scripts/db-smoke.sh

@@ -1,0 +1,4 @@
+comment = 'local stub of pg_net (records requests, sends nothing)'
+default_version = '1.0'
+relocatable = false
+superuser = true
