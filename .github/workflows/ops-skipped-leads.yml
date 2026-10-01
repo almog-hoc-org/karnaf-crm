@@ -19,6 +19,22 @@ on:
         description: 'Optional: make the test email that broadcast, exactly as a recipient gets it'
         type: string
         default: ''
+      email_test_target:
+        description: 'With email_test: "owner" (default) or "inbound" (our Resend receiving address — proves replies reach the CRM)'
+        type: string
+        default: 'owner'
+      revoke_email_consent:
+        description: 'WRITE: comma-separated emails of leads who asked (by reply) to be removed from email'
+        type: string
+        default: ''
+      run_replies_poll:
+        description: 'WRITE: run the email replies poll now (otherwise every 5 min)'
+        type: boolean
+        default: false
+      switch_reply_to_inbound:
+        description: 'WRITE: set email_channel.replyTo = inboundAddress (only after an inbound test was received)'
+        type: boolean
+        default: false
       schedule_broadcast_id:
         description: 'WRITE: re-schedule this FAILED email broadcast (same as the app''s "שלח שוב", at schedule_at)'
         type: string
@@ -41,6 +57,10 @@ jobs:
           EMAIL_TEST: ${{ inputs.email_test }}
           EMAIL_TEST_BROADCAST_ID: ${{ inputs.email_test_broadcast_id }}
           SCHEDULE_BROADCAST_ID: ${{ inputs.schedule_broadcast_id }}
+          EMAIL_TEST_TARGET: ${{ inputs.email_test_target }}
+          REVOKE_EMAIL_CONSENT: ${{ inputs.revoke_email_consent }}
+          RUN_REPLIES_POLL: ${{ inputs.run_replies_poll }}
+          SWITCH_REPLY_TO_INBOUND: ${{ inputs.switch_reply_to_inbound }}
           SCHEDULE_AT: ${{ inputs.schedule_at }}
         run: |
           python3 - <<'EOF'
@@ -406,10 +426,92 @@ jobs:
               if os.environ.get('EMAIL_TEST', 'false') == 'true':
                   bid = os.environ.get('EMAIL_TEST_BROADCAST_ID', '').strip()
                   print('== email test send (one email, to email_channel.replyTo) ==')
-                  payload = {'action': 'test_send', **({'broadcast_id': bid} if bid else {})}
+                  target = os.environ.get('EMAIL_TEST_TARGET', 'owner').strip() or 'owner'
+                  payload = {'action': 'test_send', 'target': target, **({'broadcast_id': bid} if bid else {})}
                   st, sent = http_json(fn, method='POST', payload=payload, headers=auth)
                   print(st, json.dumps(sent, ensure_ascii=False, indent=1, default=str))
                   print()
+
+          # ── 7b. Email replies (Resend receiving → email-replies-poll) ─
+          q('email replies collected (7d)', """
+              select date_trunc('day', created_at)::date as day,
+                     count(*) filter (where event_type = 'email_inbound_received'
+                                        and event_payload->>'origin' = 'email_reply') as replies,
+                     count(*) filter (where event_type = 'consent_revoked'
+                                        and event_payload->>'basis' = 'inbound_keyword'
+                                        and event_payload->>'channel' = 'email') as removed_by_reply
+              from lead_events
+              where created_at > now() - interval '7 days'
+                and event_type in ('email_inbound_received', 'consent_revoked')
+              group by 1 order by 1 desc""",
+            'replies = mail collected from the receiving address; removed_by_reply = "הסר" in a reply')
+
+          q('email replies poll heartbeat', """
+              select last_ok_at, now() - last_ok_at as age, metadata
+              from system_heartbeats where name = 'email_replies_poll'""",
+            'metadata.listError = receiving not enabled in Resend yet')
+
+          # Opt-in writes for the reply flow.
+          import re as _re2
+          revoke = [e.strip().lower() for e in os.environ.get('REVOKE_EMAIL_CONSENT', '').split(',') if e.strip()]
+          if revoke:
+              bad = [e for e in revoke if not _re2.fullmatch(r"[^@\s',;]+@[^@\s',;]+\.[^@\s',;]{2,}", e)]
+              if bad:
+                  print(f'== revoke refused: not email addresses: {bad} ==\n')
+              else:
+                  arr = ','.join(f"'{e}'" for e in revoke)
+                  q('revoke email consent (replied asking to be removed)', f"""
+                      with target as (
+                        select id, email from leads
+                         where lower(email) = any(array[{arr}]) and consent_email is distinct from false
+                      ), upd as (
+                        update leads l set consent_email = false, consent_updated_at = now()
+                          from target t where l.id = t.id
+                        returning l.id, l.email, l.full_name
+                      ), ev as (
+                        insert into lead_events (lead_id, event_type, actor_type, event_payload)
+                        select id, 'consent_revoked', 'admin',
+                               jsonb_build_object('channels', jsonb_build_array('email'), 'channel', 'email',
+                                                  'basis', 'inbound_keyword', 'source', 'email_reply_backfill')
+                          from upd
+                        returning lead_id
+                      ), skip as (
+                        update broadcast_recipients r set status = 'skipped', error = 'opt_out'
+                          from upd, broadcasts b
+                         where r.lead_id = upd.id and r.broadcast_id = b.id and b.channel = 'email'
+                           and r.status in ('pending', 'enqueued')
+                        returning r.id
+                      )
+                      select (select count(*) from upd) as removed,
+                             (select count(*) from skip) as pending_sends_cancelled,
+                             (select json_agg(json_build_object('email', email, 'name', full_name)) from upd) as who,
+                             (select json_agg(e) from unnest(array[{arr}]) e
+                               where e not in (select lower(email) from leads where email is not null)) as not_a_lead,
+                             (select json_agg(lower(email)) from leads
+                               where lower(email) = any(array[{arr}]) and consent_email = false
+                                 and id not in (select id from upd)) as already_removed""",
+                    'who = removed now; not_a_lead = no lead has that address; already_removed = was removed before', attempts=1)
+
+          if os.environ.get('RUN_REPLIES_POLL', 'false') == 'true':
+              q('run email replies poll now', 'select public.run_email_replies_poll() as queued',
+                'queued = the poll was triggered; read the heartbeat on the next run', attempts=1)
+
+          if os.environ.get('SWITCH_REPLY_TO_INBOUND', 'false') == 'true':
+              q('switch replyTo to the inbound address', """
+                  update crm_config
+                     set config_value = config_value || jsonb_build_object('replyTo', config_value->>'inboundAddress'),
+                         updated_at = now()
+                   where config_key = 'email_channel'
+                     and coalesce(config_value->>'inboundAddress', '') <> ''
+                     and exists (select 1 from lead_events
+                                  where event_type = 'email_inbound_received'
+                                    and event_payload->>'origin' = 'email_reply'
+                                  union all
+                                 select 1 from system_heartbeats
+                                  where name = 'email_replies_poll'
+                                    and metadata ? 'processed' and not (metadata ? 'listError'))
+                  returning config_value->>'replyTo' as reply_to, config_value->>'forwardTo' as forward_to""",
+                'empty = refused: the poller has not run cleanly against Resend receiving yet', attempts=1)
 
           # ── 8. Opt-in write: schedule a failed email campaign ────────
           import re as _re

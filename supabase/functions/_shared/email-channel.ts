@@ -21,6 +21,12 @@ export interface EmailChannelConfig {
    *  still reads answers in the mailbox they always used. */
   replyTo: string;
   requireConsent: boolean;
+  /** Where email-replies-poll forwards every reply it collects (the owner's
+   *  inbox). Falls back to replyTo when that is not the inbound address. */
+  forwardTo: string;
+  /** Address on the Resend receiving domain the CRM polls. When replyTo is
+   *  set to it, replies reach the CRM and "הסר" removes automatically. */
+  inboundAddress: string;
 }
 
 export const DEFAULT_EMAIL_CHANNEL: EmailChannelConfig = {
@@ -29,18 +35,25 @@ export const DEFAULT_EMAIL_CHANNEL: EmailChannelConfig = {
   fromEmail: '',
   replyTo: '',
   requireConsent: true,
+  forwardTo: '',
+  inboundAddress: '',
 };
 
 export function resolveEmailChannel(raw: unknown): EmailChannelConfig {
   const obj = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
   const str = (v: unknown, fallback: string) => (typeof v === 'string' && v.trim() ? v.trim() : fallback);
   const provider = obj.provider === 'resend' ? 'resend' : 'ravmesser';
+  const replyTo = str(obj.replyTo, '');
+  const inboundAddress = str(obj.inboundAddress, '');
   return {
     provider,
     fromName: str(obj.fromName, DEFAULT_EMAIL_CHANNEL.fromName),
     fromEmail: str(obj.fromEmail, ''),
-    replyTo: str(obj.replyTo, ''),
+    replyTo,
     requireConsent: obj.requireConsent !== false,
+    // Never forward to the inbound address itself — that would loop.
+    forwardTo: str(obj.forwardTo, replyTo && replyTo.toLowerCase() !== inboundAddress.toLowerCase() ? replyTo : ''),
+    inboundAddress,
   };
 }
 

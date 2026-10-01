@@ -854,6 +854,10 @@ export interface EmailChannelConfig {
   fromEmail: string;
   replyTo: string;
   requireConsent: boolean;
+  /** Owner inbox that receives every collected reply (server-managed). */
+  forwardTo?: string;
+  /** Resend receiving address the CRM polls for replies (server-managed). */
+  inboundAddress?: string;
 }
 
 export async function fetchRuntimeConfig() {
