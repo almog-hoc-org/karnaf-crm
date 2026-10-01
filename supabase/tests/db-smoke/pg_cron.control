@@ -1,0 +1,4 @@
+comment = 'local stub of pg_cron (no scheduling)'
+default_version = '1.0'
+relocatable = false
+superuser = true
