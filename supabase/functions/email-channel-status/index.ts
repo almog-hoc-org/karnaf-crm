@@ -26,7 +26,7 @@ import {
   loadEmailChannel,
   preflightEmailChannel,
 } from '../_shared/email-channel.ts';
-import { emailDomain, listResendDomains, sendResendEmail } from '../_shared/resend.ts';
+import { emailDomain, listReceivedEmails, listResendDomains, sendResendEmail } from '../_shared/resend.ts';
 import { renderBroadcastEmail } from '../_shared/broadcast-email.ts';
 import { wrapEmailShell } from '../_shared/email-html.ts';
 
@@ -50,10 +50,23 @@ Deno.serve(async (req) => {
 
   if (req.method === 'GET') {
     const noDomains: Awaited<ReturnType<typeof listResendDomains>> = { ok: true, domains: [] };
-    const [check, domains] = await Promise.all([
+    const [check, domains, received, pollBeat] = await Promise.all([
       preflightEmailChannel(cfg),
       cfg.provider === 'resend' ? listResendDomains() : Promise.resolve(noDomains),
+      listReceivedEmails({ limit: 1 }),
+      supabase.from('system_heartbeats').select('last_ok_at, metadata').eq('name', 'email_replies_poll').maybeSingle(),
     ]);
+    // Replies reach the CRM only when replyTo IS the inbound address.
+    const receiving = {
+      inboundAddress: cfg.inboundAddress || null,
+      replyToIsInbound: !!cfg.inboundAddress && cfg.replyTo.toLowerCase() === cfg.inboundAddress.toLowerCase(),
+      forwardTo: cfg.forwardTo || null,
+      apiOk: received.ok,
+      apiError: received.ok ? null : `${received.status}: ${received.error ?? ''}`.slice(0, 200),
+      lastReceivedAt: received.data[0]?.created_at ?? null,
+      lastReceivedTo: received.data[0]?.to ?? null,
+      poller: pollBeat.data ?? null,
+    };
     const senderDomain = emailDomain(cfg.fromEmail);
     const verified = domains.domains.filter((d) => d.status === 'verified').map((d) => d.name);
     return jsonResponse(req, {
@@ -69,6 +82,7 @@ Deno.serve(async (req) => {
       suggestedFromEmail: verified.length > 0 && !verified.includes(senderDomain)
         ? `info@${verified[0]}`
         : null,
+      receiving,
     });
   }
 
@@ -76,12 +90,19 @@ Deno.serve(async (req) => {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   if (body.action !== 'test_send') return jsonResponse(req, { error: 'Unsupported action' }, 400);
 
-  const to = caller.kind === 'staff' ? (caller.email ?? '') : cfg.replyTo;
+  // target 'inbound' = our own receiving address (proves MX + polling work
+  // end to end). Otherwise the caller's own inbox. Never a customer.
+  const toInbound = body.target === 'inbound';
+  const to = toInbound
+    ? cfg.inboundAddress
+    : caller.kind === 'staff' ? (caller.email ?? '') : (cfg.forwardTo || cfg.replyTo);
   if (!to) {
     return jsonResponse(req, {
-      error: caller.kind === 'staff'
-        ? 'למשתמש שלך אין כתובת מייל — אין לאן לשלוח בדיקה'
-        : 'אין כתובת Reply-To בהגדרות ערוץ המייל — אין לאן לשלוח בדיקה',
+      error: toInbound
+        ? 'אין כתובת קליטה (inboundAddress) בהגדרות ערוץ המייל'
+        : caller.kind === 'staff'
+          ? 'למשתמש שלך אין כתובת מייל — אין לאן לשלוח בדיקה'
+          : 'אין כתובת בעלים (forwardTo) בהגדרות ערוץ המייל — אין לאן לשלוח בדיקה',
     }, 400);
   }
 

@@ -140,6 +140,11 @@ verify_jwt = true
 [functions.whatsapp-channel-status]
 verify_jwt = true
 
+# Cron worker (every 5 min): collects replies to email campaigns from the
+# Resend receiving domain. Auth via the shared worker secret bearer.
+[functions.email-replies-poll]
+verify_jwt = false
+
 [functions.healthz]
 verify_jwt = false
 

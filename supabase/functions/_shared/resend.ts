@@ -142,3 +142,66 @@ export async function listResendDomains(): Promise<{ ok: boolean; domains: Resen
     return { ok: false, domains: [], error: String(err).slice(0, 200) };
   }
 }
+
+// ── Receiving (inbound mail on a receiving domain) ─────────────────────
+// Replies to campaigns go to an address on a Resend receiving domain; the
+// CRM collects them with these two calls (email-replies-poll). Polling
+// needs nothing but RESEND_API_KEY — no webhook secret to provision.
+
+export interface ReceivedEmailSummary {
+  id: string;
+  from: string;
+  to: string[];
+  subject: string;
+  created_at: string;
+  message_id: string | null;
+}
+
+export interface ReceivedEmail extends ReceivedEmailSummary {
+  text: string | null;
+  html: string | null;
+  headers: Record<string, unknown> | null;
+}
+
+/** GET /emails/receiving — newest first; `after` pages towards older mail. */
+export async function listReceivedEmails(
+  opts: { limit?: number; after?: string } = {},
+): Promise<{ ok: boolean; status: number; data: ReceivedEmailSummary[]; hasMore: boolean; error?: string }> {
+  const apiKey = env.resendApiKey();
+  if (!apiKey) return { ok: false, status: 0, data: [], hasMore: false, error: 'resend not configured' };
+  const url = new URL(`${API_BASE}/emails/receiving`);
+  url.searchParams.set('limit', String(Math.min(Math.max(opts.limit ?? 50, 1), 100)));
+  if (opts.after) url.searchParams.set('after', opts.after);
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+    const raw = await res.text();
+    if (!res.ok) return { ok: false, status: res.status, data: [], hasMore: false, error: raw.slice(0, 300) };
+    const parsed = JSON.parse(raw) as { data?: ReceivedEmailSummary[]; has_more?: boolean };
+    return { ok: true, status: res.status, data: parsed.data ?? [], hasMore: !!parsed.has_more };
+  } catch (err) {
+    return { ok: false, status: 0, data: [], hasMore: false, error: String(err).slice(0, 300) };
+  }
+}
+
+/** GET /emails/receiving/{id} — the full message, body included. */
+export async function getReceivedEmail(id: string): Promise<{ ok: boolean; email?: ReceivedEmail; error?: string }> {
+  const apiKey = env.resendApiKey();
+  if (!apiKey) return { ok: false, error: 'resend not configured' };
+  try {
+    const res = await fetch(`${API_BASE}/emails/receiving/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    const raw = await res.text();
+    if (!res.ok) return { ok: false, error: `${res.status}: ${raw.slice(0, 300)}` };
+    return { ok: true, email: JSON.parse(raw) as ReceivedEmail };
+  } catch (err) {
+    return { ok: false, error: String(err).slice(0, 300) };
+  }
+}
+
+/** "Dana Cohen <dana@x.com>" → { email: 'dana@x.com', name: 'Dana Cohen' } */
+export function parseAddress(value: string): { email: string; name: string | null } {
+  const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(value);
+  if (m) return { email: (m[2] ?? '').trim().toLowerCase(), name: (m[1] ?? '').trim() || null };
+  return { email: value.trim().toLowerCase(), name: null };
+}

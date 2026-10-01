@@ -153,8 +153,20 @@ Deno.serve(async (req) => {
       if (replyTo && !EMAIL_RE.test(replyTo)) {
         return jsonResponse(req, { error: `"${replyTo}" אינה כתובת מייל תקינה` }, 400);
       }
+      // forwardTo / inboundAddress are not on the Settings form; keep what
+      // is stored (migration 135 / ops) unless the request sends them.
+      const current = await loadEmailChannel(supabase);
+      const optEmail = (v: unknown, fallback: string) =>
+        typeof v === 'string' ? v.trim() : fallback;
+      const forwardTo = optEmail(body.forwardTo, current.forwardTo);
+      const inboundAddress = optEmail(body.inboundAddress, current.inboundAddress);
+      for (const addr of [forwardTo, inboundAddress]) {
+        if (addr && !EMAIL_RE.test(addr)) {
+          return jsonResponse(req, { error: `"${addr}" אינה כתובת מייל תקינה` }, 400);
+        }
+      }
       const value = resolveEmailChannel({
-        provider, fromName, fromEmail, replyTo,
+        provider, fromName, fromEmail, replyTo, forwardTo, inboundAddress,
         requireConsent: body.requireConsent !== false,
       });
       return await persist('email_channel', value, 'runtime_config_email_channel_updated');
