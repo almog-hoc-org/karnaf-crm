@@ -31,6 +31,10 @@ on:
         description: 'WRITE: run the email replies poll now (otherwise every 5 min)'
         type: boolean
         default: false
+      set_inbound_address:
+        description: 'WRITE: the Resend receiving address replies should go to, e.g. reply@abc123.resend.app (no DNS needed) or reply@reply.karnafnadlan.com'
+        type: string
+        default: ''
       switch_reply_to_inbound:
         description: 'WRITE: set email_channel.replyTo = inboundAddress (only after an inbound test was received)'
         type: boolean
@@ -61,6 +65,7 @@ jobs:
           REVOKE_EMAIL_CONSENT: ${{ inputs.revoke_email_consent }}
           RUN_REPLIES_POLL: ${{ inputs.run_replies_poll }}
           SWITCH_REPLY_TO_INBOUND: ${{ inputs.switch_reply_to_inbound }}
+          SET_INBOUND_ADDRESS: ${{ inputs.set_inbound_address }}
           SCHEDULE_AT: ${{ inputs.schedule_at }}
         run: |
           python3 - <<'EOF'
@@ -491,6 +496,22 @@ jobs:
                                where lower(email) = any(array[{arr}]) and consent_email = false
                                  and id not in (select id from upd)) as already_removed""",
                     'who = removed now; not_a_lead = no lead has that address; already_removed = was removed before', attempts=1)
+
+          inbound = os.environ.get('SET_INBOUND_ADDRESS', '').strip().lower()
+          if inbound:
+              if not _re2.fullmatch(r"[a-z0-9._+-]+@[a-z0-9.-]+\.[a-z]{2,}", inbound):
+                  print(f'== set_inbound_address refused: "{inbound}" is not an email address ==\n')
+              else:
+                  # Only the receiving address — replyTo switches separately,
+                  # after a test mail sent there was collected.
+                  q('set the inbound (receiving) address', f"""
+                      update crm_config
+                         set config_value = config_value || jsonb_build_object('inboundAddress', '{inbound}'),
+                             updated_at = now()
+                       where config_key = 'email_channel'
+                      returning config_value->>'inboundAddress' as inbound_address,
+                                config_value->>'replyTo' as reply_to,
+                                config_value->>'forwardTo' as forward_to""", attempts=1)
 
           if os.environ.get('RUN_REPLIES_POLL', 'false') == 'true':
               q('run email replies poll now', 'select public.run_email_replies_poll() as queued',
