@@ -35,6 +35,10 @@ on:
         description: 'WRITE: the Resend receiving address replies should go to, e.g. reply@abc123.resend.app (no DNS needed) or reply@reply.karnafnadlan.com'
         type: string
         default: ''
+      smoke_lead_insert:
+        description: 'Create a test lead in production INSIDE a rolled-back transaction (proves new leads save; leaves nothing behind)'
+        type: boolean
+        default: false
       switch_reply_to_inbound:
         description: 'WRITE: set email_channel.replyTo = inboundAddress (only after an inbound test was received)'
         type: boolean
@@ -66,6 +70,7 @@ jobs:
           RUN_REPLIES_POLL: ${{ inputs.run_replies_poll }}
           SWITCH_REPLY_TO_INBOUND: ${{ inputs.switch_reply_to_inbound }}
           SET_INBOUND_ADDRESS: ${{ inputs.set_inbound_address }}
+          SMOKE_LEAD_INSERT: ${{ inputs.smoke_lead_insert }}
           SCHEDULE_AT: ${{ inputs.schedule_at }}
         run: |
           python3 - <<'EOF'
@@ -496,6 +501,26 @@ jobs:
                                where lower(email) = any(array[{arr}]) and consent_email = false
                                  and id not in (select id from upd)) as already_removed""",
                     'who = removed now; not_a_lead = no lead has that address; already_removed = was removed before', attempts=1)
+
+          # Proves the lead insert path on the real database. The DO block
+          # always raises at the end, so the insert, its triggers and any
+          # queued pg_net call roll back: nothing is left behind. The
+          # message says whether the insert worked.
+          if os.environ.get('SMOKE_LEAD_INSERT', 'false') == 'true':
+              print('== smoke: new lead insert (rolled back) ==')
+              print('-- proves: SMOKE_OK = a brand-new lead saves, with its consent event; anything else = still broken')
+              q('smoke lead insert', """
+                  do $$
+                  declare v public.leads; n int;
+                  begin
+                    select * into v from public.upsert_lead_smart(
+                      '+972500009977', 'ops-smoke@karnafnadlan.com', 'ops smoke', 'landing_page', 'form',
+                      '{"ops_smoke": true}'::jsonb);
+                    select count(*) into n from public.lead_events
+                     where lead_id = v.id and event_type = 'consent_granted';
+                    raise exception 'SMOKE_OK lead=% consent_email=% consent_events=%', v.id, v.consent_email, n;
+                  end $$""",
+                'the reply is an error by design; read its message', attempts=1)
 
           inbound = os.environ.get('SET_INBOUND_ADDRESS', '').strip().lower()
           if inbound:
