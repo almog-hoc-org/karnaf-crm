@@ -338,6 +338,14 @@ https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/leads-intake?token=<INTAKE
 
 כדי שזה יעבוד צריך פעם אחת להגדיר ב-Resend "קבלת מיילים" על תת-דומיין, ולהוסיף רשומת DNS אחת — בדיוק כמו שעשית כשאימתת את הדומיין.
 
+### הדרך הקצרה (בלי DNS, חצי דקה) — מומלץ
+ל-Resend יש כתובת קליטה מוכנה לכל חשבון, שלא צריכה שום הגדרת DNS.
+👉 <https://resend.com/emails> → לשונית **Receiving** → שלוש הנקודות (⋯) → תראה כתובת שנגמרת ב-`.resend.app` (למשל `abc123.resend.app`).
+תעתיק לי אותה לצ'אט. זה **לא סוד** — זו רק כתובת. משם אני מסיים הכל לבד.
+
+### הדרך הארוכה (כתובת על הדומיין שלך) — רק אם תרצה
+הדומיין שלך מנוהל ב-**Hostinger** (שרתי השמות `ns1.dns-parking.com`).
+
 ### שלב 10.1 — להפעיל קבלת מיילים ב-Resend
 👉 <https://resend.com/domains> → **Add Domain** → כתוב: `reply.karnafnadlan.com` → **Add**.
 במסך של הדומיין החדש, בחלק **Receiving** (קבלת מיילים), תופיע רשומת **MX** אחת.
@@ -345,7 +353,7 @@ https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/leads-intake?token=<INTAKE
 > למה תת-דומיין ולא הדומיין הראשי? כדי לא לשבור מיילים אחרים שאולי מגיעים ל-karnafnadlan.com.
 
 ### שלב 10.2 — להדביק את רשומת ה-MX
-באותו מקום שבו הדבקת את רשומות ה-DNS בפעם הקודמת: רשומה חדשה מסוג **MX**, עם ה-Name וה-Value וה-Priority שמופיעים ב-Resend, אחד לאחד. אם Resend מציג גם רשומות TXT לתת-הדומיין — להדביק גם אותן.
+ב-Hostinger → Domains → karnafnadlan.com → **DNS / Nameservers** (באותו מקום שבו הדבקת את רשומות ה-DNS בפעם הקודמת): רשומה חדשה מסוג **MX**, עם ה-Name וה-Value וה-Priority שמופיעים ב-Resend, אחד לאחד. אם Resend מציג גם רשומות TXT לתת-הדומיין — להדביק גם אותן.
 חזרה ל-Resend → **Verify**. כשזה ירוק — כתוב לי "הוספתי".
 
 > מסתבך? שלח צילום מסך של המסך ב-Resend ושל מסך ה-DNS, ואגיד בדיוק מה להדביק איפה.
@@ -377,7 +385,7 @@ https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/leads-intake?token=<INTAKE
 [ ] 7.5      Resend: חבילה בתשלום (מעל 100 ביום) → "שלח שוב" לקמפיין ה-311
 [ ] 8        Meta: Footer "להסרה השיבו הסר" ב-6 תבניות
 [ ] 9        רב מסר: Webhook בעת הסרה מרשימה (רק אם חוזרים לרב מסר)
-[ ] 10.1-2   Resend: reply.karnafnadlan.com + רשומת MX → "הוספתי"
+[ ] 10       Resend → Emails → Receiving → ⋯ → להעתיק לי את הכתובת שנגמרת ב-.resend.app
 [ ] 10       Claude: לחבר את Gmail של karnaf.yazamut → "חיברתי" (לתשובות של 29.9)
 ```
 
