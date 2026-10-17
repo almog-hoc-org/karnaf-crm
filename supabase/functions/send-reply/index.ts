@@ -51,10 +51,16 @@ Deno.serve(async (req) => {
   if (leadErr || !lead) return jsonResponse(req, { error: leadErr?.message ?? 'Lead not found' }, 404);
   if (lead.do_not_contact || lead.removed_by_request) return jsonResponse(req, { error: 'Lead suppressed' }, 409);
 
-  // Tier 8.A — replies follow the conversation's channel.
+  // Tier 8.A — replies follow the conversation's channel. The conversation
+  // must belong to the lead: otherwise a reply is stored under one lead's
+  // thread and sent to another lead's phone.
   const { data: conv } = await supabase.from('conversations')
-    .select('channel').eq('id', conversationId).maybeSingle();
-  const channel: string = conv?.channel ?? 'whatsapp';
+    .select('channel, lead_id').eq('id', conversationId).maybeSingle();
+  if (!conv) return jsonResponse(req, { error: 'Conversation not found' }, 404);
+  if (conv.lead_id !== leadId) {
+    return jsonResponse(req, { error: 'Conversation does not belong to this lead' }, 409);
+  }
+  const channel: string = conv.channel ?? 'whatsapp';
   if (channel === 'instagram') {
     if (!lead.ig_user_id) return jsonResponse(req, { error: 'Lead has no Instagram identity' }, 409);
   } else if (!lead.phone) {

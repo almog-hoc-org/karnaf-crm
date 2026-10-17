@@ -1,4 +1,4 @@
-# Auto-deploy to Supabase on every merge to master.
+# Auto-deploy to Supabase after CI passes on master.
 #
 # Replaces the manual "run supabase db push + functions deploy from a
 # laptop with the token" ritual: GitHub's runners have open network and
@@ -6,6 +6,13 @@
 # themselves. Migrations are applied through the Management API (token
 # only — no database password needed), matching how prod migrations
 # 085-092 were applied.
+#
+# Gated on CI (same pattern as vercel-production.yml): this used to run
+# on the push itself, in parallel with CI, so a migration that failed
+# db-smoke or an Edge Function that failed `deno check` was already in
+# production by the time CI went red — the migration-128 incident exactly.
+# Now it runs only when the CI run for a master commit succeeded, and it
+# checks out that tested commit.
 #
 # One-time setup: add the SUPABASE_TOKEN secret at
 #   Settings → Secrets and variables → Actions → New repository secret.
@@ -16,10 +23,9 @@
 name: Deploy Supabase
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - 'supabase/**'
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
   workflow_dispatch:
 
 concurrency:
@@ -29,11 +35,30 @@ concurrency:
 env:
   PROJECT_REF: svkzkpgccahwmyflobvn
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
+    # workflow_dispatch has no workflow_run payload; a dispatch always runs.
+    # For workflow_run: only a CI run that (1) succeeded, (2) was triggered
+    # by a PUSH (a pull_request run from a fork whose branch happens to be
+    # called "master" also reports head_branch == 'master'), (3) came from
+    # this repository, and (4) tested the commit that is master's tip right
+    # now (github.sha) — so a slow CI run for an older commit never
+    # redeploys older code over a newer deploy.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == 'master' &&
+       github.event.workflow_run.head_sha == github.sha)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Guard — secret must exist
         run: |
@@ -174,3 +199,24 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
         run: supabase functions deploy --project-ref "$PROJECT_REF"
+
+      # `functions deploy` only adds and updates — a function deleted from
+      # the repo stays deployed (and callable) in the project. Removals are
+      # explicit and listed here, never inferred from the directory listing,
+      # so nothing created outside the repo can be deleted by accident.
+      # Idempotent: deleting an already-absent function is not an error.
+      - name: Remove retired edge functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
+          RETIRED_FUNCTIONS: internal-send-reply ai-review
+        run: |
+          for fn in $RETIRED_FUNCTIONS; do
+            if [ -d "supabase/functions/$fn" ]; then
+              echo "::error::$fn is listed as retired but still exists in the repo"; exit 1
+            fi
+            if supabase functions delete "$fn" --project-ref "$PROJECT_REF" 2>/tmp/del.err; then
+              echo "deleted $fn"
+            else
+              grep -qiE "not found|does not exist|404" /tmp/del.err && echo "$fn already absent" || { cat /tmp/del.err; exit 1; }
+            fi
+          done

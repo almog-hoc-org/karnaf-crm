@@ -35,7 +35,9 @@ Deno.serve(async (req) => {
 
   let staff;
   try {
-    staff = await requireStaff(req, { allow: ['owner', 'admin'] });
+    // mia may READ the list (the bulk "assign owner" picker needs the
+    // assignable staff); every write below is owner/admin.
+    staff = await requireStaff(req, { allow: ['owner', 'admin', 'mia'] });
   } catch (err) {
     if (err instanceof AuthError) return jsonResponse(req, { error: err.message }, err.status);
     throw err;
@@ -53,6 +55,9 @@ Deno.serve(async (req) => {
   }
 
   if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
+  if (staff.role !== 'owner' && staff.role !== 'admin') {
+    return jsonResponse(req, { error: 'ניהול משתמשים פתוח לבעלים ולמנהלים בלבד' }, 403);
+  }
 
   const body = (await req.json().catch(() => ({}))) as Payload;
 
@@ -62,6 +67,10 @@ Deno.serve(async (req) => {
     }
     if (!ROLES.has(body.role)) return jsonResponse(req, { error: 'Invalid role' }, 400);
     if (body.password.length < 12) return jsonResponse(req, { error: 'Password too short (>=12)' }, 400);
+    // Only an owner can mint another owner.
+    if (body.role === 'owner' && staff.role !== 'owner') {
+      return jsonResponse(req, { error: 'רק בעלים יכול ליצור משתמש בתפקיד בעלים' }, 403);
+    }
 
     const created = await supabase.auth.admin.createUser({
       email: body.email,
@@ -97,6 +106,40 @@ Deno.serve(async (req) => {
     }
     if (body.isActive !== undefined) updates.is_active = body.isActive;
     if (body.fullName !== undefined) updates.full_name = body.fullName;
+
+    // Privilege boundary. Before this check an admin could POST
+    // {userId: <owner>, password: '...'} and own the owner's login, or
+    // {userId: <self>, role: 'owner'} and promote themselves. The rules:
+    //   - only an owner may touch an owner (role, active flag, password)
+    //     or hand out the owner role;
+    //   - nobody changes their own role or deactivates themselves;
+    //   - the last active owner cannot be demoted or deactivated.
+    const { data: target, error: targetErr } = await supabase
+      .from('profiles').select('id, role, is_active').eq('id', body.userId).maybeSingle();
+    if (targetErr) return jsonResponse(req, { error: targetErr.message }, 500);
+    if (!target) return jsonResponse(req, { error: 'User not found' }, 404);
+    const privileged = body.role !== undefined || body.isActive !== undefined || body.password !== undefined;
+    if (privileged && (target.role === 'owner' || body.role === 'owner') && staff.role !== 'owner') {
+      return jsonResponse(req, { error: 'רק בעלים יכול לשנות משתמש בתפקיד בעלים או להעניק תפקיד בעלים' }, 403);
+    }
+    if (body.userId === staff.userId) {
+      if (body.role !== undefined && body.role !== staff.role) {
+        return jsonResponse(req, { error: 'אי אפשר לשנות את התפקיד של עצמך' }, 403);
+      }
+      if (body.isActive === false) {
+        return jsonResponse(req, { error: 'אי אפשר להשבית את המשתמש של עצמך' }, 403);
+      }
+    }
+    const losesOwner = target.role === 'owner' && target.is_active &&
+      ((body.role !== undefined && body.role !== 'owner') || body.isActive === false);
+    if (losesOwner) {
+      const { count } = await supabase
+        .from('profiles').select('id', { count: 'exact', head: true })
+        .eq('role', 'owner').eq('is_active', true);
+      if ((count ?? 0) <= 1) {
+        return jsonResponse(req, { error: 'זה הבעלים הפעיל האחרון — אי אפשר להוריד אותו' }, 409);
+      }
+    }
 
     if (body.password !== undefined) {
       if (body.password.length < 12) return jsonResponse(req, { error: 'Password too short (>=12)' }, 400);

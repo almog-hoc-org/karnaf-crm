@@ -9,6 +9,7 @@ import { runMatchingRules } from '../_shared/automation-engine.ts';
 import { buildLeadContext } from '../_shared/event-context.ts';
 import { ensureProgramMember } from '../_shared/member-service.ts';
 import { alertChannelStatus, notifyOperator } from '../_shared/operator-alert.ts';
+import { loadEmailChannel } from '../_shared/email-channel.ts';
 
 type ActionName =
   | 'assign_to_mia'
@@ -23,6 +24,7 @@ type ActionName =
   | 'schedule_meeting'
   | 'update_meeting_status'
   | 'advance_deal_stage'
+  | 'record_seriousness_deposit'
   | 'update_lead_meta'
   | 'merge_lead_duplicate'
   | 'mark_program_member'
@@ -54,6 +56,11 @@ const ACTION_ROLES: Record<ActionName, StaffRole[]> = {
   schedule_meeting: ['owner', 'admin', 'mia', 'sales_rep'],
   update_meeting_status: ['owner', 'admin', 'mia', 'sales_rep'],
   advance_deal_stage: ['owner', 'admin', 'mia', 'sales_rep'],
+  // Records the deposit that starts the commission chain (trigger
+  // trg_deal_deposit_paid, migration 061). Nothing wrote
+  // seriousness_deposit_paid_at before this, so the "automatic" commission
+  // the UI promised could never be created.
+  record_seriousness_deposit: ['owner', 'admin', 'mia'],
   update_lead_meta: ['owner', 'admin', 'mia'],
   // The case body re-checks owner/admin; listed here so the generic
   // role gate lets the request through to that check.
@@ -264,7 +271,7 @@ Deno.serve(async (req) => {
   // — a question nobody could answer before, which is how ten alert call
   // sites stayed silent no-ops in production without anyone noticing.
   if (action === 'test_alert_channels') {
-    const configured = alertChannelStatus();
+    const configured = alertChannelStatus(await loadEmailChannel(supabase).catch(() => null));
     const result = await notifyOperator(supabase, {
       kind: 'selftest',
       dedupeKey: `selftest:${correlationId}`,
@@ -713,6 +720,35 @@ Deno.serve(async (req) => {
         p_metadata: { correlation_id: correlationId },
       });
       if (stageErr) return jsonResponse(req, { error: stageErr.message }, 400);
+      break;
+    }
+    case 'record_seriousness_deposit': {
+      if (!body.dealId) return jsonResponse(req, { error: 'Missing dealId' }, 400);
+      const { data: deal, error: dealErr } = await supabase
+        .from('deals')
+        .select('id, lead_id, track, status, partner_id, seriousness_deposit_paid_at')
+        .eq('id', body.dealId)
+        .eq('lead_id', leadId)
+        .maybeSingle();
+      if (dealErr) return jsonResponse(req, { error: dealErr.message }, 400);
+      if (!deal) return jsonResponse(req, { error: 'Deal not found for lead' }, 404);
+      if (deal.status !== 'open') return jsonResponse(req, { error: 'העסקה אינה פתוחה' }, 409);
+      if (deal.seriousness_deposit_paid_at) {
+        return jsonResponse(req, { ok: true, action, alreadyRecorded: true, depositPaidAt: deal.seriousness_deposit_paid_at });
+      }
+      if (deal.track === 'investor_mentorship' && !deal.partner_id) {
+        return jsonResponse(req, { error: 'לעסקה אין שותף — יש לשייך שותף לפני רישום דמי הרצינות (העמלה מחושבת ממנו)' }, 409);
+      }
+      const { error: depositErr } = await supabase
+        .from('deals')
+        .update({ seriousness_deposit_paid_at: ts })
+        .eq('id', deal.id)
+        .is('seriousness_deposit_paid_at', null);
+      if (depositErr) return jsonResponse(req, { error: depositErr.message }, 400);
+      await updateLeadFields(supabase, leadId, { last_human_touch_at: ts });
+      await logLeadEvent(supabase, leadId, 'deal_deposit_recorded', staff.role, {
+        ...meta, deal_id: deal.id, track: deal.track, partner_id: deal.partner_id, note: note ?? null,
+      });
       break;
     }
     case 'update_meeting_status': {

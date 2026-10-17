@@ -14,7 +14,15 @@ concurrency:
 
 jobs:
   deploy-production:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master'
+    # Same gate as deploy-supabase.yml: a push-triggered CI run from this
+    # repository for master's current tip — not a fork PR whose branch is
+    # also called "master", and not a slow run for an older commit.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'master' &&
+      github.event.workflow_run.head_sha == github.sha
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

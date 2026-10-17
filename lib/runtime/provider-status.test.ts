@@ -60,4 +60,12 @@ describe('shouldAdvanceStatus', () => {
     expect(shouldAdvanceStatus(null, 'sent')).toBe(true);
     expect(shouldAdvanceStatus('read', 'failed')).toBe(true);
   });
+
+  it('lets an unranked status fill an empty slot but never overwrite a ranked one', () => {
+    expect(shouldAdvanceStatus(null, 'warning')).toBe(true);
+    expect(shouldAdvanceStatus('', 'deleted')).toBe(true);
+    expect(shouldAdvanceStatus('read', 'unknown')).toBe(false);
+    expect(shouldAdvanceStatus('failed', 'deleted')).toBe(false);
+    expect(shouldAdvanceStatus('sent', 'warning')).toBe(false);
+  });
 });

@@ -63,6 +63,29 @@ jobs:
             fi
           done
 
+      # config.toml's own rule: every function directory MUST be registered,
+      # or it silently defaults to verify_jwt=true on the next clean deploy
+      # and a webhook/worker caller with a non-JWT secret starts getting 401.
+      - name: Every Edge Function is registered in config.toml
+        run: |
+          set -e
+          missing=0
+          for fn in supabase/functions/*/; do
+            name=$(basename "$fn")
+            [ -f "$fn/index.ts" ] || continue
+            if ! grep -q "^\[functions\.${name}\]" supabase/config.toml; then
+              echo "::error file=supabase/config.toml::missing [functions.${name}] entry"
+              missing=1
+            fi
+          done
+          for name in $(grep -o '^\[functions\.[^]]*\]' supabase/config.toml | sed 's/\[functions\.\(.*\)\]/\1/'); do
+            if [ ! -f "supabase/functions/${name}/index.ts" ]; then
+              echo "::error file=supabase/config.toml::[functions.${name}] has no directory"
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ]
+
   # Applies every migration to a real Postgres and creates a lead the way
   # the intakes do. Without it, a trigger that raises on every insert
   # (migration 128) passed CI and deploy, and no new lead could be saved

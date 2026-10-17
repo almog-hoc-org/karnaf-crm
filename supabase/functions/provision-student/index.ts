@@ -76,9 +76,9 @@ Deno.serve(async (req) => {
   // Idempotent fast path: already provisioned. Return the existing code so
   // the caller can re-send the link without double-billing the portal.
   if (lead.portal_invite_code) {
-    log.info('portal_already_provisioned', {
-      fn: 'provision-student', correlationId, leadId, code: lead.portal_invite_code,
-    });
+    // The invite code is a credential — it is returned to the caller, never
+    // written to the logs.
+    log.info('portal_already_provisioned', { fn: 'provision-student', correlationId, leadId });
     return jsonResponse(req, {
       ok: true,
       already: true,
@@ -186,8 +186,7 @@ Deno.serve(async (req) => {
       .eq('id', leadId)
       .maybeSingle();
     log.info('portal_provision_race_lost', {
-      fn: 'provision-student', correlationId, leadId, orphanCode: code,
-      savedCode: saved?.portal_invite_code ?? null,
+      fn: 'provision-student', correlationId, leadId, savedCodePresent: Boolean(saved?.portal_invite_code),
     });
     if (saved?.portal_invite_code) {
       return jsonResponse(req, {
@@ -208,9 +207,7 @@ Deno.serve(async (req) => {
     correlation_id: correlationId,
   });
 
-  log.info('portal_provisioned', {
-    fn: 'provision-student', correlationId, leadId, code,
-  });
+  log.info('portal_provisioned', { fn: 'provision-student', correlationId, leadId });
 
   return jsonResponse(req, {
     ok: true,

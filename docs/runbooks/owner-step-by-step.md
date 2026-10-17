@@ -368,6 +368,32 @@ https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/leads-intake?token=<INTAKE
 
 ---
 
+## בעיה 11 — 🔔 התראות וואטסאפ אליך "נשלחות" אבל לא מגיעות (שגיאה 131049)
+
+### מה קרה, במילה אחת
+כשהמערכת שולחת לך התראה בוואטסאפ מחוץ לחלון 24 השעות, היא חייבת להשתמש בתבנית מאושרת. היום היא משתמשת ב-`karnaf_followup_v1`, שמטא סיווגה כ**שיווקית** (MARKETING). למספר פרטי מותר לקבל רק כמה הודעות שיווקיות ביום מאותו עסק — ואחרי זה מטא **מקבלת** את ההודעה (המערכת רואה "נשלח") ודוחה אותה כמה דקות אחר כך (שגיאה 131049). ב-30 הימים האחרונים 76 התראות הלכו לאיבוד ככה.
+
+מה כבר תוקן בקוד (17.10): התראות **במייל** עובדות עכשיו גם בלי הגדרה (יוצאות מ-info@karnafnadlan.com לכתובת ה-forwardTo), ומסך "מצב המערכת" מציג כמה התראות וואטסאפ נדחו. הדבר היחיד שנשאר לך: תבנית מסוג UTILITY.
+
+### שלב 11.1 — ליצור תבנית UTILITY ב-Meta (5 דקות)
+👉 <https://business.facebook.com/wa/manage/message-templates/> → **Create template**
+- **Category:** Utility (לא Marketing!)
+- **Name:** `karnaf_alert_v1`
+- **Language:** Hebrew
+- **Body:** בדיוק שורה אחת: `{{1}}` (משתנה אחד בלבד, בלי טקסט נוסף)
+- **Sample for {{1}}:** `עדכון מערכת: ליד חדש ממתין לתשובה`
+- Submit. אישור של תבנית Utility לוקח בדרך כלל דקות עד שעה.
+
+### שלב 11.2 — להגיד למערכת להשתמש בה
+👉 Supabase → Project Settings → Edge Functions → Secrets → **Add new secret**:
+- Name: `ALERT_WHATSAPP_TEMPLATE`
+- Value: `karnaf_alert_v1`
+כתוב לי "הוספתי" — ואני מריץ "שלח הודעת בדיקה" ומוודא שהגיעה.
+
+> למה זה עובד: תבניות Utility (עדכוני שירות/מערכת) לא כפופות למכסת ההודעות השיווקיות היומית, אז ההתראות מגיעות גם כשאתה לא כתבת לבוט 24 שעות.
+
+---
+
 ## 📋 סיכום — סדר הפעולות
 
 ```
@@ -386,7 +412,9 @@ https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/leads-intake?token=<INTAKE
 [ ] 8        Meta: Footer "להסרה השיבו הסר" ב-6 תבניות
 [ ] 9        רב מסר: Webhook בעת הסרה מרשימה (רק אם חוזרים לרב מסר)
 [ ] 10       Resend → Emails → Receiving → ⋯ → להעתיק לי את הכתובת שנגמרת ב-.resend.app
-[ ] 10       Claude: לחבר את Gmail של karnaf.yazamut → "חיברתי" (לתשובות של 29.9)
+[✓] 10       Claude: Gmail של karnaf.yazamut חובר (16.10); מי שענה "הסר" הוסר
+[ ] 11.1     Meta: תבנית UTILITY בשם karnaf_alert_v1 עם {{1}} (ראה בעיה 11)
+[ ] 11.2     Supabase: להוסיף ALERT_WHATSAPP_TEMPLATE=karnaf_alert_v1 → "הוספתי"
 ```
 
 ---
