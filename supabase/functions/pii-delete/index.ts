@@ -1,7 +1,7 @@
-// GDPR-style hard delete: anonymises every row referencing a lead.
-// Sets removed_by_request=true + do_not_contact=true and invokes
-// purge_removed_pii with retention_days=-1 so the lead is anonymised
-// immediately (rather than waiting for the nightly purge).
+// GDPR-style erasure of ONE lead: marks it removed_by_request + do_not_contact
+// and anonymises the lead row and its messages right away (purge_lead_pii,
+// migration 137). It used to call purge_removed_pii(-1), which anonymised
+// every soft-deleted lead in the table, not just the one requested.
 //
 // Auth: owner / admin only. Requires a confirmation token derived from
 // the lead's current updated_at to prevent accidental wipes.
@@ -62,9 +62,11 @@ Deno.serve(async (req) => {
     .eq('id', body.leadId);
   if (markErr) return jsonResponse(req, { error: markErr.message }, 500);
 
-  const { error: purgeErr } = await supabase.rpc('purge_removed_pii', { p_retention_days: -1 });
-  if (purgeErr) {
-    log.warn('pii_purge_rpc_failed', { fn: 'pii-delete', correlationId, err: purgeErr.message });
+  const { data: purged, error: purgeErr } = await supabase.rpc('purge_lead_pii', { p_lead_id: body.leadId });
+  if (purgeErr || purged !== true) {
+    log.warn('pii_purge_rpc_failed', {
+      fn: 'pii-delete', correlationId, err: purgeErr?.message ?? 'lead not found by purge_lead_pii',
+    });
   }
 
   await supabase.from('integration_logs').insert({
@@ -72,15 +74,16 @@ Deno.serve(async (req) => {
     status: 'success',
     lead_id: body.leadId,
     request_data: { deleted_by: staff.userId, reason: body.reason },
-    response_data: { purge_ok: !purgeErr },
+    response_data: { purge_ok: !purgeErr && purged === true },
   });
 
   log.info('pii_deleted', { fn: 'pii-delete', correlationId, by: staff.userId, leadId: body.leadId });
 
+  const purgedNow = !purgeErr && purged === true;
   return jsonResponse(req, {
     ok: true,
     leadId: body.leadId,
-    purgedImmediately: !purgeErr,
-    note: purgeErr ? 'lead marked removed; nightly purge will anonymise' : 'lead anonymised',
+    purgedImmediately: purgedNow,
+    note: purgedNow ? 'lead anonymised' : 'lead marked removed; nightly purge will anonymise',
   });
 });

@@ -180,16 +180,13 @@ verify_jwt = false
 [functions.ai-watchdog]
 verify_jwt = false
 
-[functions.internal-send-reply]
-verify_jwt = false
-
 # Cross-project provisioning — bearer = service-role key.
 [functions.provision-student]
 verify_jwt = false
 
 # Operator endpoints — requireStaff (JWT). Declared explicitly so the
 # registry stays complete even though true is the default.
-[functions.ai-review]
+[functions.ops-status]
 verify_jwt = true
 
 [functions.broadcasts]

@@ -74,5 +74,8 @@ const RANK: Record<string, number> = { sent: 1, delivered: 2, read: 3, failed: 4
 export function shouldAdvanceStatus(current: string | null | undefined, next: string): boolean {
   const cur = RANK[(current ?? '').toLowerCase()] ?? 0;
   const nxt = RANK[next.toLowerCase()] ?? 0;
-  return nxt > cur || nxt === 0;
+  // An unranked status ('warning', 'deleted', provider oddities) may fill an
+  // empty slot but never overwrites a ranked one — it used to replace 'read'.
+  if (nxt === 0) return cur === 0;
+  return nxt > cur;
 }

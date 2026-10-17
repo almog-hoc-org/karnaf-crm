@@ -30,7 +30,9 @@ export interface EmailChannelConfig {
 }
 
 export const DEFAULT_EMAIL_CHANNEL: EmailChannelConfig = {
-  provider: 'ravmesser',
+  // Resend since migration 130 (the Settings form defaults to it too); an
+  // unknown or missing provider used to fall back to Rav Messer here.
+  provider: 'resend',
   fromName: 'קרנף נדל"ן',
   fromEmail: '',
   replyTo: '',
@@ -42,7 +44,7 @@ export const DEFAULT_EMAIL_CHANNEL: EmailChannelConfig = {
 export function resolveEmailChannel(raw: unknown): EmailChannelConfig {
   const obj = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
   const str = (v: unknown, fallback: string) => (typeof v === 'string' && v.trim() ? v.trim() : fallback);
-  const provider = obj.provider === 'resend' ? 'resend' : 'ravmesser';
+  const provider = obj.provider === 'ravmesser' ? 'ravmesser' : 'resend';
   const replyTo = str(obj.replyTo, '');
   const inboundAddress = str(obj.inboundAddress, '');
   return {

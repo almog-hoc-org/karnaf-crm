@@ -11,8 +11,13 @@
 // Env (all optional; each channel is independently skipped when unset):
 //   ALERT_WHATSAPP_TO  — international digits, no plus, e.g. 972559966175
 //   RESEND_API_KEY     — from resend.com/api-keys, "Sending access"
-//   ALERT_EMAIL_TO     — inbox that receives alerts
-//   ALERT_EMAIL_FROM   — alerts@<verified domain>, or onboarding@resend.dev
+//   ALERT_EMAIL_TO     — inbox that receives alerts; falls back to the
+//                        email channel's forwardTo (the owner's inbox)
+//   ALERT_EMAIL_FROM   — alerts@<verified domain>; falls back to the email
+//                        channel's sender (info@karnafnadlan.com), which is
+//                        on the verified domain anyway. Production ran for
+//                        weeks with RESEND_API_KEY set and no FROM, so every
+//                        email alert was skipped as `no_alert_email_from`.
 //   TELEGRAM_BOT_TOKEN + TELEGRAM_ALERT_CHAT_ID — the pre-existing channel
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -22,6 +27,7 @@ import { notifyTelegram, type AlertSeverity } from './notify-telegram.ts';
 import { sendWhatsAppTemplate, sendWhatsAppText } from './whatsapp-provider.ts';
 import { isFreeformAllowed } from './conversation-window.ts';
 import { normalizeIsraeliPhone, toWhatsAppPhone } from './phone.ts';
+import { type EmailChannelConfig, formatFromAddress, loadEmailChannel } from './email-channel.ts';
 
 export type { AlertSeverity };
 
@@ -51,6 +57,11 @@ export interface ChannelResult {
   ok: boolean;
   skipped?: string;
   detail?: string;
+  /** Provider message id (WhatsApp): lets a later delivery receipt mark
+   *  an alert Meta accepted but then refused (131049, 131047). */
+  messageId?: string;
+  /** Filled in by the receipt reconciliation, e.g. "failed:131049". */
+  receipt?: string;
 }
 
 export interface OperatorAlertResult {
@@ -65,10 +76,18 @@ const DEFAULT_THROTTLE_MINUTES = 60;
 // fallback template's {{1}} is not unbounded. Keep the one-liner well inside.
 const TEMPLATE_PARAM_LIMIT = 600;
 
-export function alertChannelStatus(): Record<string, boolean> {
+/** Where email alerts go and who sends them: env first, email channel config as fallback. */
+function emailAlertAddresses(cfg: EmailChannelConfig | null): { to: string; from: string } {
+  const to = optional('ALERT_EMAIL_TO') || cfg?.forwardTo || '';
+  const from = optional('ALERT_EMAIL_FROM') || (cfg?.fromEmail ? formatFromAddress({ ...cfg, fromName: `${cfg.fromName || 'קרנף CRM'} · התראות` }) : '');
+  return { to, from };
+}
+
+export function alertChannelStatus(cfg: EmailChannelConfig | null = null): Record<string, boolean> {
+  const email = emailAlertAddresses(cfg);
   return {
     whatsapp: Boolean(optional('ALERT_WHATSAPP_TO')),
-    email: Boolean(optional('RESEND_API_KEY') && optional('ALERT_EMAIL_TO') && optional('ALERT_EMAIL_FROM')),
+    email: Boolean(optional('RESEND_API_KEY') && email.to && email.from),
     telegram: Boolean(optional('TELEGRAM_BOT_TOKEN') && optional('TELEGRAM_ALERT_CHAT_ID')),
   };
 }
@@ -97,9 +116,13 @@ export async function notifyOperator(
   const body = composeBody(alert);
   const oneLine = composeOneLine(alert);
 
+  // The email channel config supplies the fallback sender/recipient; a
+  // failure to read it must not stop the other channels.
+  const emailCfg = await loadEmailChannel(supabase).catch(() => null);
+
   const [whatsapp, email, telegram] = await Promise.all([
     sendWhatsAppAlert(supabase, alert, oneLine),
-    sendEmailAlert(alert, body),
+    sendEmailAlert(alert, body, emailCfg),
     sendTelegramAlert(alert),
   ]);
 
@@ -235,27 +258,26 @@ async function sendWhatsAppAlert(
   const lastInbound = await operatorLastInboundAt(supabase, to).catch(() => null);
   if (!isFreeformAllowed(lastInbound, 23)) {
     const template = await sendTemplate();
-    if (template.ok) return { ok: true, detail: `template:${templateName}` };
+    if (template.ok) return { ok: true, detail: `template:${templateName}`, messageId: template.providerMessageId };
     return { ok: false, detail: `template (outside 24h window): ${template.error ?? 'failed'}`.slice(0, 400) };
   }
 
   const freeform = await sendWhatsAppText(to, composeBody(alert)).catch((err) => ({
     ok: false as const, error: String(err),
   }));
-  if (freeform.ok) return { ok: true, detail: 'freeform' };
+  if (freeform.ok) return { ok: true, detail: 'freeform', messageId: freeform.providerMessageId };
 
   const template = await sendTemplate();
-  if (template.ok) return { ok: true, detail: `template:${templateName}` };
+  if (template.ok) return { ok: true, detail: `template:${templateName}`, messageId: template.providerMessageId };
   return {
     ok: false,
     detail: `freeform: ${freeform.error ?? 'failed'} | template: ${template.error ?? 'failed'}`.slice(0, 400),
   };
 }
 
-async function sendEmailAlert(alert: OperatorAlert, body: string): Promise<ChannelResult> {
+async function sendEmailAlert(alert: OperatorAlert, body: string, cfg: EmailChannelConfig | null): Promise<ChannelResult> {
   const apiKey = optional('RESEND_API_KEY');
-  const to = optional('ALERT_EMAIL_TO');
-  const from = optional('ALERT_EMAIL_FROM');
+  const { to, from } = emailAlertAddresses(cfg);
   if (!apiKey) return { ok: false, skipped: 'no_resend_key' };
   if (!to) return { ok: false, skipped: 'no_alert_email_to' };
   if (!from) return { ok: false, skipped: 'no_alert_email_from' };

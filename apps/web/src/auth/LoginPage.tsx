@@ -74,7 +74,10 @@ export function LoginPage() {
   // destination. Users with a session but no role stay here so the warning
   // about "profile not active" is visible.
   if (auth.session && auth.role) {
-    const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : '/';
+    // Same-origin paths only. `//evil.com` and `/\evil.com` are both read
+    // as protocol-relative URLs by browsers, so a backslash anywhere in the
+    // target is rejected along with the double slash.
+    const safeNext = next.startsWith('/') && !next.startsWith('//') && !next.includes('\\') ? next : '/';
     return <Navigate to={safeNext} replace />;
   }
 

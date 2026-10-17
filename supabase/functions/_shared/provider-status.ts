@@ -10,6 +10,7 @@
 // call applyProviderStatuses.
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { log } from './logger.ts';
 
 export interface ProviderStatus {
   providerMessageId: string;
@@ -76,7 +77,10 @@ const RANK: Record<string, number> = { sent: 1, delivered: 2, read: 3, failed: 4
 export function shouldAdvanceStatus(current: string | null | undefined, next: string): boolean {
   const cur = RANK[(current ?? '').toLowerCase()] ?? 0;
   const nxt = RANK[next.toLowerCase()] ?? 0;
-  return nxt > cur || nxt === 0;
+  // An unranked status ('warning', 'deleted', provider oddities) may fill an
+  // empty slot but never overwrites a ranked one — it used to replace 'read'.
+  if (nxt === 0) return cur === 0;
+  return nxt > cur;
 }
 
 
@@ -99,7 +103,18 @@ export async function applyProviderStatuses(
       .select('id, lead_id, conversation_id, provider_status')
       .eq('provider_message_id', s.providerMessageId)
       .maybeSingle();
-    if (!message) continue;
+    if (!message) {
+      // Not a customer message — maybe an alert to the owner. Meta accepts
+      // those with a 200 and refuses them minutes later in a receipt
+      // (131049 marketing cap, 131047 outside the window); the ledger said
+      // "delivered" for 76 such alerts in 30 days. Record the receipt on
+      // the alert so ops-status can show it.
+      if (s.status === 'failed' || s.status === 'delivered' || s.status === 'read') {
+        await reconcileAlertReceipt(supabase, s).catch((err) =>
+          log.warn('alert_receipt_reconcile_failed', { fn: 'provider-status', correlationId, err: String(err) }));
+      }
+      continue;
+    }
     result.matched++;
 
     const updates: Record<string, unknown> = {};
@@ -143,4 +158,30 @@ export async function applyProviderStatuses(
     }
   }
   return result;
+}
+
+/** Stamp a delivery receipt onto the operator alert that sent this message id. */
+async function reconcileAlertReceipt(supabase: SupabaseClient, s: ProviderStatus): Promise<void> {
+  const { data: alert } = await supabase
+    .from('operator_alerts')
+    .select('id, channel_results')
+    .eq('channel_results->whatsapp->>messageId', s.providerMessageId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!alert) return;
+  const results = (alert.channel_results ?? {}) as Record<string, Record<string, unknown>>;
+  const whatsapp = { ...(results.whatsapp ?? {}) };
+  const receipt = s.status === 'failed'
+    ? `failed:${s.errorCode ?? 'unknown'}${s.errorMessage ? `:${s.errorMessage.slice(0, 80)}` : ''}`
+    : s.status;
+  // A failure after a "delivered" would be odd; a later "read" after
+  // "delivered" is normal. Never downgrade a failure to anything else.
+  if (typeof whatsapp.receipt === 'string' && whatsapp.receipt.startsWith('failed:') && s.status !== 'failed') return;
+  whatsapp.receipt = receipt;
+  whatsapp.receiptAt = new Date().toISOString();
+  await supabase
+    .from('operator_alerts')
+    .update({ channel_results: { ...results, whatsapp } })
+    .eq('id', alert.id);
 }
