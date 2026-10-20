@@ -352,6 +352,7 @@ function EditableText({
       <input
         autoFocus
         className="kf-input text-xs"
+        aria-label={placeholder ?? 'ערך'}
         value={draft}
         maxLength={maxLength}
         placeholder={placeholder}
@@ -364,7 +365,7 @@ function EditableText({
           }
         }}
       />
-      <button type="button" className="kf-btn kf-btn-primary text-xs" onClick={() => { onSave(draft.trim()); setEditing(false); }}>✓</button>
+      <button type="button" className="kf-btn kf-btn-primary text-xs" aria-label="שמירה" title="שמירה" onClick={() => { onSave(draft.trim()); setEditing(false); }}>✓</button>
     </span>
   );
 }

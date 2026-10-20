@@ -9,7 +9,7 @@
 // delivered/read and late failures were never recorded. Both webhooks now
 // call applyProviderStatuses.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { log } from './logger.ts';
 
 export interface ProviderStatus {

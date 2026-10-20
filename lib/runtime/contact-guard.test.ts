@@ -56,15 +56,20 @@ describe('canContactLead', () => {
       .toEqual({ ok: true });
   });
 
-  it('enforces email consent unless explicitly waived', () => {
-    const noConsent = lead({ consent_email: false });
-    expect(canContactLead(noConsent, { channel: 'email', kind: 'proactive', now: NOW }))
+  it('enforces email consent; waiving it only admits leads who were never asked', () => {
+    const refused = lead({ consent_email: false });
+    expect(canContactLead(refused, { channel: 'email', kind: 'proactive', now: NOW }))
       .toEqual({ ok: false, reason: 'no_consent' });
-    expect(canContactLead(noConsent, { channel: 'email', kind: 'proactive', requireEmailConsent: false, now: NOW }))
-      .toEqual({ ok: true });
-    // Unknown consent is not consent.
+    // חוק הספאם: an explicit refusal (unsubscribe link, "הסר") is a hard
+    // block — the requireConsent setting must not override it.
+    expect(canContactLead(refused, { channel: 'email', kind: 'proactive', requireEmailConsent: false, now: NOW }))
+      .toEqual({ ok: false, reason: 'no_consent' });
+    // Unknown consent is not consent...
     expect(canContactLead(lead({ consent_email: null }), { channel: 'email', kind: 'proactive', now: NOW }))
       .toEqual({ ok: false, reason: 'no_consent' });
+    // ...unless the owner waives the opt-in requirement for the never-asked.
+    expect(canContactLead(lead({ consent_email: null }), { channel: 'email', kind: 'proactive', requireEmailConsent: false, now: NOW }))
+      .toEqual({ ok: true });
   });
 
   it('blocks proactive WhatsApp after a removal request, but never a reply', () => {

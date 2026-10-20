@@ -1,4 +1,5 @@
 import { jsonResponse, preflight } from '../_shared/cors.ts';
+import { log } from '../_shared/logger.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 
@@ -21,7 +22,15 @@ Deno.serve(async (req) => {
   // inbox (different exclusions, 2000-row cap), so the KPI and the
   // "לענות עכשיו" lane showed different numbers.
   const INBOX_LIMIT = 500;
-  const { data: inboxRows } = await supabase.rpc('attention_inbox', { p_limit: INBOX_LIMIT });
+  const { data: inboxRows, error: inboxErr } = await supabase.rpc('attention_inbox', { p_limit: INBOX_LIMIT });
+  if (inboxErr) {
+    // A failed RPC used to read as "0 waiting" — the most reassuring number
+    // on the screen, for the least reassuring reason. Leave the KPI
+    // undefined (the UI falls back to the summary's own count) and say so.
+    log.warn('dashboard_summary_inbox_failed', { fn: 'dashboard-summary', err: inboxErr.message });
+    const summary = { ...(data as Record<string, unknown>), awaitingReplyUnavailable: true };
+    return jsonResponse(req, { ok: true, summary });
+  }
   const rows = (inboxRows ?? []) as Array<{ kind: string }>;
   const awaitingReplyNow = rows
     .filter((r) => r.kind === 'awaiting_reply' || r.kind === 'mia_reply').length;

@@ -387,6 +387,7 @@ export type AdminAction =
   | 'schedule_meeting'
   | 'update_meeting_status'
   | 'advance_deal_stage'
+  | 'record_seriousness_deposit'
   | 'update_lead_meta'
   | 'merge_lead_duplicate'
   | 'mark_program_member'
@@ -637,6 +638,8 @@ export async function fetchAnalyticsSummary() {
     promptVariants: PromptVariantOutcome[];
     cohorts: LeadCohortRow[];
     firstResponseTimes: FirstResponseTimeRow[];
+    /** Sections whose view query failed (name → message). Empty when all loaded. */
+    errors?: Record<string, string>;
   }>('/analytics-summary');
 }
 
@@ -1057,10 +1060,6 @@ export async function fetchSavedLists() {
 
 export async function postSaveList(name: string, definition: BroadcastSegment) {
   return postJson<{ ok: true; list: SavedListRow }>('/broadcasts', { action: 'save_list', name, definition });
-}
-
-export async function postDeleteList(id: string) {
-  return postJson<{ ok: true }>('/broadcasts', { action: 'delete_list', id });
 }
 
 // === Landing pages =========================================================

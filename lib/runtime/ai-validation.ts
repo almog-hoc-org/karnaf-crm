@@ -63,7 +63,7 @@ const ALLOWED_QUEUES = new Set([
   'first_response_due', 'hot_lead', 'sla_risk', 'human_handoff',
   'payment_pending', 'phone_escalation', 'nurture_due', 'dormant_review',
   'failed_automation', 'weekend_carryover', 'low_fit_cleanup',
-  'manual_review_required',
+  'manual_review_required', 'ai_stuck',
 ]);
 
 export function validateAiDecision(input: ValidationInput): ValidationResult {

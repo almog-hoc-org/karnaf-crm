@@ -42,7 +42,7 @@
 // For the per-tick path (where we already SELECTed the row inline), use
 // `buildLeadContextFromRow` to avoid a duplicate query.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 
 // The narrow subset of columns that buildLeadContextFromRow accepts.
 // More fields can be added without breaking call sites because the

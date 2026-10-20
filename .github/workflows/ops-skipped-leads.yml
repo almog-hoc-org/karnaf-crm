@@ -368,6 +368,54 @@ jobs:
             'email.skipped=no_alert_email_from until ALERT_EMAIL_FROM is added')
 
           # ── 6. Loose ends ────────────────────────────────────────────
+          # Privilege model (migration 136). Runs as postgres, which may SET
+          # ROLE anon — the same role PostgREST uses for the anon key in the
+          # web bundle. Every row here should read "closed".
+          q('anon privilege probe (migration 136)', """
+              select 'functions executable by anon' as item,
+                     count(*)::text as value
+                from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.prokind in ('f','p')
+                 and p.prorettype <> 'trigger'::regtype
+                 and has_function_privilege('anon', p.oid, 'execute')
+                 and not exists (select 1 from pg_depend d where d.objid = p.oid and d.classid = 'pg_proc'::regclass and d.deptype = 'e')
+              union all
+              select 'service-only RPCs executable by authenticated',
+                     string_agg(p.proname, ', ')
+                from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.prokind in ('f','p')
+                 and p.proname in ('claim_outbound_dispatch','transition_lead_status','upsert_lead_smart','merge_leads',
+                                   'team_workload_summary','bulk_assign_lead_owner','bulk_change_lead_heat',
+                                   'fail_outbound_dispatch','complete_outbound_dispatch','claim_conversation','release_conversation')
+                 and has_function_privilege('authenticated', p.oid, 'execute')
+              union all
+              select 'views readable by anon',
+                     coalesce(string_agg(c.relname, ', '), '')
+                from pg_class c join pg_namespace n on n.oid = c.relnamespace
+               where n.nspname = 'public' and c.relkind = 'v'
+                 and has_table_privilege('anon', c.oid, 'select')
+              union all
+              select 'views NOT security_invoker',
+                     coalesce(string_agg(c.relname, ', '), '')
+                from pg_class c join pg_namespace n on n.oid = c.relnamespace
+               where n.nspname = 'public' and c.relkind = 'v'
+                 and not exists (select 1 from pg_options_to_table(c.reloptions) o
+                                  where o.option_name = 'security_invoker' and lower(o.option_value) in ('true','on','1'))
+              union all
+              select 'permissive write policies for authenticated',
+                     coalesce(string_agg(tablename || '.' || policyname, ', '), '')
+                from pg_policies
+               where schemaname = 'public' and cmd in ('ALL','INSERT','UPDATE','DELETE')
+                 and roles = '{authenticated}'::name[] and permissive = 'PERMISSIVE'
+              union all
+              select 'tables without RLS',
+                     coalesce(string_agg(tablename, ', '), '')
+                from pg_tables where schemaname = 'public' and not rowsecurity
+              union all
+              select 'latest migration applied',
+                     max(version) from supabase_migrations.schema_migrations""",
+            'every count should be 0 and every list empty; latest migration >= 137')
+
           q('auth audit log sanity', """
               select count(*) as rows_7d,
                      max(created_at) as newest
@@ -494,7 +542,9 @@ jobs:
                       )
                       select (select count(*) from upd) as removed,
                              (select count(*) from skip) as pending_sends_cancelled,
-                             (select json_agg(json_build_object('email', email, 'name', full_name)) from upd) as who,
+                             -- Actions logs are kept by GitHub; names and full addresses stay out of them.
+                             (select json_agg(json_build_object('email', regexp_replace(email, '^(.).*(@.*)$', '\\1***\\2'),
+                                                                'name', left(coalesce(full_name, ''), 1) || '***')) from upd) as who,
                              (select json_agg(e) from unnest(array[{arr}]) e
                                where e not in (select lower(email) from leads where email is not null)) as not_a_lead,
                              (select json_agg(lower(email)) from leads

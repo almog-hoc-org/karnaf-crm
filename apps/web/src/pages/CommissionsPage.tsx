@@ -81,8 +81,8 @@ export function CommissionsPage() {
         <h1 className="text-2xl font-semibold tracking-tight">עמלות</h1>
       </header>
       <PageIntro>
-        עמלות נוצרות אוטומטית כשמתעדים תשלום דמי רצינות על העסקה. כשחותמים חוזה
-        → ״לחיוב״. ידני: סימון התשלום שהתקבל בפועל.
+        עמלה נוצרת כשמסמנים בכרטיס הליד ״התקבלו דמי רצינות״ על עסקת ליווי משקיעים
+        שיש לה שותף. כשחותמים חוזה → ״לחיוב״. ידני: סימון התשלום שהתקבל בפועל.
       </PageIntro>
 
       {/* Summary chips */}
@@ -134,7 +134,11 @@ export function CommissionsPage() {
                   <td data-label="שותף">{c.partners?.full_name ?? '—'}</td>
                   <td data-label="עסקה">
                     {c.deal_id ? (
-                      <Link to={`/leads`} className="text-brand-700 hover:underline" title={c.deal_id}>
+                      <Link
+                        to={c.deals?.lead_id ? `/leads/${c.deals.lead_id}` : '/leads'}
+                        className="text-brand-700 hover:underline"
+                        title={c.deal_id}
+                      >
                         {c.deal_id.slice(0, 8)}
                       </Link>
                     ) : '—'}

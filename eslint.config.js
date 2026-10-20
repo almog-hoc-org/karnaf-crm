@@ -26,6 +26,20 @@ export default tseslint.config(
     },
   },
   {
+    // Vercel Edge handlers: shipped to production, so they are linted and
+    // type-checked like everything else (they used to be in neither).
+    files: ['api/**/*.ts'],
+    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: { ...globals.browser, ...globals.es2022 },
+    },
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-explicit-any': 'warn',
+    },
+  },
+  {
     files: ['supabase/functions/**/*.ts'],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: {

@@ -1,4 +1,4 @@
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import type { AiDecisionContext, AiDecisionOutput } from './ai-contract.ts';
 import { buildAiSystemPrompt, buildAiUserPrompt } from './ai-prompt.ts';
 import { selectPlaybook } from './playbooks.ts';

@@ -379,9 +379,12 @@ https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/leads-intake?token=<INTAKE
 👉 <https://business.facebook.com/wa/manage/message-templates/> → **Create template**
 - **Category:** Utility (לא Marketing!)
 - **Name:** `karnaf_alert_v1`
-- **Language:** Hebrew
-- **Body:** בדיוק שורה אחת: `{{1}}` (משתנה אחד בלבד, בלי טקסט נוסף)
-- **Sample for {{1}}:** `עדכון מערכת: ליד חדש ממתין לתשובה`
+- **Language:** Hebrew (קוד `he`)
+- **Header / Footer / Buttons:** להשאיר ריק — רק Body.
+- **Body:** להעתיק בדיוק את השורה הזו, כולל ה-`{{1}}` באמצע:
+  `עדכון ממערכת קרנף CRM: {{1}} — הפרטים המלאים במסך מצב המערכת.`
+  חשוב: לא לכתוב רק `{{1}}` בלי טקסט מסביב — מטא דוחה תבנית שכולה משתנה אחד. הטקסט הקבוע נשאר, והמערכת מכניסה את תוכן ההתראה במקום ה-`{{1}}`.
+- **Sample for {{1}}:** `ליד חדש ממתין לתשובה` — הדוגמה צריכה להיראות כמו עדכון תפעולי (לא כמו פרסומת), אחרת מטא מסווגת את התבנית כ-Marketing וחוזרים לאותה בעיה.
 - Submit. אישור של תבנית Utility לוקח בדרך כלל דקות עד שעה.
 
 ### שלב 11.2 — להגיד למערכת להשתמש בה
@@ -413,7 +416,7 @@ https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/leads-intake?token=<INTAKE
 [ ] 9        רב מסר: Webhook בעת הסרה מרשימה (רק אם חוזרים לרב מסר)
 [ ] 10       Resend → Emails → Receiving → ⋯ → להעתיק לי את הכתובת שנגמרת ב-.resend.app
 [✓] 10       Claude: Gmail של karnaf.yazamut חובר (16.10); מי שענה "הסר" הוסר
-[ ] 11.1     Meta: תבנית UTILITY בשם karnaf_alert_v1 עם {{1}} (ראה בעיה 11)
+[ ] 11.1     Meta: תבנית UTILITY בשם karnaf_alert_v1 — טקסט קבוע עם {{1}} אחד באמצע, לא רק {{1}} (ראה בעיה 11)
 [ ] 11.2     Supabase: להוסיף ALERT_WHATSAPP_TEMPLATE=karnaf_alert_v1 → "הוספתי"
 ```
 

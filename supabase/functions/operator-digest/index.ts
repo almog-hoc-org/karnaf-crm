@@ -20,8 +20,8 @@
 
 import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
-import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env, optional } from '../_shared/env.ts';
+import { verifyAnyBearer } from '../_shared/webhook-signature.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { lastAlertAt, notifyOperator } from '../_shared/operator-alert.ts';
 
@@ -42,14 +42,18 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
 
   const correlationId = correlationFromRequest(req);
-  // Shares the SLA worker's secret: same trust boundary (pg_cron), one less
-  // secret for the operator to provision.
-  const expected = optional('OPERATOR_DIGEST_SECRET') || env.slaWorkerSecret();
-  if (!expected) {
+  // Accepts EITHER the dedicated secret or the SLA worker's (same trust
+  // boundary: pg_cron). The cron caller — run_operator_digest, migration 122 —
+  // sends vault `sla_worker_secret` and nothing else, so OPERATOR_DIGEST_SECRET
+  // must never become exclusive. Until 20.10 it did (`optional(...) ||
+  // slaWorkerSecret()`): setting it, as .env.example then suggested, meant 401
+  // on every cron tick. Same shape as automation-tick.
+  const expectedSecrets = [optional('OPERATOR_DIGEST_SECRET'), env.slaWorkerSecret()].filter(Boolean);
+  if (expectedSecrets.length === 0) {
     log.error('operator_digest_secret_missing', { fn: 'operator-digest', correlationId });
     return jsonResponse(req, { error: 'Worker secret not configured' }, 500);
   }
-  if (!verifyBearer(req, expected)) return jsonResponse(req, { error: 'Unauthorized' }, 401);
+  if (!verifyAnyBearer(req, expectedSecrets)) return jsonResponse(req, { error: 'Unauthorized' }, 401);
 
   try {
     const supabase = getServiceSupabase();

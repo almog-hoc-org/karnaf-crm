@@ -37,6 +37,3 @@ export function recordFailure(name: string, cfg: BreakerConfig, now = Date.now()
   return openedAt !== null;
 }
 
-export function resetBreaker(name: string) {
-  states.delete(name);
-}

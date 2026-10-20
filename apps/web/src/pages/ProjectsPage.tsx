@@ -51,7 +51,7 @@ export function ProjectsPage() {
 
       <PageIntro>
         כל פרויקט פריסייל אוסף הרשמות עד שמגיע ליעד הגיוס. אחוזי הגיוס מחושבים
-        אוטומטית מהעסקאות הפתוחות והסגורות. סטטוס בגיוס → סגור → בוצע.
+        מהעסקאות שמקושרות לפרויקט (עסקת פריסייל מקושרת לפרויקט בכרטיס הליד). סטטוס בגיוס → סגור → בוצע.
       </PageIntro>
 
       <CreateForm onSubmit={(payload) => action.mutate(payload)} busy={action.isPending} />

@@ -23,6 +23,9 @@ interface ReplayInputBatch { filter: 'failed_recent'; limit?: number; sourceOnly
 
 const SOURCE_TO_PATH: Record<string, string> = {
   'leads-intake': 'leads-intake',
+  // whatsapp-webhook files its deliveries under its own name (32 → 'whatsapp'
+  // was never written by anyone); both spellings land on the same function.
+  'whatsapp-webhook': 'whatsapp-webhook',
   'whatsapp': 'whatsapp-webhook',
   'email': 'email-webhook',
   'payment': 'payment-webhook',

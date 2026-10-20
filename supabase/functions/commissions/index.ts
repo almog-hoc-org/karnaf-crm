@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
     const statusFilter = url.searchParams.get('status'); // pending|to_bill|paid|cancelled or null=all
     let query = supabase
       .from('commissions')
-      .select('*, partners!inner(id, full_name, domain), deals!inner(id, track, value, status)')
+      .select('*, partners!inner(id, full_name, domain), deals!inner(id, lead_id, track, value, status)')
       .order('status')
       .order('to_bill_at', { ascending: true, nullsFirst: false })
       .order('pending_at', { ascending: false });

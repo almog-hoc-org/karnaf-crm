@@ -17,7 +17,7 @@
 // email and Telegram rather than Telegram alone (which production never had
 // configured, making every one of these a silent no-op).
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { getRuntimeConfig } from './config-service.ts';
 import { logLeadEvent } from './lead-service.ts';
 import { notifyOperator } from './operator-alert.ts';

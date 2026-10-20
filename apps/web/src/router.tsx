@@ -115,7 +115,9 @@ const router = createBrowserRouter([
           { path: '/queue', element: page(<QueuePage />) },
           { path: '/analytics', element: page(<AnalyticsPage />, MANAGER) },
           { path: '/users', element: page(<UsersPage />, ADMIN) },
-          { path: '/team', element: page(<TeamPage />, MANAGER) },
+          // team-workload is owner/admin only on the server; a MANAGER route
+          // just showed mia a page that always errored.
+          { path: '/team', element: page(<TeamPage />, ADMIN) },
           { path: '/admin/sources', element: page(<SourcesPage />, ADMIN) },
           { path: '/admin/landing-pages', element: page(<LandingPagesPage />, ADMIN) },
           { path: '/partners', element: page(<PartnersPage />, MANAGER) },

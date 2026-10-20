@@ -184,16 +184,26 @@ Deno.serve(async (req) => {
           .select('id')
           .single();
         if (placeholder.error) {
-          log.error('fb_placeholder_insert_failed', {
-            fn: 'fb-leadgen-webhook', correlationId, err: placeholder.error.message,
+          // Unique (external_source, external_id) since migration 141: Meta
+          // re-delivered a leadgen we already hold as a placeholder.
+          const { data: held } = String(placeholder.error.message || '').includes('duplicate key value')
+            ? await supabase.from('leads').select('id')
+              .eq('external_source', 'facebook').eq('external_id', v.leadgen_id).limit(1).maybeSingle()
+            : { data: null };
+          if (!held?.id) {
+            log.error('fb_placeholder_insert_failed', {
+              fn: 'fb-leadgen-webhook', correlationId, err: placeholder.error.message,
+            });
+            continue;
+          }
+          leadId = held.id as string;
+        } else {
+          leadId = placeholder.data!.id;
+          await logLeadEvent(supabase, leadId, 'lead_created', 'system', {
+            source: 'facebook_lead_ad', intake_channel: 'form',
+            hydration: 'unavailable', correlation_id: correlationId,
           });
-          continue;
         }
-        leadId = placeholder.data!.id;
-        await logLeadEvent(supabase, leadId, 'lead_created', 'system', {
-          source: 'facebook_lead_ad', intake_channel: 'form',
-          hydration: 'unavailable', correlation_id: correlationId,
-        });
       }
 
       await logLeadEvent(supabase, leadId, 'intake_received', 'system', {

@@ -596,7 +596,7 @@ export function LeadDetailPage() {
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">
               שיחה
-              {detailQ.data?.conversations[0]?.channel === 'instagram' ? (
+              {activeConversation?.channel === 'instagram' ? (
                 <span className="kf-chip kf-tone-neutral ms-2 rounded-full">אינסטגרם</span>
               ) : null}
             </h2>
@@ -936,6 +936,13 @@ export function LeadDetailPage() {
                 targetStage,
               })
             }
+            onRecordDeposit={auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia'
+              ? (deal) => action.mutate({
+                action: 'record_seriousness_deposit',
+                label: 'דמי הרצינות נרשמו — העמלה נוצרה',
+                dealId: deal.id,
+              })
+              : undefined}
           />
             </div>
           </details>
@@ -1336,6 +1343,7 @@ function PipelineOverviewCard({
   onSchedule,
   onUpdateMeetingStatus,
   onAdvance,
+  onRecordDeposit,
   canEditConsent,
   onSetConsent,
 }: {
@@ -1358,6 +1366,7 @@ function PipelineOverviewCard({
   }) => void;
   onUpdateMeetingStatus: (input: { meetingId: string; status: MeetingRow['status']; note: string | null }) => void;
   onAdvance: (deal: DealRow, targetStage: string) => void;
+  onRecordDeposit?: (deal: DealRow) => void;
   canEditConsent: boolean;
   onSetConsent: (channel: 'email' | 'whatsapp', value: boolean | null) => Promise<unknown>;
 }) {
@@ -1459,6 +1468,26 @@ function PipelineOverviewCard({
                 ) : null}
                 {canAdvance && deal.status === 'open' ? (
                   <DealStageActions deal={deal} busy={advancing} onAdvance={onAdvance} />
+                ) : null}
+                {/* The deposit is what starts the commission chain (trigger
+                    on deals.seriousness_deposit_paid_at). Until this button
+                    nothing in the product ever set that field. */}
+                {onRecordDeposit && deal.status === 'open' && deal.track === 'investor_mentorship' ? (
+                  deal.seriousness_deposit_paid_at ? (
+                    <div className="mt-2 text-xs text-emerald-700">
+                      דמי רצינות התקבלו ב-{new Date(deal.seriousness_deposit_paid_at).toLocaleDateString('he-IL')}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="kf-btn kf-btn-ghost mt-2 text-xs"
+                      disabled={advancing || !deal.partner_id}
+                      title={deal.partner_id ? undefined : 'יש לשייך שותף לעסקה קודם — העמלה מחושבת ממנו'}
+                      onClick={() => onRecordDeposit(deal)}
+                    >
+                      התקבלו דמי רצינות 💰
+                    </button>
+                  )
                 ) : null}
               </li>
             );
@@ -2589,6 +2618,17 @@ function AutomationHistoryCard({ contactId }: { contactId: string }) {
 
   const runs = runsQ.data?.runs ?? [];
   const journeys = journeysQ.data?.runs ?? [];
+
+  // A failed fetch must not read as "nothing ever ran" — that is exactly
+  // the question this card answers.
+  if (runsQ.error || journeysQ.error) {
+    return (
+      <div className="kf-card p-4 text-sm text-rose-700" role="alert">
+        היסטוריית האוטומציות לא נטענה.{' '}
+        <button type="button" className="underline" onClick={() => { runsQ.refetch(); journeysQ.refetch(); }}>נסו שוב</button>
+      </div>
+    );
+  }
 
   if (runs.length === 0 && journeys.length === 0 && !runsQ.isLoading && !journeysQ.isLoading) {
     // Don't render the card at all if neither pane has anything to show —

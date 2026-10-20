@@ -193,6 +193,12 @@ export function ReplyComposer({
       {pickerOpen && showTemplatePicker ? (
         <div className="max-h-64 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2">
           {templatesQ.isLoading ? <p className="text-xs text-slate-500">טוען תבניות...</p> :
+            templatesQ.error ? (
+              <p className="text-xs text-rose-600" role="alert">
+                התבניות לא נטענו ({(templatesQ.error as Error).message}).{' '}
+                <button type="button" className="underline" onClick={() => templatesQ.refetch()}>נסו שוב</button>
+              </p>
+            ) :
             templatesQ.data?.templates.length ? (
               <ul className="space-y-1">
                 {templatesQ.data.templates.map((tpl) => (

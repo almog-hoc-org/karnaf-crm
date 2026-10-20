@@ -9,12 +9,12 @@
 // fires on short messages — so before extractReplyText a reply of "הסר"
 // was never recognised.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { ensureConversation, logLeadEvent, upsertLead } from './lead-service.ts';
 import { ensurePendingQueueItem } from './queue-service.ts';
 import { normalizeIsraeliPhone } from './phone.ts';
 import { getRuntimeConfig } from './config-service.ts';
-import { applyOptOut, detectOptOut } from './opt-out.ts';
+import { applyOptOut, applyResubscribe, detectOptOut, detectResubscribe } from './opt-out.ts';
 import { extractReplyText } from './email-reply.ts';
 import { log } from './logger.ts';
 
@@ -46,6 +46,8 @@ export interface InboundEmailResult {
   leadName?: string | null;
   conversationId?: string;
   optOut: boolean;
+  /** The person had unsubscribed and asked (by the exact comeback word) to be put back. */
+  resubscribed?: boolean;
   /** What the person wrote, without the quoted original. */
   replyText: string;
 }
@@ -69,7 +71,7 @@ export async function ingestInboundEmail(
     if (dup) return { status: 'duplicate', optOut: false, replyText };
   }
 
-  let lead: { id: string; full_name?: string | null };
+  let lead: { id: string; full_name?: string | null; consent_email?: boolean | null };
   if (createLead) {
     lead = await upsertLead(supabase, {
       phone: normalizeIsraeliPhone(input.phone ?? null),
@@ -78,14 +80,14 @@ export async function ingestInboundEmail(
       source: 'email',
       intakeChannel: 'email',
       metadata: { to: input.to ?? null, message_id: messageId, subject },
-    });
+    }) as { id: string; full_name: string | null; consent_email?: boolean | null };
   } else {
     const { data: existing } = await supabase
-      .from('leads').select('id, full_name')
+      .from('leads').select('id, full_name, consent_email')
       .ilike('email', fromEmail.replace(/[\\%_]/g, (c) => `\\${c}`))
       .limit(1).maybeSingle();
     if (!existing) return { status: 'unknown_sender', optOut: false, replyText };
-    lead = existing as { id: string; full_name: string | null };
+    lead = existing as { id: string; full_name: string | null; consent_email: boolean | null };
   }
 
   const conversation = await ensureConversation(supabase, lead.id, 'email', 'email_provider');
@@ -112,30 +114,53 @@ export async function ingestInboundEmail(
 
   // חוק הספאם: a removal request revokes email consent right away. The
   // subject alone can carry it ("הסר"), or the first lines of the reply.
+  // The subject counts only when it IS the command — a bare word or two
+  // after the Re:/השב prefix. A campaign whose own subject happens to
+  // contain a keyword ("לא מעוניין בדירה? ...") is echoed back in every
+  // reply's subject, and used to unsubscribe everyone who answered it.
   const { messaging } = await getRuntimeConfig(supabase);
-  const optOut = detectOptOut(replyText, messaging.optOutKeywords)
-    || detectOptOut(subject.replace(/^(re|השב|תשובה|fw|fwd)\s*:\s*/i, ''), messaging.optOutKeywords);
+  const bareSubject = subject.replace(/^(\s*(re|השב|תשובה|fw|fwd)\s*:\s*)+/i, '').trim();
+  const subjectIsCommand = bareSubject.split(/\s+/).filter(Boolean).length <= 3
+    && detectOptOut(bareSubject, messaging.optOutKeywords);
+  const optOut = detectOptOut(replyText, messaging.optOutKeywords) || subjectIsCommand;
   if (optOut) {
     await applyOptOut(supabase, {
       leadId: lead.id, channel: 'email', basis: 'inbound_keyword', scope: 'email',
       text: replyText || subject, correlationId: input.correlationId, conversationId: conversation.id,
     });
   }
+  // The unsubscribe pages promise "reply with חזור and we put you back".
+  // Exact match only (detectResubscribe), and only for someone who is
+  // actually off the list — the one route back onto the email list that
+  // does not need an operator.
+  let resubscribed = false;
+  if (!optOut && lead.consent_email === false
+    && detectResubscribe(replyText || bareSubject, messaging.resubscribeKeywords)) {
+    await applyResubscribe(supabase, {
+      leadId: lead.id, channel: 'email', text: replyText || subject,
+      correlationId: input.correlationId, conversationId: conversation.id,
+    });
+    resubscribed = true;
+  }
 
   await ensurePendingQueueItem(supabase, {
     leadId: lead.id,
     queueType: 'human_handoff',
     priorityLevel: 2,
-    reason: optOut ? 'בקשת הסרה מדיוור במייל — ההסכמה בוטלה אוטומטית' : 'אימייל נכנס דורש מענה ידני',
+    reason: optOut
+      ? 'בקשת הסרה מדיוור במייל — ההסכמה בוטלה אוטומטית'
+      : resubscribed
+        ? 'ביקש/ה לחזור לרשימת הדיוור — ההסכמה למייל חודשה אוטומטית'
+        : 'אימייל נכנס דורש מענה ידני',
     queueSummary: (replyText || subject || textBody).slice(0, 120),
-    payloadJson: { channel: 'email', correlationId: input.correlationId, optOut, origin: input.origin ?? 'email_webhook' },
+    payloadJson: { channel: 'email', correlationId: input.correlationId, optOut, resubscribed, origin: input.origin ?? 'email_webhook' },
   });
 
   log.info('email_inbound_accepted', {
-    fn: 'inbound-email', correlationId: input.correlationId, leadId: lead.id, optOut, origin: input.origin,
+    fn: 'inbound-email', correlationId: input.correlationId, leadId: lead.id, optOut, resubscribed, origin: input.origin,
   });
   return {
     status: 'accepted', leadId: lead.id, leadName: lead.full_name ?? input.fromName ?? null,
-    conversationId: conversation.id, optOut, replyText,
+    conversationId: conversation.id, optOut, resubscribed, replyText,
   };
 }

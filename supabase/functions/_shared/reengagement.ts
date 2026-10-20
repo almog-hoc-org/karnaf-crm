@@ -8,7 +8,7 @@
 // exists. Opt-outs (do_not_contact / removed_by_request) are ALWAYS excluded, and
 // each flow is one-shot per lead (guarded by a lead_event).
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { enqueueTemplateDispatch } from './outbound-enqueue.ts';
 import { logLeadEvent } from './lead-service.ts';
 import { log } from './logger.ts';

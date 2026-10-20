@@ -7,7 +7,7 @@
 // Inserts via service_role; never throws — logging failures must not
 // take down the actual automation.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { log } from './logger.ts';
 
 export interface AutomationRunInput {

@@ -49,7 +49,7 @@ const SECTIONS: HubSection[] = [
     hint: 'מי עובד במערכת ומה עוד פתוח',
     links: [
       { to: '/queue', title: 'כל המשימות הפתוחות', blurb: 'רשימה מלאה של משימות לפי סוג — כשצריך יותר מ״היום״' },
-      { to: '/team',  title: 'צוות',               blurb: 'מי מטפל בכמה לקוחות עכשיו' },
+      { to: '/team',  title: 'צוות',               blurb: 'מי מטפל בכמה לקוחות עכשיו', adminOnly: true },
       { to: '/users', title: 'משתמשים והרשאות',     blurb: 'הוספת משתמש, שינוי תפקיד, השבתה', adminOnly: true },
     ],
   },

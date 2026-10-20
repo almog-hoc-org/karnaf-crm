@@ -1,6 +1,6 @@
 # Karnaf CRM
 
-WhatsApp-first AI-operated CRM for selling the digital program **"הדרך לדירה"**. Inbound leads from forms / WhatsApp / email → AI playbook handles first contact, qualification, and checkout push → Mia (operator) takes over only when needed → payment webhook → onboarding kicks off.
+WhatsApp-first AI-operated CRM for Karnaf Nadlan: the digital program **"הדרך לדירה"**, investor mentorship (partner commissions) and presale projects. Inbound leads from forms / WhatsApp / Instagram / email → AI playbook handles first contact, qualification and checkout push → the operator takes over from the Inbox ("היום") only when needed → payment webhook → onboarding, journeys, broadcasts (WhatsApp templates + Resend email with חוק הספאם opt-out handling).
 
 > **Are you a developer joining this project?** Read [HANDOFF.md](HANDOFF.md) first — it's the single source of truth for what's done, what's missing, and the recommended order of work.
 
@@ -14,8 +14,8 @@ WhatsApp-first AI-operated CRM for selling the digital program **"הדרך לד�
 | [karnaf-crm-full-spec.md](karnaf-crm-full-spec.md) | Original product specification (still authoritative for behaviour) |
 | `apps/web/` | React 19 operator console (Vite root) |
 | `lib/runtime/` | Node-side mirrors of the Deno `_shared` modules — exists so the runtime is unit-testable from Vitest |
-| `supabase/migrations/` | 18 SQL migrations: schema, RLS, state-machine RPCs, scheduled jobs, A/B prompts, media storage, cohort analytics |
-| `supabase/functions/` | 18 Edge Functions: 5 signed webhooks, 3 cron workers, 10 JWT-gated operator endpoints |
+| `supabase/migrations/` | 140+ numbered SQL migrations (schema, RLS, RPCs, pg_cron jobs, consent model, broadcasts, merges). Applied in order by `.github/workflows/deploy-supabase.yml`; every one must be idempotent and pass `scripts/db-smoke.sh` |
+| `supabase/functions/` | ~60 Edge Functions — signed webhooks (Meta, payments, intakes), bearer-secret cron workers, JWT-gated operator endpoints. `supabase/config.toml` is the registry (every directory must have a `[functions.<name>]` entry; CI checks it) |
 | `e2e/`, `integration/` | Opt-in Playwright + supabase-start harnesses |
 
 ## Quickstart (local development)

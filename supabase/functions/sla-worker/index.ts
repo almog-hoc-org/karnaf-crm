@@ -34,7 +34,9 @@ const SLA_INACTIVE_STATUSES = [
 // writes. The oldest breaches are the ones that matter, so order by
 // last_inbound_at ascending and take the head.
 const SLA_SCAN_LIMIT = 500;
+const SLA_SCAN_FLOOR_DAYS = 30;
 
+// Kept as a belt-and-braces re-check of the SQL predicate (leads.awaiting_reply).
 function stillNeedsResponse(lead: { last_inbound_at?: string | null; last_outbound_at?: string | null }): boolean {
   if (!lead.last_inbound_at) return false;
   if (!lead.last_outbound_at) return true;
@@ -72,6 +74,9 @@ Deno.serve(async (req) => {
   // Conservative default — 20 minutes — well under the 8h SLA warn.
   const stuckMinutes = 20;
   const stuck = new Date(now - stuckMinutes * 60 * 1000).toISOString();
+  // Nothing older than this is an SLA matter any more — it is a dormant
+  // lead, and the nightly re-engagement scan owns those.
+  const scanFloor = new Date(now - SLA_SCAN_FLOOR_DAYS * 24 * 3600 * 1000).toISOString();
 
   const counters: Record<string, number> = {
     sla_risk: 0, sla_breach: 0, sla_breach_new: 0, payment_pending: 0, dormant: 0, ai_stuck: 0,
@@ -79,9 +84,15 @@ Deno.serve(async (req) => {
   };
   const queryErrors: Array<{ stage: string; message: string }> = [];
 
+  // `awaiting_reply` (generated column, migration 139) is the "still needs
+  // a response" predicate IN SQL. Filtering it in JavaScript after the
+  // 500-row limit meant the 500 oldest leads — all answered months ago —
+  // filled the page and a lead who wrote nine hours ago was never seen.
   const { data: slaRiskRows, error: slaRiskErr } = await supabase
     .from('leads')
     .select('id, last_inbound_at, last_outbound_at')
+    .eq('awaiting_reply', true)
+    .gte('last_inbound_at', scanFloor)
     .lt('last_inbound_at', warn)
     .eq('do_not_contact', false)
     .eq('removed_by_request', false)
@@ -105,6 +116,8 @@ Deno.serve(async (req) => {
   const { data: breachRows, error: breachErr } = await supabase
     .from('leads')
     .select('id, last_inbound_at, last_outbound_at')
+    .eq('awaiting_reply', true)
+    .gte('last_inbound_at', scanFloor)
     .lt('last_inbound_at', breach)
     .eq('do_not_contact', false)
     .eq('removed_by_request', false)
@@ -158,13 +171,21 @@ Deno.serve(async (req) => {
   // 8h SLA risk above: this catches silent AI drops (provider errors,
   // validation blocks) early enough for a human to intervene before the
   // customer cools off.
+  // Bounded like the other scans: without a floor and a status filter, a
+  // lead parked as lost months ago with an unanswered last message kept
+  // the "AI תקוע" line in every SLA alert forever.
   const { data: stuckAiRows, error: stuckErr } = await supabase
     .from('leads')
     .select('id, last_inbound_at, last_outbound_at')
+    .eq('awaiting_reply', true)
     .eq('ownership_mode', 'ai_active')
+    .gte('last_inbound_at', scanFloor)
     .lt('last_inbound_at', stuck)
     .eq('do_not_contact', false)
-    .eq('removed_by_request', false);
+    .eq('removed_by_request', false)
+    .not('lead_status', 'in', `(${SLA_INACTIVE_STATUSES.join(',')})`)
+    .order('last_inbound_at', { ascending: true })
+    .limit(SLA_SCAN_LIMIT);
   if (stuckErr) {
     queryErrors.push({ stage: 'ai_stuck_query', message: stuckErr.message });
     log.error('ai_stuck_query_failed', { fn: 'sla-worker', correlationId, err: stuckErr.message });

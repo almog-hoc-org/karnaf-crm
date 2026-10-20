@@ -1,4 +1,4 @@
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { logLeadEvent, type LeadRow } from './lead-service.ts';
 import { canContactLead, type ContactChannel } from './contact-guard.ts';
 import { enqueueTemplateDispatch, releaseOnceClaim } from './outbound-enqueue.ts';

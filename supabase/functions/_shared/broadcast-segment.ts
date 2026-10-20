@@ -3,9 +3,11 @@
 // A broadcast segment is a small filter object. This turns it into a
 // leads query, always excluding contactable-suppressed leads. Used by
 // both the broadcasts edge fn (preview_count) and the broadcast-dispatch
-// worker (materialise recipients).
+// worker (materialise recipients). The pure part (applySegment and its
+// constants) is mirrored in lib/runtime/broadcast-segment.ts for the unit
+// tests — keep the two in sync.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { fetchAllPages } from './paginate.ts';
 
 export interface BroadcastSegment {
@@ -36,21 +38,29 @@ export interface SegmentChannelOptions {
   channel?: 'whatsapp' | 'email';
   // Israeli spam law: marketing email needs prior opt-in. When true
   // (the default for email via crm_config email_channel.requireConsent),
-  // only consent_email = true leads qualify.
+  // only consent_email = true leads qualify; when false, NULL qualifies
+  // too — an explicit false never does.
   requireEmailConsent?: boolean;
+  // Injected by tests; the snooze cut-off.
+  now?: Date;
 }
 
 // Statuses that mean the relationship is over (or the row is a dedupe
-// artifact). A broadcast is marketing to an open pipeline; these leads are
-// not in it. Note this exclusion lives HERE and not in contact-guard:
-// lifecycle sends (student check-ins) legitimately target won leads.
-const CLOSED_STATUSES = ['won', 'lost', 'duplicate'] as const;
+// artifact), plus the two "stop" statuses whose boolean flags may be stale:
+// transition_lead_status only moves lead_status, so a lead parked as
+// do_not_contact / removed_by_request by status alone used to pass the
+// boolean checks below. A broadcast is marketing to an open pipeline; none
+// of these leads are in it. Note this exclusion lives HERE and not in
+// contact-guard: lifecycle sends (student check-ins) legitimately target
+// won leads.
+export const CLOSED_STATUSES = ['won', 'lost', 'duplicate', 'do_not_contact', 'removed_by_request'] as const;
 
 // Apply the segment filter + the non-negotiable suppression guards to a
 // leads query builder. The suppressions mirror _shared/contact-guard.ts
 // (kind: 'proactive') expressed as SQL, so a preview count and the actual
 // send agree on who is reachable — snoozed and no-proactive-contact leads
 // used to be counted in the preview and then messaged for real.
+// Pure (no I/O); mirrored in lib/runtime/broadcast-segment.ts for tests.
 export function applySegment<T>(query: T, segment: BroadcastSegment, opts: SegmentChannelOptions = {}): T {
   // The Supabase query-builder type isn't chainable through a generic
   // here; a loose local type is the pragmatic choice.
@@ -59,10 +69,16 @@ export function applySegment<T>(query: T, segment: BroadcastSegment, opts: Segme
   let q = query as any;
   q = q.eq('do_not_contact', false).eq('removed_by_request', false);
   q = q.eq('no_proactive_contact', false);
-  q = q.or(`snoozed_until.is.null,snoozed_until.lte.${new Date().toISOString()}`);
+  q = q.or(`snoozed_until.is.null,snoozed_until.lte.${(opts.now ?? new Date()).toISOString()}`);
   q = q.not('lead_status', 'in', `("${CLOSED_STATUSES.join('","')}")`);
   if (opts.channel === 'email') {
     q = q.not('email', 'is', null);
+    // חוק הספאם: an explicit refusal (consent_email = false — unsubscribe
+    // link, "הסר" reply) is excluded whatever the setting says. The
+    // requireEmailConsent setting only decides whether NULL ("never asked")
+    // qualifies; before this, unticking it re-admitted everyone who had
+    // asked to be removed.
+    q = q.not('consent_email', 'is', false);
     if (opts.requireEmailConsent !== false) q = q.eq('consent_email', true);
   } else {
     // WhatsApp is the default channel; a lead with no phone is counted in

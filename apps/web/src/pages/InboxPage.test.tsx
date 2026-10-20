@@ -31,10 +31,14 @@ function makeAuth(role: Role | null): AuthState {
   } as AuthState;
 }
 
-function renderInbox(initialEntry = '/inbox', role: Role | null = 'admin') {
+function makeClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
+
+function renderInbox(initialEntry = '/inbox', role: Role | null = 'admin', client = makeClient()) {
   return render(
     <AuthContext.Provider value={makeAuth(role)}>
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={[initialEntry]}>
           <InboxPage />
         </MemoryRouter>
@@ -325,6 +329,28 @@ describe('InboxPage', () => {
       leadId: '44444444-4444-4444-4444-444444444444',
       note: 'טופל מתוך מסך היום',
     }));
+  });
+
+  // The nav badge and tab title read ['attention-count'], a separate key
+  // from the list. "טופל" used to refresh the list alone, so the card
+  // vanished while the sidebar kept the old count for up to a minute.
+  it('drops the lead from the nav badge count and refreshes it when a card is triaged', async () => {
+    mockedFetchAttentionInbox.mockResolvedValueOnce([replyRow()]);
+    mockedPostAdminAction.mockResolvedValue({ ok: true, action: 'mark_reviewed' });
+    const client = makeClient();
+    client.setQueryData(['attention-count'], [replyRow()]);
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    renderInbox('/inbox', 'admin', client);
+    fireEvent.click(await screen.findByRole('button', { name: 'טופל ✓' }));
+
+    // Optimistic: the lead leaves the badge's rows with the card.
+    await waitFor(() => expect(client.getQueryData(['attention-count'])).toEqual([]));
+    await waitFor(() => expect(mockedPostAdminAction).toHaveBeenCalledWith(expect.objectContaining({ action: 'mark_reviewed' })));
+    await waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['attention-inbox'] }));
+      expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['attention-count'] }));
+    });
   });
 
   it('ignores triage keys while typing in the inline composer', async () => {

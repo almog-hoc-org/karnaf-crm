@@ -1,4 +1,4 @@
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { sendTemplateAction, type EngineContext } from './journey-actions.ts';
 import type { LeadRow } from './lead-service.ts';
 

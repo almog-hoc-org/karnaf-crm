@@ -10,7 +10,7 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { env } from '../_shared/env.ts';
 import { correlationFromRequest, log, newCorrelationId } from '../_shared/logger.ts';
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { sendChannelText } from '../_shared/outbound-channel.ts';
 import { activeProvider, sendWhatsAppTemplate } from '../_shared/whatsapp-provider.ts';
 import { ensureConversation, logLeadEvent } from '../_shared/lead-service.ts';
@@ -72,6 +72,36 @@ async function deliverTemplateRow(
     return 'skipped';
   }
   const channel = payload.channel || 'whatsapp';
+
+  // A campaign that was cancelled or auto-paused after this row was queued
+  // must not go out: the broadcast's status is the source of truth, and
+  // until now nothing on this path ever read it.
+  if (payload.broadcast_id) {
+    const { data: broadcast } = await supabase
+      .from('broadcasts').select('status').eq('id', payload.broadcast_id).maybeSingle();
+    if (broadcast && broadcast.status !== 'sending') {
+      log.info('template_dispatch_suppressed', {
+        fn: 'dispatch-outbound', correlationId, dispatchId: row.id, leadId: row.lead_id,
+        reason: `broadcast_${broadcast.status}`,
+      });
+      if (broadcast.status === 'failed') {
+        // Auto-paused (failure rate), not cancelled: the owner is expected
+        // to fix the template and press "retry", which re-enqueues the
+        // PENDING recipients. A row claimed while the pause landed goes back
+        // to pending so that person is not silently dropped from the
+        // campaign as 'skipped'.
+        await supabase
+          .from('broadcast_recipients')
+          .update({ status: 'pending', dispatch_id: null, error: null })
+          .eq('broadcast_id', payload.broadcast_id)
+          .eq('lead_id', row.lead_id)
+          .eq('status', 'enqueued');
+      } else {
+        await markRecipientSkipped(`broadcast_${broadcast.status}`);
+      }
+      return 'skipped';
+    }
+  }
 
   const { data: lead, error: leadErr } = await supabase
     .from('leads')
@@ -249,6 +279,17 @@ Deno.serve(async (req) => {
   }
   const rows = (claimed ?? []) as DispatchRow[];
 
+  // The every-minute worker that delivers AI replies wrote no heartbeat, so
+  // a stalled pg_cron entry here was invisible on the status screen while
+  // customers waited. Written before the batch: "the scheduler fires" is
+  // the question it answers; the batch's own failures alert separately.
+  await supabase.from('system_heartbeats').upsert({
+    name: 'dispatch_outbound',
+    last_ok_at: new Date().toISOString(),
+    last_run_id: correlationId,
+    metadata: { claimed: rows.length },
+  }, { onConflict: 'name' });
+
   if (rows.length === 0) {
     return jsonResponse(req, { ok: true, processed: 0 });
   }
@@ -289,6 +330,9 @@ Deno.serve(async (req) => {
           leadId: row.lead_id,
           conversationId: row.conversation_id,
           ...row.payload,
+          // Lets orchestrate decide whether a transient send failure is worth
+          // a 503 (this worker retries) or must be handled now (last try).
+          dispatchAttempt: row.attempts,
         }),
         signal: ac.signal,
       }).finally(() => clearTimeout(timeout));

@@ -123,7 +123,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: error?.message ?? null };
     },
     async signInWithGoogle() {
-      const redirectTo = `${window.location.origin}/`;
+      // Keep the deep link: a user who opened /leads/123 from an alert and
+      // signed in with Google landed on the inbox instead. The login page
+      // re-reads ?next after the OAuth round trip and sanitises it.
+      const next = new URLSearchParams(window.location.search).get('next');
+      const safeNext = next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\') ? next : null;
+      const redirectTo = safeNext
+        ? `${window.location.origin}/login?next=${encodeURIComponent(safeNext)}`
+        : `${window.location.origin}/`;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo },

@@ -75,6 +75,7 @@ Deno.serve(async (req) => {
   // outcome recorded on every exit path below.
   const inboxId = await persistWebhookInbox(supabase, {
     source: 'whatsapp-webhook', req, rawBody, correlationId,
+    replayedFrom: req.headers.get('x-replayed-from'),
   });
 
   let body: Record<string, unknown>;
@@ -149,9 +150,16 @@ Deno.serve(async (req) => {
     created_at: normalized.receivedAt,
     raw_payload: normalized.rawPayload,
   }).select('id').single();
-  // Conflict on the unique provider_message_id index = duplicate that beat
-  // our pre-check. Treat as no-op success.
-  if (msgErr && !String(msgErr.message || '').includes('duplicate key value')) {
+  // Conflict on the unique provider_message_id index = a duplicate delivery
+  // that beat the messageAlreadyLogged pre-check (Meta retries, and two
+  // deliveries seconds apart both pass the pre-check before either insert
+  // lands). It is handled exactly like the pre-check hit: no-op success. It
+  // used to fall through to the routing below and enqueue a second AI turn.
+  if (msgErr && String(msgErr.message || '').includes('duplicate key value')) {
+    await finalizeWebhookInbox(supabase, inboxId, 'duplicate');
+    return jsonResponse(req, { ok: true, skipped: true, reason: 'duplicate_provider_message_id' });
+  }
+  if (msgErr) {
     log.error('inbound_insert_failed', { fn: 'whatsapp-webhook', correlationId, err: String(msgErr) });
     await finalizeWebhookInbox(supabase, inboxId, 'server_error', String(msgErr.message ?? msgErr));
     return jsonResponse(req, { error: 'Failed to log inbound message' }, 500);
@@ -429,6 +437,17 @@ async function flushPendingManualReplies(
       }).eq('id', row.id);
       continue;
     }
+    // Claim before sending. Two inbound messages seconds apart both select
+    // the same parked reply; without a claim both send it. A claim older
+    // than two minutes is an abandoned attempt and may be taken over.
+    const { data: claimed } = await supabase
+      .from('pending_manual_replies')
+      .update({ claimed_at: new Date().toISOString() })
+      .eq('id', row.id)
+      .in('status', ['queued', 'reopen_sent', 'failed'])
+      .or(`claimed_at.is.null,claimed_at.lt.${new Date(Date.now() - 2 * 60_000).toISOString()}`)
+      .select('id');
+    if (!claimed?.length) continue;
     const result = await sendWhatsAppText(input.phone, row.text);
     if (!result.ok) {
       await supabase.from('pending_manual_replies').update({

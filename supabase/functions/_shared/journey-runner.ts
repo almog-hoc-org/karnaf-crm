@@ -1,4 +1,4 @@
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { runActions, type EngineContext } from './journey-actions.ts';
 import { evaluateConditions } from './automation-engine.ts';
 import type { LeadRow } from './lead-service.ts';
@@ -122,6 +122,22 @@ export async function advanceDueJourneys(
       lead: lead as unknown as Record<string, unknown>,
       journey: { code: def.code, step: run.current_step },
     });
+    // Claim the step before running it (migration 080 added the columns,
+    // the gate itself was never written). Two ticks overlapping — a slow
+    // tick still running when the next minute's starts — both read the same
+    // due run and both sent the step. A conditional UPDATE lets exactly one
+    // of them through; the other sees no row and leaves the run alone.
+    const { data: claimedRows, error: claimErr } = await supabase
+      .from('journey_runs')
+      .update({ last_step_idx: run.current_step, last_step_executed_at: new Date().toISOString() })
+      .eq('id', run.id)
+      .eq('status', 'active')
+      .eq('current_step', run.current_step)
+      .or(`last_step_idx.is.null,last_step_idx.neq.${run.current_step},last_step_executed_at.lt.${new Date(Date.now() - 60_000).toISOString()}`)
+      .select('id');
+    if (claimErr) throw claimErr;
+    if (!claimedRows?.length) continue;
+
     const results = conditionsPass
       ? await runActions(supabase, (step.actions ?? []) as unknown as Parameters<typeof runActions>[1], ctx)
       : [{ type: 'step', status: 'skipped' as const, reason: 'step_conditions_not_met' }];

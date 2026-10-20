@@ -14,6 +14,7 @@ export function AnalyticsPage() {
   if (!q.data) return null;
 
   const { sourcePerformance, campaignPerformance, aging, recentActivity, aiVsHuman, promptVariants, cohorts, firstResponseTimes } = q.data;
+  const failedSections = Object.keys(q.data.errors ?? {});
 
   return (
     <div className="space-y-6">
@@ -25,6 +26,12 @@ export function AnalyticsPage() {
           disabled={q.isFetching}
         >{q.isFetching ? t('refreshing') : t('refresh')}</button>
       </header>
+
+      {failedSections.length > 0 ? (
+        <p className="kf-tone-warning rounded-xl p-3 text-sm ring-1 ring-inset" role="status">
+          חלק מהנתונים לא נטענו ({failedSections.join(', ')}) — הטבלאות האלה מוצגות ריקות, לא כי אין נתונים.
+        </p>
+      ) : null}
 
       <ManagerInsightsPanel sources={sourcePerformance} firstResponseTimes={firstResponseTimes} />
 

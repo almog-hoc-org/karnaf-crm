@@ -21,7 +21,8 @@
 // DRY_RUN, below.
 
 import { jsonResponse, preflight } from '../_shared/cors.ts';
-import { env, optional, safeEqual } from '../_shared/env.ts';
+import { env, optional } from '../_shared/env.ts';
+import { verifyAnyBearer } from '../_shared/webhook-signature.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { runMatchingRules, type RuleMatch } from '../_shared/automation-engine.ts';
@@ -29,6 +30,8 @@ import { advanceDueJourneys } from '../_shared/journey-runner.ts';
 import { runBiweeklyStudentCheckins } from '../_shared/student-lifecycle.ts';
 import { runLeadJourneyManager } from '../_shared/lead-journey-manager.ts';
 import { buildLeadContextFromRow, type LeadRowForContext } from '../_shared/event-context.ts';
+import { fetchAllPages } from '../_shared/paginate.ts';
+import { notifyOperator } from '../_shared/operator-alert.ts';
 
 const TRIGGER = 'time.elapsed';
 
@@ -56,13 +59,6 @@ function timeRulesLive(): boolean {
   return optional('AUTOMATION_TIME_RULES').toLowerCase() === 'live';
 }
 
-function verifyAnyBearer(req: Request, expectedSecrets: string[]): boolean {
-  const header = req.headers.get('authorization') || '';
-  if (!header.toLowerCase().startsWith('bearer ')) return false;
-  const provided = header.slice(7).trim();
-  return expectedSecrets.some((secret) => secret && safeEqual(provided, secret));
-}
-
 Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
@@ -76,7 +72,12 @@ Deno.serve(async (req) => {
   }
   if (!verifyAnyBearer(req, expectedSecrets)) return jsonResponse(req, { error: 'Unauthorized' }, 401);
 
-  const dryRun = new URL(req.url).searchParams.get('dryRun') === 'true' || !timeRulesLive();
+  // `?dryRun=true` is the on-demand REPORT (ops workflow): nothing may run
+  // for real. Passes 2-4 do not have a dry mode of their own, so the report
+  // skips them — before this they advanced journeys and sent student
+  // check-ins every time someone asked for the report.
+  const reportOnly = new URL(req.url).searchParams.get('dryRun') === 'true';
+  const dryRun = reportOnly || !timeRulesLive();
   const supabase = getServiceSupabase();
 
   const tickErrors: string[] = [];
@@ -86,28 +87,34 @@ Deno.serve(async (req) => {
   const timeRules = await runTimeElapsedPass(supabase, correlationId, dryRun, tickErrors, capBreaches);
 
   // ── Passes 2-4: journeys and lifecycle (unaffected by the merge) ─────
-  let journeys: Awaited<ReturnType<typeof advanceDueJourneys>> | { error: string };
-  try {
-    journeys = await advanceDueJourneys(supabase, correlationId);
-  } catch (err) {
-    journeys = { error: String(err) };
-    tickErrors.push(`journeys: ${String(err)}`);
-  }
-
+  let journeys: Awaited<ReturnType<typeof advanceDueJourneys>> | { error: string } | { skipped: string };
   let studentCheckins: unknown;
-  try {
-    studentCheckins = await runBiweeklyStudentCheckins(supabase, correlationId);
-  } catch (err) {
-    studentCheckins = { error: String(err) };
-    tickErrors.push(`student_checkins: ${String(err)}`);
-  }
-
   let leadJourney: unknown;
-  try {
-    leadJourney = await runLeadJourneyManager(supabase, correlationId);
-  } catch (err) {
-    leadJourney = { error: String(err) };
-    tickErrors.push(`lead_journey_manager: ${String(err)}`);
+  if (reportOnly) {
+    journeys = { skipped: 'report_only' };
+    studentCheckins = { skipped: 'report_only' };
+    leadJourney = { skipped: 'report_only' };
+  } else {
+    try {
+      journeys = await advanceDueJourneys(supabase, correlationId);
+    } catch (err) {
+      journeys = { error: String(err) };
+      tickErrors.push(`journeys: ${String(err)}`);
+    }
+
+    try {
+      studentCheckins = await runBiweeklyStudentCheckins(supabase, correlationId);
+    } catch (err) {
+      studentCheckins = { error: String(err) };
+      tickErrors.push(`student_checkins: ${String(err)}`);
+    }
+
+    try {
+      leadJourney = await runLeadJourneyManager(supabase, correlationId);
+    } catch (err) {
+      leadJourney = { error: String(err) };
+      tickErrors.push(`lead_journey_manager: ${String(err)}`);
+    }
   }
 
   // ── Pass 5: deal.investor_open ──────────────────────────────────────
@@ -138,6 +145,24 @@ Deno.serve(async (req) => {
     metadata: summary,
   }, { onConflict: 'name' });
 
+  // A pass that throws every minute used to be visible only in the
+  // heartbeat's metadata — while the heartbeat itself stayed green. Same
+  // shape as sla-worker's degraded alert: keyed on which passes fail, a
+  // long throttle, and the report is skipped so a dry run never pages.
+  if (tickErrors.length > 0 && !reportOnly) {
+    const failingPasses = [...new Set(tickErrors.map((e) => e.split(':')[0]))].sort();
+    await notifyOperator(supabase, {
+      kind: 'automation_tick_degraded',
+      dedupeKey: `automation_tick_degraded:${failingPasses.join(',')}`,
+      throttleMinutes: 6 * 60,
+      severity: 'error',
+      title: 'מנוע האוטומציות רץ אך חלק מהשלבים נכשלים',
+      lines: tickErrors.slice(0, 5).map((e) => e.slice(0, 160)),
+      link: 'https://karnaf-crm.vercel.app/admin/status',
+      correlationId,
+    });
+  }
+
   log.info('automation_tick_run', { fn: 'automation-tick', correlationId, ...summary });
   return jsonResponse(req, { ok: tickErrors.length === 0, correlationId, ...summary },
     tickErrors.length > 0 ? 500 : 200);
@@ -167,21 +192,32 @@ async function runTimeElapsedPass(
   // leads, closed leads, and leads a human is actively working are excluded
   // — an automation firing mid-conversation would put an "AI" message in
   // front of a customer who would read it as coming from their rep.
-  const { data: leads, error } = await supabase
-    .from('leads')
-    .select(LEAD_SCAN_COLUMNS)
-    .eq('do_not_contact', false)
-    .eq('removed_by_request', false)
-    .not('lead_status', 'in', '(won,lost,do_not_contact,removed_by_request,duplicate)')
-    .not('ownership_mode', 'in', '(mia_active,phone_sales_pending)')
-    .order('created_at', { ascending: true })
-    .limit(MAX_LEADS_PER_TICK);
-  if (error) {
-    log.error('tick_query_failed', { fn: 'automation-tick', correlationId, err: error.message });
-    tickErrors.push(`leads_query: ${error.message}`);
+  // Paged (stable order created_at, id) up to MAX_LEADS_PER_TICK. A single
+  // .limit() request is capped at the API's 1,000 rows and, worse, always
+  // returned the same oldest page — newer leads were never evaluated by a
+  // time rule at all.
+  let leads: unknown[];
+  try {
+    leads = await fetchAllPages(
+      (from, to) => supabase
+        .from('leads')
+        .select(LEAD_SCAN_COLUMNS)
+        .eq('do_not_contact', false)
+        .eq('removed_by_request', false)
+        .not('lead_status', 'in', '(won,lost,do_not_contact,removed_by_request,duplicate)')
+        .not('ownership_mode', 'in', '(mia_active,phone_sales_pending)')
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+      { max: MAX_LEADS_PER_TICK },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error('tick_query_failed', { fn: 'automation-tick', correlationId, err: message });
+    tickErrors.push(`leads_query: ${message}`);
     return { scanned: 0, rules: ruleCount, matches: {} as Record<string, number>, dryRun };
   }
-  if ((leads?.length ?? 0) >= MAX_LEADS_PER_TICK) capBreaches.push('leads_scan');
+  if (leads.length >= MAX_LEADS_PER_TICK) capBreaches.push('leads_scan');
 
   const matches: Record<string, number> = {};
   const sampleLeads: Record<string, string[]> = {};

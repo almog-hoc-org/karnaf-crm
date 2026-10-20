@@ -46,14 +46,28 @@ true once it's done.
 
 ## 2. Vault secrets (cron auth)
 
-The pg_cron jobs (`karnaf_sla_worker`, `karnaf_nightly_jobs`,
-`karnaf_purge_rate_limit`) need to call the Edge Functions with a bearer
-token. Store the token once via SQL:
+The pg_cron jobs that call Edge Functions send a bearer token they read
+from Supabase Vault. Three vault names are in use (a fourth is optional),
+and each must be mirrored into the Edge Function secret in §3 — otherwise
+every cron tick gets 401:
+
+| Vault secret | Cron jobs that send it | Edge Function secret it must equal |
+|---|---|---|
+| `sla_worker_secret` | `karnaf_sla_worker`, `karnaf_nightly_jobs`, `karnaf_daily_sales_inbox`, `karnaf_ai_watchdog`, `karnaf_template_sync`, `karnaf_operator_digest`, `karnaf_email_replies_poll` | `SLA_WORKER_SECRET` |
+| `outbound_dispatch_secret` | `karnaf_outbound_dispatch` (and `karnaf_broadcast_dispatch` when `broadcast_dispatch_secret` is absent) | `OUTBOUND_DISPATCH_SECRET` — required; dispatch-outbound has no fallback |
+| `automation_tick_secret` | `karnaf_automation_tick` | `AUTOMATION_TICK_SECRET` (automation-tick also accepts `SLA_WORKER_SECRET`) |
+| `broadcast_dispatch_secret` (optional) | `karnaf_broadcast_dispatch` | `BROADCAST_DISPATCH_SECRET` (both sides fall back to the outbound-dispatch secret, migration 094) |
+
+Store them once via SQL:
 
 ```sql
--- Pick a strong random string. Mirror it into Supabase project secrets as
--- SLA_WORKER_SECRET so the Edge Functions also know it.
-select vault.create_secret('paste-the-strong-random-string-here', 'sla_worker_secret');
+-- Pick a strong random string per secret. Mirror each into Supabase project
+-- secrets (§3) under the matching name so the Edge Functions also know it.
+select vault.create_secret('paste-a-strong-random-string-here', 'sla_worker_secret');          -- SLA_WORKER_SECRET
+select vault.create_secret('paste-another-strong-random-string', 'outbound_dispatch_secret');  -- OUTBOUND_DISPATCH_SECRET
+select vault.create_secret('paste-another-strong-random-string', 'automation_tick_secret');    -- AUTOMATION_TICK_SECRET
+-- Optional: 'broadcast_dispatch_secret'. Without it run_broadcast_dispatch
+-- sends outbound_dispatch_secret and the function accepts OUTBOUND_DISPATCH_SECRET.
 
 -- Set the URLs the cron functions will hit.
 alter database postgres set app.sla_worker_url = 'https://<ref>.functions.supabase.co/sla-worker';
@@ -64,6 +78,12 @@ Both `app.*` settings are read with `current_setting(..., true)` so a
 missing value silently no-ops the cron call (verified in
 [009_scheduled_jobs.sql](supabase/migrations/009_scheduled_jobs.sql) and
 [013_scheduled_nightly.sql](supabase/migrations/013_scheduled_nightly.sql)).
+
+There is no vault entry for operator-digest or email-replies-poll: their
+cron callers (migrations 122 / 135) send `sla_worker_secret`. Do not set a
+separate `OPERATOR_DIGEST_SECRET` / `EMAIL_REPLIES_POLL_SECRET` unless you
+also change that SQL — the functions accept either value, but the cron only
+ever sends the SLA worker's.
 
 ---
 
@@ -80,14 +100,17 @@ In Supabase: `Project Settings > Edge Functions > Secrets`. Add:
 | `WHATSAPP_PHONE_ID` | Meta WABA phone-number id |
 | `WHATSAPP_VERIFY_TOKEN` | random string, supplied to Meta webhook config |
 | `WHATSAPP_APP_SECRET` | Meta app secret (for X-Hub-Signature-256) |
-| `WHATSAPP_FALLBACK_TEMPLATE` | name of approved Hebrew template, e.g. `karnaf_followup_v1` |
+| `WHATSAPP_FALLBACK_TEMPLATE` | fallback template for **owner alerts only** (see `ALERT_WHATSAPP_TEMPLATE`, which should be a UTILITY template). The template for customer replies outside the 24h window is set in Settings → `whatsappSession.fallbackTemplateName`, not by env. |
 | `WATI_TOKEN`, `WATI_API_URL` | only if using WATI instead of Meta |
 | `OPENAI_API_KEY` | sk-... |
 | `OPENAI_MODEL` | `gpt-4o-mini` (default) |
 | `INTAKE_WEBHOOK_SECRET` | random string used by your form provider HMAC |
 | `PAYMENT_WEBHOOK_SECRET` | shared secret with payment provider |
 | `EMAIL_WEBHOOK_SECRET` | shared secret with the email provider (Mailgun/Postmark/SendGrid) |
-| `SLA_WORKER_SECRET` | same string as the vault secret in §2 |
+| `SLA_WORKER_SECRET` | same string as vault `sla_worker_secret` (§2); also what the operator-digest and email-replies-poll crons send |
+| `OUTBOUND_DISPATCH_SECRET` | same string as vault `outbound_dispatch_secret` (§2) — required; dispatch-outbound answers 503 without it |
+| `AUTOMATION_TICK_SECRET` | same string as vault `automation_tick_secret` (§2); automation-tick also accepts `SLA_WORKER_SECRET` |
+| `BROADCAST_DISPATCH_SECRET` | optional — same string as vault `broadcast_dispatch_secret`; when unset the function uses `OUTBOUND_DISPATCH_SECRET` (as does the cron, §2) |
 | `CORS_ALLOWED_ORIGINS` | e.g. `https://crm.karnaf.com,http://localhost:5173` |
 
 Deploy all functions:

@@ -13,7 +13,7 @@
 // Used by meta-template-status (action 'subscription') and
 // whatsapp-channel-status (GET).
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { env } from './env.ts';
 
 export const GRAPH_VERSION = 'v21.0';

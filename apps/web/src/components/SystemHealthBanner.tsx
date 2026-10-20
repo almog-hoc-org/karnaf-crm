@@ -11,6 +11,11 @@ const WATCHED_WORKERS: Array<{ name: string; label: string; maxAgeMs: number }> 
   { name: 'automation_tick', label: 'מנוע אוטומציות', maxAgeMs: 15 * 60_000 },
   { name: 'sla_worker', label: 'מעקב זמני תגובה', maxAgeMs: 30 * 60_000 },
   { name: 'ai_watchdog', label: 'שומר AI', maxAgeMs: 20 * 60_000 },
+  // Every minute: this is what actually delivers AI replies and campaigns.
+  { name: 'dispatch_outbound', label: 'שליחת הודעות', maxAgeMs: 10 * 60_000 },
+  { name: 'broadcast_dispatch', label: 'תפוצות', maxAgeMs: 10 * 60_000 },
+  // Every 5 minutes: replies to email campaigns ("הסר" included).
+  { name: 'email_replies_poll', label: 'תשובות למיילים', maxAgeMs: 30 * 60_000 },
   { name: 'nightly_jobs', label: 'עבודות לילה', maxAgeMs: 26 * 60 * 60_000 },
 ];
 

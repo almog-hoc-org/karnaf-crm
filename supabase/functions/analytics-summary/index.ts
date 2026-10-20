@@ -3,6 +3,7 @@
 // the DB directly.
 
 import { jsonResponse, preflight } from '../_shared/cors.ts';
+import { log } from '../_shared/logger.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { AuthError, requireStaff } from '../_shared/auth.ts';
 
@@ -29,6 +30,22 @@ Deno.serve(async (req) => {
   ]);
 
   if (sourcePerf.error) return jsonResponse(req, { error: sourcePerf.error.message }, 500);
+
+  // Every other section used to come back as an empty array when its view
+  // query failed — indistinguishable from "no data". Name the failures so
+  // the UI can say "חלק מהנתונים לא נטענו" instead of showing zeros.
+  const sectionErrors: Record<string, string> = {};
+  const sections: Array<[string, { error: { message: string } | null }]> = [
+    ['campaignPerformance', campaignPerf], ['aging', aging], ['recentActivity', recentActivity],
+    ['aiVsHuman', aiVsHuman], ['promptVariants', promptVariants], ['cohorts', cohorts],
+    ['firstResponseTimes', firstResponseTimes],
+  ];
+  for (const [name, res] of sections) {
+    if (res.error) {
+      sectionErrors[name] = res.error.message;
+      log.warn('analytics_section_failed', { fn: 'analytics-summary', section: name, err: res.error.message });
+    }
+  }
 
   // Compress the aging set into status-bucketed averages for the UI.
   type AgeRow = { lead_status: string; minutes_in_state: number };
@@ -60,5 +77,6 @@ Deno.serve(async (req) => {
     promptVariants: promptVariants.data ?? [],
     cohorts: cohorts.data ?? [],
     firstResponseTimes: firstResponseTimes.data ?? [],
+    errors: sectionErrors,
   });
 });
