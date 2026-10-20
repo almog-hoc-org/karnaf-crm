@@ -66,9 +66,15 @@ export const SOURCE_OPTIONS: Array<{ value: string; label: string }> = (() => {
 // every recipient with #132001.
 function metaTemplateInfo(t: MessageTemplateRow): {
   status: string | null; language: string | null; body: string | null;
+  category: string | null; hasOptOut: boolean | null;
 } {
-  const meta = (t.metadata as { meta?: { status?: string; language?: string; body?: string } } | null)?.meta;
-  return { status: meta?.status ?? null, language: meta?.language ?? null, body: meta?.body ?? null };
+  const meta = (t.metadata as {
+    meta?: { status?: string; language?: string; body?: string; category?: string; has_opt_out?: boolean };
+  } | null)?.meta;
+  return {
+    status: meta?.status ?? null, language: meta?.language ?? null, body: meta?.body ?? null,
+    category: meta?.category ?? null, hasOptOut: typeof meta?.has_opt_out === 'boolean' ? meta.has_opt_out : null,
+  };
 }
 
 const TRACK_OPTIONS = [
@@ -380,7 +386,7 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <p className="text-xs text-slate-500">
             תפוצת מייל נשלחת דרך Resend: מייל נפרד לכל נמען (רק למי שיש לו כתובת מייל
             והסכמת דיוור), עם קישור הסרה אישי בתחתית כל מייל. לכל נמען נרשם בנפרד אם
-            נשלח או נכשל. הספק וכתובת השולח נקבעים ב<a className="underline" href="/settings">הגדרות → ערוץ מייל</a>.
+            נשלח או נכשל. הספק וכתובת השולח נקבעים ב<a className="underline" href="/admin/settings">הגדרות → ערוץ מייל</a>.
           </p>
         ) : null}
 
@@ -511,6 +517,12 @@ function ComposeDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                 מוצגות רק תבניות שאושרו במטא (לפי הסנכרון). ההודעה תישלח בשפה שבה התבנית רשומה במטא.
               </p>
             )}
+            {selectedMetaInfo && selectedMetaInfo.category === 'MARKETING' && selectedMetaInfo.hasOptOut === false ? (
+              <p className="kf-tone-warning rounded-md p-2 text-xs ring-1 ring-inset" role="status">
+                ⚠️ התבנית הזו מסווגת במטא כשיווקית ואין בה דרך הסרה (״להסרה השיבו הסר״ / כפתור). חוק הספאם מחייב
+                דרך הסרה בכל הודעה שיווקית — מומלץ להוסיף footer בתבנית במטא לפני השליחה. (מי שמשיב ״הסר״ מוסר גם כך.)
+              </p>
+            ) : null}
             {selectedMetaInfo?.body ? (
               <div className="rounded-lg bg-emerald-50 p-3 text-sm whitespace-pre-wrap ring-1 ring-emerald-100">
                 <div className="mb-1 text-xs font-semibold text-emerald-700">הנוסח המאושר במטא (מה שיישלח בפועל):</div>

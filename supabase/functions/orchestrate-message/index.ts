@@ -36,9 +36,13 @@ Deno.serve(async (req) => {
   }
 
   const correlationId = correlationFromRequest(req);
-  const { leadId, conversationId } = await req.json().catch(() => ({}));
+  const { leadId, conversationId, dispatchAttempt } = await req.json().catch(() => ({}));
   if (!leadId || !conversationId)
     return jsonResponse(req, { error: 'Missing leadId or conversationId' }, 400);
+  // dispatch-outbound tells us which attempt this is (1-based; the row's
+  // max_attempts default is 5). Direct callers (ai-replay, admin) have no
+  // retry behind them.
+  const retryAvailable = typeof dispatchAttempt === 'number' && dispatchAttempt < DISPATCH_MAX_ATTEMPTS;
 
   const supabase = getServiceSupabase();
   const got = await tryConversationLock(supabase, conversationId);
@@ -470,6 +474,7 @@ Deno.serve(async (req) => {
 
     let sendResult: { ok: boolean; providerMessageId?: string; error?: string } = { ok: false };
     let attemptedSend = false;
+    let transientSendFailure = false;
 
     if (out.replyText && (effectiveMode === 'freeform' || effectiveMode === 'template')) {
       attemptedSend = true;
@@ -608,10 +613,20 @@ Deno.serve(async (req) => {
           fn: 'orchestrate', correlationId, leadId, conversationId,
         });
       }
-      // Safety net for hard send failures too — except template-config
-      // errors, where the real reply is parked and flushes on the next
-      // inbound (an ack would just precede the actual answer confusingly).
-      if (!isTemplateConfigError(sendResult.error)) {
+      // A transient provider failure (network, Meta 5xx, rate limit) is
+      // worth a second attempt: dispatch-outbound retries a non-2xx with
+      // backoff, so the customer gets the reply minutes later instead of
+      // never. Permanent errors (template mismatch, bad number) stay 200 —
+      // retrying them only burns attempts. Decided BEFORE the safety net:
+      // the ack hands the lead to Mia, after which the retried turn is
+      // skipped as non_ai_owner and the AI reply is never sent at all.
+      transientSendFailure = retryAvailable
+        && !isTemplateConfigError(sendResult.error) && isTransientProviderError(sendResult.error);
+      // Safety net for hard send failures — except template-config errors,
+      // where the real reply is parked and flushes on the next inbound (an
+      // ack would just precede the actual answer confusingly), and except a
+      // transient failure the dispatcher is about to retry.
+      if (!isTemplateConfigError(sendResult.error) && !transientSendFailure) {
         await maybeSendSafetyNetAck({
           supabase, lead, leadId, conversationId, channel, config, correlationId,
           executionStatus: 'provider_send_error',
@@ -624,9 +639,11 @@ Deno.serve(async (req) => {
         priorityLevel: 1,
         reason: isTemplateConfigError(sendResult.error)
           ? 'תבנית הוואטסאפ המאושרת לא תואמת (מספר משתנים) — יש לתקן ב-Meta; התשובה נשמרה ותישלח כשהלקוח יכתוב'
-          : 'WhatsApp outbound failed after retries',
+          : transientSendFailure
+            ? 'שליחת הוואטסאפ נכשלה זמנית — המערכת תנסה שוב אוטומטית'
+            : 'WhatsApp outbound failed after retries',
         queueSummary: sendResult.error ?? 'unknown_error',
-        payloadJson: { effectiveMode, correlationId },
+        payloadJson: { effectiveMode, correlationId, transient: transientSendFailure },
       });
     } else if (isModelExecutionFailure(decision.executionStatus) || decision.executionStatus === 'validation_blocked') {
       // Model/provider unavailable → make the failure visible immediately.
@@ -712,17 +729,42 @@ Deno.serve(async (req) => {
     });
 
     return jsonResponse(req, {
-      ok: true,
+      ok: !transientSendFailure,
+      retry: transientSendFailure || undefined,
       decision: out,
       executionStatus: decision.executionStatus,
       sendResult,
       mode: effectiveMode,
       correlationId,
-    });
+    }, transientSendFailure ? 503 : 200);
   } finally {
     await releaseConversationLock(supabase, conversationId);
   }
 });
+
+// outbound_dispatch.max_attempts default (036); the attempt number arrives
+// from dispatch-outbound in the request body.
+const DISPATCH_MAX_ATTEMPTS = 5;
+
+// Meta/network failures that a later attempt can succeed at. Everything
+// else (template mismatch, invalid recipient, parameter errors) is
+// permanent and must not be retried.
+const TRANSIENT_PROVIDER_MARKERS = [
+  // whatsapp-provider throws `meta_5xx:<status>` on a 5xx; Deno's fetch
+  // failures read "error sending request" / "connection".
+  'meta_5xx', 'error sending request', 'fetch failed', 'network', 'timeout', 'timed out',
+  'econnreset', 'connection', 'socket',
+  // Meta: 1 unknown API error, 2 service temporarily unavailable, 4 API too
+  // many calls, 130429 rate limit hit, 131056 pair rate limit, 80007 rate limit.
+  '"code":1,', '"code":2,', '"code":4,', '"code":130429', '"code":131056', '"code":80007',
+  'rate limit', 'too many requests', 'temporarily unavailable', 'service unavailable',
+];
+
+function isTransientProviderError(error: string | null | undefined): boolean {
+  if (!error) return false;
+  const lower = error.toLowerCase();
+  return TRANSIENT_PROVIDER_MARKERS.some((m) => lower.includes(m));
+}
 
 function snippet(text: string | null, maxChars: number): string | null {
   if (!text) return null;

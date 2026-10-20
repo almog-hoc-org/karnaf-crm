@@ -19,13 +19,14 @@ import { getServiceSupabase } from '../_shared/supabase.ts';
 import { verifyBearer } from '../_shared/webhook-signature.ts';
 import { correlationFromRequest, log } from '../_shared/logger.ts';
 import { fetchSegmentLeads, type BroadcastSegment } from '../_shared/broadcast-segment.ts';
-import { chunk } from '../_shared/paginate.ts';
+import { chunk, fetchAllPages } from '../_shared/paginate.ts';
 import { enqueueAllowance, resolvePacing, shouldPauseBroadcast } from '../_shared/broadcast-pacing.ts';
 import { notifyOperator } from '../_shared/operator-alert.ts';
 import {
   addSubscriberToList,
   createRavmesserList,
   createRavmesserMessage,
+  removeSubscribersFromList,
   sendRavmesserMessage,
 } from '../_shared/ravmesser.ts';
 import { sanitizeEmailHtml, wrapEmailShell } from '../_shared/email-html.ts';
@@ -37,6 +38,7 @@ import {
   preflightEmailChannel,
 } from '../_shared/email-channel.ts';
 import { sendResendEmail } from '../_shared/resend.ts';
+import { canContactLead, type ContactBlockReason } from '../_shared/contact-guard.ts';
 
 // How many broadcasts to advance per tick. The per-tick enqueue rate and
 // the rolling-24h cap come from crm_config 'broadcast_pacing' (see
@@ -181,14 +183,45 @@ Deno.serve(async (req) => {
 
       // 3. Quality guard — if Meta is rejecting this broadcast's sends,
       //    pause it before the number's quality rating pays the price.
+      //    Measured from the last "retry" (pause_baseline, migration 141):
+      //    the counts are cumulative, so a retried campaign used to trip
+      //    the guard again on its first tick from its own history.
       const progress = await finalCounts(supabase, b.id);
-      if (shouldPauseBroadcast(pacing, progress.sent, progress.failed)) {
+      const baseline = (b.pause_baseline ?? {}) as { sent?: number; failed?: number };
+      const sinceRetry = {
+        sent: Math.max(0, progress.sent - (baseline.sent ?? 0)),
+        failed: Math.max(0, progress.failed - (baseline.failed ?? 0)),
+      };
+      if (shouldPauseBroadcast(pacing, sinceRetry.sent, sinceRetry.failed)) {
         await supabase.from('broadcasts').update({
           status: 'failed',
           sent_count: progress.sent,
           failed_count: progress.failed,
           skipped_count: progress.skipped,
+          last_error: `הושהה אוטומטית: ${sinceRetry.failed} מתוך ${sinceRetry.sent + sinceRetry.failed} שליחות נכשלו`,
         }).eq('id', b.id);
+        // Same pull as "cancel": a paused campaign must stop the messages
+        // already queued, not only the next enqueue — otherwise the
+        // allowance already handed out kept sending for minutes after
+        // the pause, and dispatch-outbound never looked at the status.
+        const { data: pulled, error: pullErr } = await supabase
+          .from('outbound_dispatch')
+          .update({ status: 'failed', last_error: 'broadcast_paused', failed_at: new Date().toISOString() })
+          .eq('payload->>broadcast_id', b.id)
+          .eq('status', 'pending')
+          .select('id');
+        if (pullErr) log.warn('broadcast_pause_dispatch_pull_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, err: pullErr.message });
+        // Only the recipients whose dispatch was actually pulled go back to
+        // pending. A row dispatch-outbound already claimed is in flight: it
+        // either sends (status read before the flip) or, reading 'failed',
+        // puts its own recipient back to pending. Resetting it from here
+        // too let a quick "retry" enqueue that person twice.
+        for (const batch of chunk((pulled ?? []).map((r) => r.id as string), 200)) {
+          const { error: resetErr } = await supabase.from('broadcast_recipients')
+            .update({ status: 'pending', dispatch_id: null })
+            .eq('broadcast_id', b.id).eq('status', 'enqueued').in('dispatch_id', batch);
+          if (resetErr) log.warn('broadcast_pause_recipient_reset_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId: b.id, err: resetErr.message });
+        }
         await notifyOperator(supabase, {
           kind: 'broadcast_paused',
           // Per broadcast: a paused campaign is announced once, not on every
@@ -243,9 +276,13 @@ Deno.serve(async (req) => {
           });
           continue;
         }
+        // Only while still 'pending': dispatch-outbound may already have
+        // written the outcome for a fast send, and this must not overwrite
+        // 'sent'/'failed' with 'enqueued'.
         await supabase.from('broadcast_recipients')
           .update({ status: 'enqueued', dispatch_id: enq?.id ?? null })
-          .eq('id', r.id);
+          .eq('id', r.id)
+          .eq('status', 'pending');
         totalEnqueued += 1;
         allowance -= 1;
       }
@@ -397,6 +434,9 @@ interface EmailRecipientRow {
     full_name: string | null;
     consent_email: boolean | null;
     do_not_contact: boolean | null;
+    removed_by_request: boolean | null;
+    snoozed_until: string | null;
+    no_proactive_contact: boolean | null;
   } | null;
 }
 
@@ -408,22 +448,27 @@ async function pendingEmailRecipients(
 ): Promise<EmailRecipientRow[]> {
   const { data } = await supabase
     .from('broadcast_recipients')
-    .select('id, lead_id, leads(email, full_name, consent_email, do_not_contact)')
+    .select('id, lead_id, leads(email, full_name, consent_email, do_not_contact, removed_by_request, snoozed_until, no_proactive_contact)')
     .eq('broadcast_id', broadcastId)
     .eq('status', 'pending')
     .limit(limit);
   return (data ?? []) as unknown as EmailRecipientRow[];
 }
 
-/** null when the recipient may be sent to, otherwise the skip reason. */
+/**
+ * null when the recipient may be sent to, otherwise the skip reason. The
+ * same guard every other proactive send runs (contact-guard), against the
+ * lead's state NOW: a lead snoozed or opted out between materialisation and
+ * this tick is skipped, and consent_email = false is a hard block whatever
+ * the requireConsent setting says.
+ */
 function emailSkipReason(
   lead: EmailRecipientRow['leads'],
   requireConsent: boolean,
-): 'no_email' | 'no_consent' | null {
-  if (!lead?.email) return 'no_email';
-  if (lead.do_not_contact) return 'no_consent';
-  if (requireConsent && lead.consent_email !== true) return 'no_consent';
-  return null;
+): ContactBlockReason | null {
+  if (!lead) return 'no_email';
+  const decision = canContactLead(lead, { channel: 'email', kind: 'proactive', requireEmailConsent: requireConsent });
+  return decision.ok ? null : decision.reason;
 }
 
 // Resend path: one email per recipient, sent by us.
@@ -620,6 +665,11 @@ async function advanceRavmesserBroadcast(
     .eq('broadcast_id', broadcastId)
     .eq('status', 'pending');
   if ((remaining ?? 0) === 0 && !providerRef.messageSent) {
+    // The list filled over several ticks; a recipient pushed in tick 1 may
+    // have written "הסר" since. Responder has the address, so re-check
+    // consent now and take anyone who opted out off the list before the
+    // campaign goes to it (חוק הספאם: the request must stop the mailing).
+    await removeOptedOutFromRavmesserList(supabase, broadcastId, providerRef.listId as string, correlationId);
     // No per-lead unsubscribe link here: Responder appends its own footer
     // to a list campaign, and it is the one that knows who unsubscribed.
     const html = wrapEmailShell(sanitizeEmailHtml(broadcastBodyHtml(b)), emailCfg.fromName);
@@ -669,6 +719,69 @@ async function advanceRavmesserBroadcast(
   }
 
   return pushed;
+}
+
+/**
+ * Recipients already pushed into the Responder list who have since opted
+ * out (consent_email = false, DNC, removal) are taken off the list and
+ * their recipient row is closed as skipped. If Responder refuses the
+ * removal the campaign still goes out, but the owner is told which
+ * addresses to remove by hand — never silently.
+ */
+async function removeOptedOutFromRavmesserList(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  broadcastId: string,
+  listId: string,
+  correlationId: string,
+): Promise<void> {
+  // Every pushed recipient, not the first 1,000 (max_rows): the list fills
+  // over many ticks and the late ones are exactly those with time to opt out.
+  type RecheckRow = { id: string; leads: EmailRecipientRow['leads'] | null };
+  let data: RecheckRow[];
+  try {
+    data = await fetchAllPages<RecheckRow>((from, to) => supabase
+      .from('broadcast_recipients')
+      .select('id, leads(email, consent_email, do_not_contact, removed_by_request, no_proactive_contact)')
+      .eq('broadcast_id', broadcastId)
+      .eq('status', 'sent')
+      .order('id')
+      .range(from, to) as unknown as PromiseLike<{ data: RecheckRow[] | null; error: unknown }>);
+  } catch (err) {
+    log.warn('broadcast_ravmesser_recheck_failed', { fn: 'broadcast-dispatch', correlationId, broadcastId, err: String((err as { message?: string })?.message ?? err) });
+    return;
+  }
+  const optedOut = data.filter((r) => {
+    const l = r.leads;
+    return !l || !l.email || l.consent_email === false || l.do_not_contact || l.removed_by_request || l.no_proactive_contact;
+  });
+  if (optedOut.length === 0) return;
+  const emails = optedOut.map((r) => r.leads?.email).filter((e): e is string => !!e);
+  let removed: { ok: boolean; error?: string } = { ok: true };
+  for (const batch of chunk(emails, 500)) {
+    const r = await removeSubscribersFromList(listId, batch);
+    if (!r.ok) removed = { ok: false, error: r.error };
+  }
+  await supabase.from('broadcast_recipients')
+    .update({ status: 'skipped', error: removed.ok ? 'opted_out_before_send' : 'opted_out_before_send (removal from list failed)' })
+    .in('id', optedOut.map((r) => r.id));
+  log.info('broadcast_ravmesser_opt_outs_removed', {
+    fn: 'broadcast-dispatch', correlationId, broadcastId, count: emails.length, ok: removed.ok, err: removed.error,
+  });
+  if (!removed.ok) {
+    await notifyOperator(supabase, {
+      kind: 'broadcast_email_optout_removal_failed',
+      dedupeKey: `broadcast_email_optout_removal_failed:${broadcastId}`,
+      throttleMinutes: 24 * 60,
+      severity: 'error',
+      title: 'נמענים שביקשו הסרה נשארו ברשימת רב מסר',
+      lines: [
+        `${emails.length} נמענים ביטלו הסכמה אחרי שנכנסו לרשימה, והסרה אוטומטית מרב מסר נכשלה: ${(removed.error ?? '').slice(0, 120)}`,
+        'יש להסיר אותם ידנית ברב מסר לפני השליחה:',
+        ...emails.slice(0, 10),
+      ],
+      correlationId,
+    });
+  }
 }
 
 async function failEmailBroadcast(

@@ -3,7 +3,7 @@
 // import, mark_won) goes through ensureProgramMember so provenance,
 // the lead's track, and the audit event stay consistent.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { logLeadEvent } from './lead-service.ts';
 
 export type MemberJoinedVia = 'payment' | 'won' | 'manual' | 'import';

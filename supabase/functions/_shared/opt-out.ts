@@ -9,15 +9,27 @@
 // column changed, journeys kept advancing, and a scheduled broadcast
 // still went out to the person who had just written "הסר".
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { log } from './logger.ts';
 
 export const DEFAULT_OPT_OUT_KEYWORDS = [
-  'הסר', 'הסירו', 'הסירו אותי', 'תסיר', 'תסירו', 'להסיר',
+  'הסר', 'הסרה', 'להסרה', 'הסירו', 'הסירו אותי', 'הסירוני', 'תסיר', 'תסירו', 'תסירו אותי', 'להסיר',
   'תוריד', 'תורידו', 'להוריד אותי', 'תפסיק', 'תפסיקו',
-  'לא מעוניין', 'לא מעוניינת', 'אל תפנו', 'אל תשלחו',
-  'stop', 'unsubscribe', 'remove me', 'opt out',
+  'בטל', 'ביטול', 'מחק', 'מחקו', 'תמחקו', 'מחקו אותי',
+  'לא מעוניין', 'לא מעוניינת', 'לא מעוניינים', 'אל תפנו', 'אל תשלחו',
+  'stop', 'unsubscribe', 'unsub', 'remove', 'remove me', 'opt out',
 ];
+
+// Words that also mean something else in a short customer message: "בטל
+// את הפגישה", "מחק את ההודעה הקודמת", "ביטול עסקה", "remove the parking
+// from the offer", "הסרה של שעבוד". They count only when they ARE the
+// message — allowing "אותי"/"me" and request/courtesy words ("אני מבקש
+// הסרה", "הסרה בבקשה") — or when the list is named next to them.
+const EXACT_ONLY_KEYWORDS = ['הסרה', 'להסרה', 'בטל', 'ביטול', 'מחק', 'מחקו', 'תמחקו', 'remove'];
+const FILLER_WORDS = new Set([
+  'אני', 'מבקש', 'מבקשת', 'רוצה', 'בבקשה', 'תודה', 'נא', 'אנא', 'אותי',
+  'i', 'me', 'want', 'to', 'would', 'like', 'please', 'pls', 'thanks',
+]);
 
 export const DEFAULT_RESUBSCRIBE_KEYWORDS = ['חזור', 'הרשם', 'תרשמו אותי', 'resubscribe', 'start'];
 
@@ -30,6 +42,21 @@ export const DEFAULT_RESUBSCRIBE_CONFIRMATION = 'חזרת לרשימת התפו�
 
 // Messages longer than this are never treated as a bare command.
 const MAX_COMMAND_WORDS = 6;
+
+// Naming the list is what turns a long message into a removal request:
+// with one of these present, a removal keyword anywhere in the text is
+// enough whatever the length.
+const LIST_PHRASES = [
+  'רשימת התפוצה', 'מרשימת התפוצה', 'רשימת הדיוור', 'מרשימת הדיוור', 'רשימת תפוצה', 'מהרשימה', 'מהדיוור',
+  'דיוור', 'הדיוור', 'התפוצה', 'מהניוזלטר', 'הניוזלטר', 'ניוזלטר', 'mailing list', 'from your list', 'from the list', 'newsletter',
+];
+
+// Unambiguous at any length ("unsubscribe", "הסירו אותי") — nobody writes
+// these in another sense.
+const STRONG_PHRASES = ['unsubscribe', 'הסירו אותי', 'תסירו אותי', 'להסיר אותי', 'הסירוני', 'remove me', 'opt out'];
+
+// Hebrew prefixes glued to the verb: "ותסירו", "שתסירו".
+const HEBREW_PREFIXES = ['ו', 'ש'];
 
 export interface MessagingConfig {
   optOutKeywords: string[];
@@ -47,15 +74,22 @@ export const DEFAULT_MESSAGING: MessagingConfig = {
   resubscribeConfirmation: DEFAULT_RESUBSCRIBE_CONFIRMATION,
 };
 
-/** Fill a partial crm_config `messaging` value with defaults; tolerate junk. */
+/**
+ * Fill a partial crm_config `messaging` value with defaults; tolerate junk.
+ * Keyword lists are ADDED to the defaults, not swapped for them: migration
+ * 128 seeded crm_config with the keyword list of its day, nothing in the
+ * app edits it, and a list that replaced the defaults silently froze
+ * detection at that 19-word version while the code learned new forms.
+ */
 export function resolveMessaging(raw: unknown): MessagingConfig {
   const obj = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
   const strList = (v: unknown, fallback: string[]) =>
     Array.isArray(v) && v.every((x) => typeof x === 'string') && v.length > 0 ? v as string[] : fallback;
+  const union = (defaults: string[], extra: string[]) => Array.from(new Set([...defaults, ...extra]));
   const str = (v: unknown, fallback: string) => (typeof v === 'string' && v.trim() ? v : fallback);
   return {
-    optOutKeywords: strList(obj.optOutKeywords, DEFAULT_MESSAGING.optOutKeywords),
-    resubscribeKeywords: strList(obj.resubscribeKeywords, DEFAULT_MESSAGING.resubscribeKeywords),
+    optOutKeywords: union(DEFAULT_MESSAGING.optOutKeywords, strList(obj.optOutKeywords, [])),
+    resubscribeKeywords: union(DEFAULT_MESSAGING.resubscribeKeywords, strList(obj.resubscribeKeywords, [])),
     optOutFooter: str(obj.optOutFooter, DEFAULT_MESSAGING.optOutFooter),
     optOutConfirmation: str(obj.optOutConfirmation, DEFAULT_MESSAGING.optOutConfirmation),
     resubscribeConfirmation: str(obj.resubscribeConfirmation, DEFAULT_MESSAGING.resubscribeConfirmation),
@@ -65,41 +99,91 @@ export function resolveMessaging(raw: unknown): MessagingConfig {
 function normalise(text: string): string {
   return text
     .toLowerCase()
+    // Quotes, punctuation and emoji around a command ("הסר!", «STOP», 🛑 הסר)
     .replace(/[\p{P}\p{S}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-function matchesKeyword(text: string, keywords: string[]): boolean {
+/** Whole-word containment, tolerant of a glued ו/ש prefix on a single-word keyword. */
+function containsKeyword(norm: string, kw: string): boolean {
+  if (norm === kw) return true;
+  const padded = ' ' + norm + ' ';
+  if (padded.includes(' ' + kw + ' ')) return true;
+  if (!kw.includes(' ') && /^[֐-׿]/.test(kw)) {
+    for (const p of HEBREW_PREFIXES) {
+      if (padded.includes(' ' + p + kw + ' ')) return true;
+    }
+  }
+  return false;
+}
+
+// Our own footer, quoted back at us. A reply carries the campaign underneath
+// it, and the campaign ends with "להסרה מרשימת התפוצה לחצו כאן או השיבו
+// 'הסר'" — which names the list AND contains the keyword. Lines that look
+// like that footer, and quoted lines ("> ..."), are not what the person wrote.
+const FOOTER_LINE = /^(?=.*(להסרה|להסיר|unsubscribe|opt[- ]?out))(?=.*(לחצו|השיבו|click|reply|link|קישור)).*$/i;
+
+function stripQuotedAndFooter(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith('>') && !FOOTER_LINE.test(line.trim()))
+    .join('\n');
+}
+
+/** The message is the keyword plus nothing but filler ("אני מבקש הסרה", "remove me please"). */
+function isBareCommand(norm: string, kw: string): boolean {
+  const rest = norm.split(' ').filter((w) => !FILLER_WORDS.has(w)).join(' ');
+  return rest === kw || HEBREW_PREFIXES.some((p) => rest === p + kw);
+}
+
+function namesTheList(padded: string): boolean {
+  return LIST_PHRASES.some((p) => padded.includes(' ' + normalise(p) + ' '));
+}
+
+function matchesKeyword(text: string, keywords: string[], opts: { allowLong: boolean }): boolean {
   const norm = normalise(text);
   if (!norm) return false;
   const words = norm.split(' ');
-  if (words.length > MAX_COMMAND_WORDS) return false;
-  for (const raw of keywords) {
-    const kw = normalise(raw);
-    if (!kw) continue;
-    if (norm === kw) return true;
-    if ((' ' + norm + ' ').includes(' ' + kw + ' ')) return true;
+  const kws = keywords.map(normalise).filter(Boolean);
+  if (words.length <= MAX_COMMAND_WORDS) {
+    const listNamed = namesTheList(' ' + norm + ' ');
+    return kws.some((kw) => containsKeyword(norm, kw)
+      && (!EXACT_ONLY_KEYWORDS.includes(kw) || listNamed || isBareCommand(norm, kw)));
   }
-  return false;
+  if (!opts.allowLong) return false;
+  // Long message: only when it is unmistakably about the mailing list, and
+  // only on the text the person wrote — not our quoted footer.
+  const own = normalise(stripQuotedAndFooter(text));
+  if (!own) return false;
+  const padded = ' ' + own + ' ';
+  if (STRONG_PHRASES.some((p) => padded.includes(' ' + normalise(p) + ' '))) return true;
+  return namesTheList(padded) && kws.some((kw) => containsKeyword(own, kw));
 }
 
 /** True when the inbound text is a removal request. */
 export function detectOptOut(text: string | null | undefined, keywords = DEFAULT_OPT_OUT_KEYWORDS): boolean {
   if (!text) return false;
-  return matchesKeyword(text, keywords);
-}
-
-/** True when the inbound text asks to be put back on the list. */
-export function detectResubscribe(text: string | null | undefined, keywords = DEFAULT_RESUBSCRIBE_KEYWORDS): boolean {
-  if (!text) return false;
-  return matchesKeyword(text, keywords);
+  return matchesKeyword(text, keywords, { allowLong: true });
 }
 
 /**
- * Append the opt-out line to an outgoing marketing text. Idempotent;
- * `oneLine` is for template parameters, which Meta rejects when they
- * contain newlines.
+ * True when the inbound text asks to be put back on the list. Exact match
+ * only: "start" or "חזור" inside a sentence ("start by sending me the
+ * brochure", "חזור אליי מחר") is conversation, not consent.
+ */
+export function detectResubscribe(text: string | null | undefined, keywords = DEFAULT_RESUBSCRIBE_KEYWORDS): boolean {
+  if (!text) return false;
+  const norm = normalise(text);
+  if (!norm) return false;
+  return keywords.map(normalise).filter(Boolean).some((kw) => norm === kw);
+}
+
+/**
+ * Append the opt-out line to an outgoing marketing text. Idempotent: a
+ * body that already carries the footer (or already tells the reader how
+ * to unsubscribe) is returned unchanged. `oneLine` is for template
+ * parameters, which Meta rejects when they contain newlines.
  */
 export function appendOptOutFooter(
   text: string,
@@ -226,16 +310,27 @@ export async function applyOptOut(
   return result;
 }
 
-/** The lead asked to come back: both consents on, proactive contact allowed again. */
+/**
+ * The lead asked to come back — on the channel they wrote on. "חזור" over
+ * WhatsApp restores WhatsApp consent and lifts the proactive-contact block;
+ * it is not an opt-in to marketing email (חוק הספאם wants an explicit one
+ * for that), so consent_email is left alone unless the request came by email.
+ */
 export async function applyResubscribe(
   supabase: SupabaseClient,
   input: { leadId: string; channel: OptOutChannel; text?: string | null; correlationId?: string; conversationId?: string | null },
 ): Promise<void> {
   const nowIso = new Date().toISOString();
-  const { error } = await supabase
-    .from('leads')
-    .update({ consent_email: true, consent_whatsapp: true, no_proactive_contact: false, consent_updated_at: nowIso })
-    .eq('id', input.leadId);
+  const updates: Record<string, unknown> = { no_proactive_contact: false, consent_updated_at: nowIso };
+  const channels: string[] = [];
+  if (input.channel === 'email') {
+    updates.consent_email = true;
+    channels.push('email');
+  } else {
+    updates.consent_whatsapp = true;
+    channels.push('whatsapp');
+  }
+  const { error } = await supabase.from('leads').update(updates).eq('id', input.leadId);
   if (error) throw error;
   await supabase.from('lead_events').insert({
     lead_id: input.leadId,
@@ -243,7 +338,7 @@ export async function applyResubscribe(
     event_type: 'consent_granted',
     actor_type: 'system',
     event_payload: {
-      channels: ['email', 'whatsapp'],
+      channels,
       channel: input.channel,
       basis: 'inbound_request',
       text: input.text ? String(input.text).slice(0, 200) : null,

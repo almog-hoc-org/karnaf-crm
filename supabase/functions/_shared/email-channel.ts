@@ -7,7 +7,7 @@
 // plus the preflight both the scheduler and the dispatcher run so a campaign
 // fails at the click — not at 19:30 with the recipients waiting.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { isRavmesserConfigured } from './ravmesser.ts';
 import { emailDomain, isPublicMailDomain, isResendConfigured, listResendDomains } from './resend.ts';
 

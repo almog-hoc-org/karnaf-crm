@@ -46,7 +46,13 @@ export function DashboardPage() {
         </button>
       </header>
 
-      <TodayCommandCenter summary={s} queues={queueQ.data ?? []} queuesLoading={queueQ.isLoading} />
+      <TodayCommandCenter
+        summary={s}
+        queues={queueQ.data ?? []}
+        queuesLoading={queueQ.isLoading}
+        queuesError={queueQ.error ? (queueQ.error as Error).message : null}
+        onRetryQueues={() => queueQ.refetch()}
+      />
 
       {/* Tier 6.D.2 — 4 actionable KPIs (was 5). Each has a click target. */}
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -95,13 +101,18 @@ export function DashboardPage() {
 }
 
 function TodayCommandCenter({
-  summary, queues, queuesLoading,
+  summary, queues, queuesLoading, queuesError = null, onRetryQueues,
 }: {
   summary: DashboardSummary;
   queues: QueueRow[];
   queuesLoading: boolean;
+  // A failed queue fetch must never read as "no urgent tasks" — the green
+  // "היום בשליטה" is the most reassuring thing on the screen, and showing
+  // it over an error teaches the operator to trust it less.
+  queuesError?: string | null;
+  onRetryQueues?: () => void;
 }) {
-  const priority = todayPriority(summary, queues);
+  const priority = todayPriority(summary, queues, Boolean(queuesError));
   const topQueues = queues.slice(0, 3);
   return (
     <section className="overflow-hidden rounded-2xl border border-brand-200 bg-gradient-to-l from-brand-50 via-white to-white shadow-sm">
@@ -123,6 +134,11 @@ function TodayCommandCenter({
           <h3 className="text-sm font-semibold text-slate-700">הבא בתור</h3>
           {queuesLoading ? (
             <p className="mt-3 text-sm text-slate-500">טוען משימות...</p>
+          ) : queuesError ? (
+            <p className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-800" role="alert">
+              תור המשימות לא נטען ({queuesError}).{' '}
+              {onRetryQueues ? <button type="button" className="underline" onClick={onRetryQueues}>נסו שוב</button> : null}
+            </p>
           ) : topQueues.length > 0 ? (
             <ol className="mt-3 space-y-2">
               {topQueues.map((q, i) => (
@@ -147,7 +163,7 @@ function TodayCommandCenter({
   );
 }
 
-function todayPriority(summary: DashboardSummary, queues: QueueRow[]) {
+function todayPriority(summary: DashboardSummary, queues: QueueRow[], queuesUnavailable = false) {
   const first = queues[0];
   // Tier 5.E.1 — `summary.unansweredNow` is a *status*-based count
   // (leads in new / first_contact_sent). The Inbox `lane=reply`
@@ -185,6 +201,15 @@ function todayPriority(summary: DashboardSummary, queues: QueueRow[]) {
       detail: `${first.leads?.full_name ?? 'הליד הראשון'} נמצא בראש הרשימה בגלל עדיפות ${first.priority_level}.`,
       cta: 'לפתוח את הפריט הראשון',
       href: `/leads/${first.lead_id}`,
+    };
+  }
+  if (queuesUnavailable) {
+    // No queue data is not the same as an empty queue.
+    return {
+      title: 'תור המשימות לא נטען',
+      detail: 'אי אפשר לדעת כרגע אם יש משימות דחופות. מסך הטיפול מציג את התמונה המלאה.',
+      cta: 'פתיחת מסך טיפול',
+      href: '/inbox',
     };
   }
   return {

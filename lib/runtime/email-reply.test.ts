@@ -20,16 +20,25 @@ const iphone = (reply: string) =>
 
 describe('extractReplyText', () => {
   it.each([
-    ['Gmail Hebrew', gmailHe('הסר')],
-    ['Gmail English client', gmailEn('תסירו אותי בבקשה')],
-    ['Outlook', outlook('לא מעוניין, תודה')],
-    ['iPhone', iphone('הסר אותי')],
-  ])('cuts the quoted campaign (%s) so the removal request is detected', (_name, body) => {
+    ['Gmail Hebrew', gmailHe('הסר'), false],
+    // "תסירו אותי" is unmistakable at any length, so even the uncut body
+    // counts — and the quoted footer never does (it is ours).
+    ['Gmail English client', gmailEn('תסירו אותי בבקשה'), true],
+    ['Outlook', outlook('לא מעוניין, תודה'), false],
+    ['iPhone', iphone('הסר אותי'), false],
+  ])('cuts the quoted campaign (%s) so the removal request is detected', (_name, body, uncutDetects) => {
     const reply = extractReplyText(body);
     expect(reply.length).toBeLessThan(40);
     expect(detectOptOut(reply)).toBe(true);
-    // Without the cut the whole body is far too long to count as a command.
-    expect(detectOptOut(body)).toBe(false);
+    // Without the cut: a bare "הסר" + the quoted campaign is too long to be
+    // a command, and our own footer ("להסרה ... השיבו הסר") must never be
+    // what triggers a removal.
+    expect(detectOptOut(body)).toBe(uncutDetects);
+  });
+
+  it('never treats our own quoted footer as the removal request', () => {
+    expect(detectOptOut(gmailHe('תודה, מעניין! אפשר לקבל פרטים על התוכנית ועל המחיר?'))).toBe(false);
+    expect(detectOptOut(outlook('מעניין מאוד, אשמח לשיחה בשבוע הבא כדי לשמוע עוד על הליווי'))).toBe(false);
   });
 
   it('keeps a real question as a question', () => {

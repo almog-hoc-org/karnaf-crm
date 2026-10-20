@@ -1,6 +1,13 @@
 # Karnaf CRM — Developer Handoff
 
-_Last updated: 2026-04-28._
+_Last updated: 2026-10-17 (audit round; the body below is the original 2026-04-28 handoff and is partly historical — the "Repo map" in README.md and `supabase/config.toml` are current)._
+
+> **סבב ביקורת 17.10.2026 — מה השתנה (קרא קודם):**
+> - **אבטחה (PR #100):** כל פונקציית SQL ב-`public` סגורה ל-anon ול-PUBLIC; views ב-`security_invoker`; מדיניות RLS לכתיבה הוסרה (כתיבה רק דרך Edge Functions); `purge_lead_pii(uuid)` למחיקת ליד אחד; `users-manage` עם כללי owner; הפריסה ל-Supabase ול-Vercel רצה רק אחרי CI ירוק על master. **מוסכמה:** כל פונקציה חדשה מסתיימת ב-`revoke all on function ... from public` + grant מפורש — ה-db-smoke נכשל אחרת.
+> - **אמינות:** נעילת שיחה כ-lease על `conversations.turn_lock_until` (ה-advisory lock דלף דרך ה-pool); `leads.awaiting_reply` (עמודה מחושבת) מסננת ב-SQL לפני ה-limit; `merge_leads` v3 מאחד שיחות (וסוגר פריטי תור כפולים, משאיר turn שבתור על השיחה המאוחדת); `automation-tick?dryRun=true` באמת לא מריץ כלום; שער כפילות ל-journeys; כשל ספק חולף בתשובת AI → 503 ו-retry מה-dispatcher בלי להעביר את הליד ל-Mia; `email-replies-poll` לא נתקע על מייל שלא ניתן להעביר (3 ניסיונות + התראה).
+> - **חוק הספאם:** `consent_email=false` חוסם תמיד (גם כש-requireConsent כבוי); זיהוי "הסרה/ביטול/מחק" (פעלים דו-משמעיים רק כהודעה שלמה — "בטל את הפגישה" נשאר שיחה) והודעות ארוכות שמזכירות את רשימת התפוצה; מילות מפתח מההגדרות מתווספות לברירת המחדל ולא מחליפות אותה; תשובת "חזור" במייל מחזירה לרשימה; GET על קישור ההסרה מציג דף אישור (סורקי קישורים לא מסירים יותר); אימות הטוקן מקבל גם סוד ייעודי וגם את מפתח ה-service-role.
+> - **התראות:** מייל יוצא מכתובת ערוץ המייל אם `ALERT_EMAIL_FROM` חסר; receipts של Meta נרשמים על ההתראה (131049); נדרשת תבנית UTILITY — ראה `docs/runbooks/owner-step-by-step.md` בעיה 11.
+> - **כלים:** `api/` ב-typecheck/lint; `supabase-js` נעול ל-2.117.2; mirrors חדשים ב-`lib/runtime` (webhook-signature, email-unsubscribe, broadcast-segment); טבלת env מלאה ב-`docs/runbooks/secret-rotation.md`.
 
 מסמך זה הוא נקודת ההתחלה של המפתח שמקבל את הפרויקט. הוא משלים את [DEPLOYMENT.md](DEPLOYMENT.md) (פעולות פריסה מעשיות) ואת [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) (תיעוד מצב הקוד). מחליף את [OPEN-WORK-PLAN.md](OPEN-WORK-PLAN.md) הישן.
 

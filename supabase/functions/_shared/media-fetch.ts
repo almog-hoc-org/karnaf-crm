@@ -3,7 +3,7 @@
 // missing media simply leaves `media_storage_path` null and the operator
 // console falls back to the provider's transient URL stored in raw_payload.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { env } from './env.ts';
 import { log } from './logger.ts';
 

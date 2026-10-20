@@ -75,3 +75,17 @@ export function verifyBearer(req: Request, expected: string): boolean {
   const provided = header.slice(7).trim();
   return safeEqual(provided, expected);
 }
+
+/**
+ * Bearer against any of several secrets. A worker with a dedicated secret
+ * (OPERATOR_DIGEST_SECRET, EMAIL_REPLIES_POLL_SECRET, AUTOMATION_TICK_SECRET)
+ * must keep accepting SLA_WORKER_SECRET too: the pg_cron caller sends the
+ * vault value it was written with, and a dedicated secret that became
+ * exclusive once set turned every cron tick into a 401.
+ */
+export function verifyAnyBearer(req: Request, expectedSecrets: Array<string | null | undefined>): boolean {
+  const header = req.headers.get('authorization') || '';
+  if (!header.toLowerCase().startsWith('bearer ')) return false;
+  const provided = header.slice(7).trim();
+  return expectedSecrets.some((secret) => !!secret && safeEqual(provided, secret));
+}

@@ -1,4 +1,4 @@
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import type { AiRuntimeConfig } from './ai-contract.ts';
 import { DEFAULT_SAFETY_NET, resolveSafetyNet, type SafetyNetConfig } from './generic-ack.ts';
 import { DEFAULT_MESSAGING, resolveMessaging, type MessagingConfig } from './opt-out.ts';

@@ -22,6 +22,7 @@
     "apps/web/src/**/*.ts",
     "apps/web/src/**/*.tsx",
     "lib/**/*.ts",
+    "api/**/*.ts",
     "lib/**/*.tsx"
   ],
   "exclude": ["node_modules", "dist", "supabase/functions"]

@@ -1111,7 +1111,7 @@ export function LeadsPage() {
             {source ? (
               <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 ring-1 ring-brand-100">
                 מקור: {source}
-                <button type="button" className="text-brand-500 hover:text-rose-600" onClick={() => setSource('')} aria-label="ניקוי סינון מקור">
+                <button type="button" className="text-brand-500 hover:text-rose-600" onClick={() => { setSource(''); setOffset(0); }} aria-label="ניקוי סינון מקור">
                   ×
                 </button>
               </div>
@@ -1186,6 +1186,11 @@ export function LeadsPage() {
         )}
       </section>
 
+      {canBulkEdit && usersQ.error ? (
+        <p className="text-sm text-rose-700" role="alert">
+          רשימת המשתמשים לשיוך לא נטענה ({(usersQ.error as Error).message}) — אפשר לשייך בעלים אחרי רענון.
+        </p>
+      ) : null}
       {canBulkEdit ? (
         <BulkActionBar
           selectedCount={selected.size}

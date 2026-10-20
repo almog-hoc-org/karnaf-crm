@@ -131,14 +131,18 @@ export async function addSubscriberToList(
 // Opens/clicks/unsubscribes are tracked on the Rav Messer side, which
 // also appends the legally-required opt-out footer.
 
-async function ravPost(path: string, form: Record<string, string>): Promise<{ ok: boolean; json: Record<string, unknown>; error?: string }> {
+async function ravPost(
+  path: string,
+  form: Record<string, string>,
+  method: 'POST' | 'DELETE' = 'POST',
+): Promise<{ ok: boolean; json: Record<string, unknown>; error?: string }> {
   if (!isRavmesserConfigured()) return { ok: false, json: {}, error: 'ravmesser not configured' };
   const body = new URLSearchParams(form);
   let lastErr: unknown;
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     try {
       const res = await fetch(`${API_BASE}${path}`, {
-        method: 'POST',
+        method,
         headers: {
           Authorization: await buildResponderAuthHeader(),
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -208,6 +212,26 @@ export async function createRavmesserMessage(input: {
   const messageId = firstNumericId(json, ['MESSAGE_ID', 'ID', 'message_id', 'id']);
   if (!messageId) return { ok: false, error: `ravmesser: no message id in response ${JSON.stringify(json).slice(0, 200)}` };
   return { ok: true, messageId };
+}
+
+/**
+ * Take addresses off a list before a campaign goes to it. Responder's
+ * "DELETE /lists/{listId}/subscribers" takes a form field `subscribers` =
+ * JSON array of {ID} / {EMAIL} objects (github.com/responder/restapi,
+ * Subscribers/ByList). Used by broadcast-dispatch for leads who revoked
+ * consent between being pushed into the list and the send.
+ */
+export async function removeSubscribersFromList(
+  listId: string,
+  emails: string[],
+): Promise<{ ok: boolean; error?: string }> {
+  if (emails.length === 0) return { ok: true };
+  const { ok, error } = await ravPost(
+    `/lists/${encodeURIComponent(listId)}/subscribers`,
+    { subscribers: JSON.stringify(emails.map((email) => ({ EMAIL: email }))) },
+    'DELETE',
+  );
+  return ok ? { ok: true } : { ok: false, error };
 }
 
 export async function sendRavmesserMessage(listId: string, messageId: string): Promise<{ ok: boolean; error?: string }> {

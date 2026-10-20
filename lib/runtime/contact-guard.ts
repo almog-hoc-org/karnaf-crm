@@ -86,6 +86,10 @@ export function canContactLead(lead: ContactGuardLead, opts: ContactGuardOptions
       break;
     case 'email':
       if (!nonEmpty(lead.email)) return { ok: false, reason: 'no_email' };
+      // An explicit refusal (unsubscribe link, "הסר" reply) blocks whatever
+      // the requireEmailConsent setting says — that setting only decides
+      // whether NULL ("never asked") may still be mailed.
+      if (lead.consent_email === false) return { ok: false, reason: 'no_consent' };
       if (opts.requireEmailConsent !== false && lead.consent_email !== true) {
         return { ok: false, reason: 'no_consent' };
       }

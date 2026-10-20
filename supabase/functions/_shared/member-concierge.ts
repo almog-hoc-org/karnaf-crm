@@ -8,7 +8,7 @@
 // Pure decision logic is mirrored in lib/runtime/member-concierge.ts
 // (unit-tested there). Keep in sync.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { logLeadEvent, transitionLeadStatus, updateLeadFields, type LeadRow } from './lead-service.ts';
 import { ensurePendingQueueItem } from './queue-service.ts';
 import { sendWhatsAppText } from './whatsapp-provider.ts';

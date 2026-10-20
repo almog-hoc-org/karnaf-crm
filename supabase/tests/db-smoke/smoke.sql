@@ -206,3 +206,110 @@ begin
 end $$;
 select 'pii purge ok' as result;
 rollback;
+
+-- ── Reliability round (migrations 138-141) ─────────────────────────────
+begin;
+set local role service_role;
+do $$
+declare
+  a public.leads; b public.leads;
+  ca uuid; cb uuid; w uuid; n int; v text; t0 timestamptz; fk record;
+begin
+  -- awaiting_reply (139) follows the inbound/outbound timestamps.
+  select * into a from public.upsert_lead_smart('+972500009921', null, 'surv', 'landing_page', 'form', '{}'::jsonb);
+  update public.leads set last_inbound_at = now() - interval '1 hour', last_outbound_at = null where id = a.id;
+  if not (select awaiting_reply from public.leads where id = a.id) then raise exception 'awaiting_reply false after inbound'; end if;
+  update public.leads set last_outbound_at = now() where id = a.id;
+  if (select awaiting_reply from public.leads where id = a.id) then raise exception 'awaiting_reply true after outbound'; end if;
+
+  -- Turn lease (138): second claim fails, release frees it.
+  insert into public.conversations (lead_id, channel, provider_name) values (a.id, 'whatsapp', 'meta') returning id into ca;
+  if not public.claim_conversation_turn(ca, 60) then raise exception 'first claim failed'; end if;
+  if public.claim_conversation_turn(ca, 60) then raise exception 'second claim succeeded while leased'; end if;
+  if not public.release_conversation_turn(ca) then raise exception 'release failed'; end if;
+  if not public.claim_conversation_turn(ca, 60) then raise exception 'claim after release failed'; end if;
+  perform public.release_conversation_turn(ca);
+
+  -- merge_leads v3 (140): both leads have a whatsapp conversation, the same
+  -- webinar and an open deal on the same track; the duplicate has the email.
+  select * into b from public.upsert_lead_smart(null, 'dup@example.com', 'dup', 'landing_page', 'form', '{}'::jsonb);
+  insert into public.conversations (lead_id, channel, provider_name) values (b.id, 'whatsapp', 'meta') returning id into cb;
+  insert into public.conversations (lead_id, channel, provider_name) values (b.id, 'email', 'resend');
+  insert into public.messages (conversation_id, lead_id, sender_type, direction, message_type, content_text)
+    values (cb, b.id, 'lead', 'inbound', 'text', 'hi from dup');
+  insert into public.webinars (title, starts_at) values ('smoke webinar', now()) returning id into w;
+  insert into public.webinar_registrations (lead_id, webinar_id, attended) values (a.id, w, null), (b.id, w, true);
+  insert into public.deals (lead_id, track, stage) values (a.id, 'program', 'new'), (b.id, 'program', 'new');
+  -- Both hold a pending item of the same kind (unique pending per lead+type,
+  -- 028) and the duplicate has a turn still queued on its conversation.
+  insert into public.work_queue (lead_id, queue_type, priority_level, status, reason, created_by_actor_type)
+    values (a.id, 'first_response_due', 2, 'pending', 'surv', 'system'), (b.id, 'first_response_due', 2, 'pending', 'dup', 'system');
+  insert into public.outbound_dispatch (lead_id, conversation_id, payload) values (b.id, cb, '{"kind":"orchestrate"}'::jsonb);
+
+  perform public.merge_leads(a.id, b.id);
+
+  select count(*) into n from public.conversations where lead_id = a.id and channel = 'whatsapp';
+  if n <> 1 then raise exception 'merge left % whatsapp conversations on the survivor', n; end if;
+  select count(*) into n from public.conversations where lead_id = a.id;
+  if n <> 2 then raise exception 'expected whatsapp + email conversations, got %', n; end if;
+  select count(*) into n from public.messages where conversation_id = ca and lead_id = a.id;
+  if n <> 1 then raise exception 'duplicate''s message not folded into the survivor conversation'; end if;
+  select count(*) into n from public.webinar_registrations where lead_id = a.id;
+  if n <> 1 then raise exception 'expected 1 webinar registration, got %', n; end if;
+  if not (select attended from public.webinar_registrations where lead_id = a.id) then raise exception 'attended not carried over'; end if;
+  select count(*) into n from public.deals where lead_id = a.id and status = 'open';
+  if n <> 1 then raise exception 'expected 1 open deal after merge, got %', n; end if;
+  select email into v from public.leads where id = a.id;
+  if v <> 'dup@example.com' then raise exception 'email not carried over (%)', v; end if;
+  if (select lead_status from public.leads where id = b.id) <> 'duplicate' then raise exception 'duplicate not parked'; end if;
+  select count(*) into n from public.work_queue where lead_id = a.id and queue_type = 'first_response_due' and status = 'pending';
+  if n <> 1 then raise exception 'expected 1 pending first_response_due on the survivor, got %', n; end if;
+  select count(*) into n from public.work_queue where lead_id = a.id and queue_type = 'first_response_due' and status = 'resolved';
+  if n <> 1 then raise exception 'duplicate''s colliding queue item not closed'; end if;
+  select count(*) into n from public.outbound_dispatch where lead_id = a.id and conversation_id = ca and status = 'pending';
+  if n <> 1 then raise exception 'queued turn lost its conversation in the fold'; end if;
+  -- Nothing may still point at the parked duplicate through any FK to leads.
+  for fk in
+    select c.conrelid::regclass as tbl, att.attname as col
+    from pg_constraint c
+    join pg_attribute att on att.attrelid = c.conrelid and att.attnum = any (c.conkey)
+    where c.contype = 'f' and c.confrelid = 'public.leads'::regclass
+  loop
+    -- The parked row keeps its own 'lead_merged' (merged_into) marker and
+    -- the activity row the 054 mirror makes from it.
+    execute format('select count(*) from %s where %I = $1 %s', fk.tbl, fk.col,
+      case when fk.tbl = 'public.lead_events'::regclass then $q$and event_type <> 'lead_merged'$q$
+           when fk.tbl = 'public.activities'::regclass then $q$and not (source_table = 'lead_events' and source_id in (select id from public.lead_events where event_type = 'lead_merged'))$q$
+           else '' end) into n using b.id;
+    if n <> 0 then raise exception '% rows of %.% still reference the merged duplicate', n, fk.tbl, fk.col; end if;
+  end loop;
+
+  -- Phone carries over to a survivor without one.
+  select * into a from public.upsert_lead_smart(null, 'x@example.com', 'x', 'landing_page', 'form', '{}'::jsonb);
+  select * into b from public.upsert_lead_smart('+972500009922', null, 'y', 'landing_page', 'form', '{}'::jsonb);
+  perform public.merge_leads(a.id, b.id);
+  if (select phone from public.leads where id = a.id) is null then raise exception 'phone not carried over'; end if;
+
+  -- 141: the nightly decay leaves updated_at alone. now() is fixed for the
+  -- whole transaction, so the baseline is backdated and the change is real.
+  t0 := now() - interval '1 day';
+  perform set_config('karnaf.skip_touch_updated_at', 'on', true);
+  -- (the trigger would otherwise keep old.updated_at for an updated_at-only change)
+  update public.leads set updated_at = t0 where id = a.id;
+  if (select updated_at from public.leads where id = a.id) <> t0 then raise exception 'could not backdate updated_at under skip_touch_updated_at'; end if;
+  update public.leads set lead_score = lead_score + 5 where id = a.id;
+  perform set_config('karnaf.skip_touch_updated_at', '', true);
+  if (select updated_at from public.leads where id = a.id) <> t0 then raise exception 'skip_touch_updated_at ignored by set_updated_at_leads'; end if;
+  update public.leads set lead_score = lead_score + 5 where id = a.id;
+  if (select updated_at from public.leads where id = a.id) <> now() then raise exception 'set_updated_at_leads no longer stamps a real change'; end if;
+
+  -- 141: one Instagram sender, one lead.
+  insert into public.leads (full_name, source, external_source, external_id) values ('ig', 'instagram_dm', 'instagram', 'sender-1');
+  begin
+    insert into public.leads (full_name, source, external_source, external_id) values ('ig2', 'instagram_dm', 'instagram', 'sender-1');
+    raise exception 'duplicate external identity accepted';
+  exception when unique_violation then null;
+  end;
+end $$;
+select 'reliability ok' as result;
+rollback;

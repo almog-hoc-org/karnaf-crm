@@ -121,6 +121,69 @@ describe('UsersPage', () => {
     });
   });
 
+  // The create form used to infer "request finished" from prop timing:
+  // it cleared on click (a 400 "email exists" left the admin retyping
+  // everything) and, after a failed attempt, a successful retry never
+  // cleared at all. The fields now clear only when THAT request succeeds.
+  async function fillCreateForm() {
+    await screen.findByRole('heading', { name: 'ניהול משתמשים' });
+    const form = screen.getByRole('button', { name: 'הוספת משתמש' }).closest('form')!;
+    const inputs = form.querySelectorAll('input');
+    const emailInput = inputs[0]!;
+    const passwordInput = inputs[1]!;
+    const fullNameInput = inputs[2]!;
+    fireEvent.change(emailInput, { target: { value: 'new@karnaf.io' } });
+    fireEvent.change(passwordInput, { target: { value: 'verySecret123!' } });
+    fireEvent.change(fullNameInput, { target: { value: 'משתמש חדש' } });
+    return { form, emailInput, passwordInput, fullNameInput };
+  }
+
+  it('keeps the entered values and shows the error when the create request fails', async () => {
+    vi.mocked(postCreateUser).mockRejectedValue(new Error('האימייל כבר קיים'));
+    renderUsers('admin');
+    const { form, emailInput, passwordInput, fullNameInput } = await fillCreateForm();
+
+    fireEvent.submit(form);
+
+    expect(await screen.findByText('האימייל כבר קיים')).toBeInTheDocument();
+    expect(emailInput).toHaveValue('new@karnaf.io');
+    expect(passwordInput).toHaveValue('verySecret123!');
+    expect(fullNameInput).toHaveValue('משתמש חדש');
+  });
+
+  it('clears the form once the create request succeeds', async () => {
+    renderUsers('admin');
+    const { form, emailInput, passwordInput, fullNameInput } = await fillCreateForm();
+
+    fireEvent.submit(form);
+
+    await waitFor(() => expect(emailInput).toHaveValue(''));
+    expect(passwordInput).toHaveValue('');
+    expect(fullNameInput).toHaveValue('');
+    expect(vi.mocked(postCreateUser)).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the form when a retry succeeds after a failed attempt', async () => {
+    vi.mocked(postCreateUser)
+      .mockRejectedValueOnce(new Error('האימייל כבר קיים'))
+      .mockResolvedValueOnce({ ok: true, profile: makeProfile() });
+    renderUsers('admin');
+    const { form, emailInput, passwordInput, fullNameInput } = await fillCreateForm();
+
+    fireEvent.submit(form);
+    expect(await screen.findByText('האימייל כבר קיים')).toBeInTheDocument();
+    expect(passwordInput).toHaveValue('verySecret123!');
+
+    fireEvent.change(emailInput, { target: { value: 'other@karnaf.io' } });
+    fireEvent.submit(form);
+
+    await waitFor(() => expect(passwordInput).toHaveValue(''));
+    expect(emailInput).toHaveValue('');
+    expect(fullNameInput).toHaveValue('');
+    expect(screen.queryByText('האימייל כבר קיים')).not.toBeInTheDocument();
+    expect(vi.mocked(postCreateUser)).toHaveBeenCalledTimes(2);
+  });
+
   it('updates a user role via the role select', async () => {
     renderUsers('admin');
     await screen.findByText('mia@karnaf.io', undefined, { timeout: 4000 });

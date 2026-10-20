@@ -331,9 +331,18 @@ Deno.serve(async (req) => {
     const scheduledAt = typeof body.scheduled_at === 'string' && body.scheduled_at
       ? body.scheduled_at
       : new Date().toISOString();
+    // The failure-rate pause guard measures from here (migration 141): the
+    // recipient counts are cumulative, so without a baseline a campaign
+    // paused at 20% failures was paused again on the first tick after retry.
+    const countStatus = async (status: string) => {
+      const { count } = await supabase.from('broadcast_recipients')
+        .select('id', { count: 'exact', head: true }).eq('broadcast_id', id).eq('status', status);
+      return count ?? 0;
+    };
+    const pauseBaseline = { sent: await countStatus('sent'), failed: await countStatus('failed'), at: new Date().toISOString() };
     const { data, error } = await supabase
       .from('broadcasts')
-      .update({ status: 'scheduled', scheduled_at: scheduledAt, last_error: null, finished_at: null })
+      .update({ status: 'scheduled', scheduled_at: scheduledAt, last_error: null, finished_at: null, pause_baseline: pauseBaseline })
       .eq('id', id).select('*').single();
     if (error) return jsonResponse(req, { error: error.message }, 400);
     log.info('broadcast_retried', { fn: 'broadcasts', correlationId, id, scheduledAt, by: staff.userId });

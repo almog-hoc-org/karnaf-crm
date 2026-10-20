@@ -12,7 +12,7 @@
 //   like fire-and-forget telemetry. One bad rule must not break the
 //   whole tick.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { logAutomationRun } from './automation-log.ts';
 import { notifyOperator } from './operator-alert.ts';
 import { log } from './logger.ts';

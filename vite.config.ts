@@ -16,7 +16,9 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, 'dist'),
     emptyOutDir: true,
-    sourcemap: true,
+    // Source maps are not published: nothing consumes them (no Sentry upload)
+    // and they hand the whole front-end source to anyone who opens devtools.
+    sourcemap: false,
     // Pre-split big third-party deps so the app shell stays under the
     // 500 KB warning and route chunks are downloaded incrementally.
     // Vite's React plugin already inlines React; we just split the larger

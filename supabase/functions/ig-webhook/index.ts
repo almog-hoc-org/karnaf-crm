@@ -125,7 +125,16 @@ Deno.serve(async (req) => {
         .select('id')
         .eq('external_source', 'instagram')
         .eq('external_id', senderId)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
+      // A failed lookup used to become a second lead for the sender. Since
+      // migration 141 the unique (external_source, external_id) index makes
+      // the insert below refuse that (duplicate key → re-select), so the
+      // message is kept rather than answered to Meta with a 200 and dropped.
+      if (existing.error) {
+        log.warn('ig_lead_lookup_failed', { fn: 'ig-webhook', correlationId, err: existing.error.message });
+      }
 
       let leadId: string;
       let isNewLead = false;
@@ -145,14 +154,25 @@ Deno.serve(async (req) => {
           .select('id')
           .single();
         if (created.error) {
-          log.error('ig_lead_create_failed', { fn: 'ig-webhook', correlationId, err: created.error.message });
-          continue;
+          // Unique (external_source, external_id) since migration 141: a
+          // concurrent delivery created the lead first — use theirs.
+          const { data: raced } = String(created.error.message || '').includes('duplicate key value')
+            ? await supabase.from('leads').select('id')
+              .eq('external_source', 'instagram').eq('external_id', senderId)
+              .order('created_at', { ascending: false }).limit(1).maybeSingle()
+            : { data: null };
+          if (!raced?.id) {
+            log.error('ig_lead_create_failed', { fn: 'ig-webhook', correlationId, err: created.error.message });
+            continue;
+          }
+          leadId = raced.id as string;
+        } else {
+          leadId = created.data!.id;
+          isNewLead = true;
+          await logLeadEvent(supabase, leadId, 'lead_created', 'system', {
+            source: 'instagram_dm', intake_channel: 'instagram', correlation_id: correlationId,
+          });
         }
-        leadId = created.data!.id;
-        isNewLead = true;
-        await logLeadEvent(supabase, leadId, 'lead_created', 'system', {
-          source: 'instagram_dm', intake_channel: 'instagram', correlation_id: correlationId,
-        });
       }
 
       // ---- Conversation ------------------------------------------------

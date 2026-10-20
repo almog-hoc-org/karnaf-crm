@@ -476,7 +476,7 @@ export interface CommissionRow {
   updated_at: string;
   // Joined when fetched via /commissions endpoint.
   partners?: { id: string; full_name: string; domain: PartnerDomain };
-  deals?: { id: string; track: PrdTrack; value: number | null; status: string };
+  deals?: { id: string; lead_id?: string; track: PrdTrack; value: number | null; status: string };
 }
 
 export interface MeetingRow {

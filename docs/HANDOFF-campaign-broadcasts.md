@@ -31,7 +31,7 @@
 
 **התיקון (Meta, לא קוד):** ערוך את `karnaf_followup_v1` → הוסף `{{1}}` בגוף → שלח לאישור מחדש. משחרר את כל הלידים בבת אחת.
 
-> הערה למפתח: אם תרצו לחזק בקוד — אפשר לזהות שגיאת 132000 ולהתריע, או לוודא ש-`WHATSAPP_FALLBACK_TEMPLATE` תמיד מצביע על תבנית עם `{{1}}` יחיד. הקוד של `orchestrate-message` הרלוונטי חי על ענף הפרוד `feat/ai-quality-tier-a` (ראו §6), לא על ענף זה.
+> הערה למפתח: אם תרצו לחזק בקוד — אפשר לזהות שגיאת 132000 ולהתריע. **עדכון 17.10:** תבנית ה-fallback ללקוחות נקבעת ב-Settings (`runtime-config` → `whatsappSession.fallbackTemplateName`), לא ב-env; `WHATSAPP_FALLBACK_TEMPLATE` משפיע רק על התראות לבעלים. הקוד של `orchestrate-message` הרלוונטי חי על ענף הפרוד `feat/ai-quality-tier-a` (ראו §6), לא על ענף זה.
 
 ---
 

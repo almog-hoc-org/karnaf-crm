@@ -20,7 +20,7 @@
 //                        email alert was skipped as `no_alert_email_from`.
 //   TELEGRAM_BOT_TOKEN + TELEGRAM_ALERT_CHAT_ID — the pre-existing channel
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { optional } from './env.ts';
 import { log } from './logger.ts';
 import { notifyTelegram, type AlertSeverity } from './notify-telegram.ts';

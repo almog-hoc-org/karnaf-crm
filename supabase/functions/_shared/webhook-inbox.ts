@@ -17,7 +17,7 @@
 //     throw err;
 //   }
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { log } from './logger.ts';
 
 const SAFE_HEADERS = new Set([

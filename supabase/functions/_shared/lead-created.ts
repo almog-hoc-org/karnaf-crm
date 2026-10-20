@@ -10,7 +10,7 @@
 // same request — a lead.created welcome template on top of that would
 // double-message them.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { buildLeadContext } from './event-context.ts';
 import { runMatchingRules } from './automation-engine.ts';
 import { log } from './logger.ts';

@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
 
     // The daily digest is already gated by its 05:00 cron, so no throttle —
     // suppressing it would just mean a silent morning.
-    await notifyOperator(supabase, {
+    const delivery = await notifyOperator(supabase, {
       kind: 'daily_inbox',
       dedupeKey: `daily_inbox:${new Date().toISOString().slice(0, 10)}`,
       throttleMinutes: 0,
@@ -130,18 +130,24 @@ Deno.serve(async (req) => {
       correlationId,
     });
 
+    // The run log used to say "success / telegram_digest_sent" whatever the
+    // channels did, so a morning nobody received read as a morning sent.
+    const deliveredVia = Object.entries(delivery.channels).filter(([, c]) => c.ok).map(([n]) => n);
     log.info('daily_inbox_sent', {
-      fn: 'daily-sales-inbox', correlationId, total, critical, byLane,
+      fn: 'daily-sales-inbox', correlationId, total, critical, byLane, delivered: delivery.delivered, deliveredVia,
     });
     await logAutomationRun(supabase, {
       ruleCode: 'b19_daily_recap',
       triggerEvent: 'cron.daily',
       context: { total, critical, byLane },
-      actionResults: [{ kind: 'telegram_digest_sent', items: total, lanes: byLane }],
-      status: 'success',
+      actionResults: [{
+        kind: 'operator_digest', items: total, lanes: byLane,
+        delivered: delivery.delivered, channels: deliveredVia,
+      }],
+      status: delivery.delivered ? 'success' : 'failed',
       correlationId,
     });
-    return jsonResponse(req, { ok: true, total, critical, byLane, correlationId });
+    return jsonResponse(req, { ok: true, delivered: delivery.delivered, total, critical, byLane, correlationId });
   } catch (err) {
     const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     log.error('daily_inbox_unhandled', { fn: 'daily-sales-inbox', correlationId, err: message });

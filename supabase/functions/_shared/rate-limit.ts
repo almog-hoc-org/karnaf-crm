@@ -3,7 +3,7 @@
 // errors so a degraded rate-limit table can't take down the entire ingress
 // path; combined with structured logging this is the right default.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { log } from './logger.ts';
 
 export interface RateLimitOptions {

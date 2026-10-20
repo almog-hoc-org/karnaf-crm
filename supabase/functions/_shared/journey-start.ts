@@ -3,7 +3,7 @@
 // creates journey_runs rows here; the cron-side advance loop lives in
 // journey-runner.ts (prod version, advanceDueJourneys).
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { evaluateConditions } from './automation-engine.ts';
 import { log } from './logger.ts';
 

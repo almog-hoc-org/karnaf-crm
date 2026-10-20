@@ -53,7 +53,10 @@ export function UsersPage() {
       <header><h1 className="text-2xl font-semibold tracking-tight">{t('user_management')}</h1></header>
 
       <CreateUserForm
-        onSubmit={(payload) => create.mutate(payload)}
+        // The form clears itself only when THIS request succeeds. A rejected
+        // one ("password too short", "email exists") keeps every field so
+        // the admin fixes one thing instead of retyping all of them.
+        onSubmit={(payload, reset) => create.mutate(payload, { onSuccess: reset })}
         submitting={create.isPending}
         errorMessage={create.error ? (create.error as Error).message : null}
       />
@@ -124,7 +127,18 @@ export function UsersPage() {
 function CreateUserForm({
   onSubmit, submitting, errorMessage,
 }: {
-  onSubmit: (payload: { email: string; password: string; role: ProfileRow['role']; fullName: string | null }) => void;
+  /**
+   * `reset` clears the text fields; the parent calls it once the create
+   * request has actually succeeded. The form does not guess completion
+   * from `submitting`/`errorMessage` timing — mutation state reaches
+   * React a tick after `mutate()`, so an effect keyed on those props saw
+   * the previous request's values (cleared on click; after a failed
+   * attempt a successful retry never cleared at all).
+   */
+  onSubmit: (
+    payload: { email: string; password: string; role: ProfileRow['role']; fullName: string | null },
+    reset: () => void,
+  ) => void;
   submitting: boolean;
   errorMessage: string | null;
 }) {
@@ -133,10 +147,13 @@ function CreateUserForm({
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState<ProfileRow['role']>('mia');
 
+  function reset() {
+    setEmail(''); setPassword(''); setFullName('');
+  }
+
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    onSubmit({ email, password, role, fullName: fullName.trim() || null });
-    setEmail(''); setPassword(''); setFullName('');
+    onSubmit({ email, password, role, fullName: fullName.trim() || null }, reset);
   }
 
   return (

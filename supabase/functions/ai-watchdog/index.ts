@@ -10,6 +10,12 @@ import { correlationFromRequest, log } from '../_shared/logger.ts';
 const STALE_INBOUND_MINUTES = 7;
 const LOOKBACK_HOURS = 24;
 const MEANINGFUL_OUTBOUND_SENDERS = ['ai', 'human', 'mia', 'staff', 'operator', 'admin', 'sales'];
+// The member concierge answers paying members as sender_type 'system'
+// (member-concierge.ts). Leaving it out of the list above made every
+// concierge-greeted member look unanswered, and the watchdog then called
+// ai-replay for them every five minutes for 24 hours.
+const MEANINGFUL_OUTBOUND_FILTER =
+  `sender_type.in.(${MEANINGFUL_OUTBOUND_SENDERS.join(',')}),and(sender_type.eq.system,raw_payload->>source.eq.member_concierge)`;
 
 Deno.serve(async (req) => {
   const pre = preflight(req);
@@ -30,7 +36,7 @@ Deno.serve(async (req) => {
     model_disabled: 0,
   };
 
-  const { data: staleLeads, error: staleErr } = await supabase
+  const staleQuery = () => supabase
     .from('leads')
     .select('id, full_name, ownership_mode, last_inbound_at, last_outbound_at')
     .gte('last_inbound_at', lookback)
@@ -38,23 +44,27 @@ Deno.serve(async (req) => {
     .eq('do_not_contact', false)
     .eq('removed_by_request', false)
     .in('ownership_mode', ['ai_active', 'mia_active', 'phone_sales_pending'])
-    .limit(50);
-  if (staleErr) throw staleErr;
+    .order('last_inbound_at', { ascending: false });
 
-  const unrepliedLeads = [];
-  for (const lead of staleLeads ?? []) {
-    const hasTimestampReply = lead.last_outbound_at && Date.parse(lead.last_outbound_at) > Date.parse(lead.last_inbound_at);
-    if (!hasTimestampReply) {
-      unrepliedLeads.push(lead);
-      continue;
-    }
+  // Two scans, both filtered in SQL before their limit (a single LIMIT 50
+  // over every recent inbound starved the real cases on busy days):
+  // 1. nothing at all went out since the inbound (generated column 139);
+  // 2. something went out, but last_outbound_at counts EVERY outbound —
+  //    a router prompt, a journey template, the generic ack — so those
+  //    are checked for a reply from a meaningful sender below.
+  const { data: unanswered, error: unansweredErr } = await staleQuery().eq('awaiting_reply', true).limit(100);
+  if (unansweredErr) throw unansweredErr;
+  const { data: answeredByTimestamp, error: answeredErr } = await staleQuery().eq('awaiting_reply', false).limit(200);
+  if (answeredErr) throw answeredErr;
 
+  const unrepliedLeads = [...(unanswered ?? [])];
+  for (const lead of answeredByTimestamp ?? []) {
     const { data: meaningfulOutbound, error: meaningfulErr } = await supabase
       .from('messages')
       .select('id')
       .eq('lead_id', lead.id)
       .eq('direction', 'outbound')
-      .in('sender_type', MEANINGFUL_OUTBOUND_SENDERS)
+      .or(MEANINGFUL_OUTBOUND_FILTER)
       .gt('created_at', lead.last_inbound_at)
       .limit(1)
       .maybeSingle();
@@ -89,10 +99,12 @@ Deno.serve(async (req) => {
         correlationId,
         queueItemId: item.id,
       });
-    }
-
-    if (isAiOwned) {
-      await triggerAiReplay(lead.id, correlationId);
+      // One replay per stuck inbound — the moment the queue item is first
+      // created. Replaying on every 5-minute tick rewrote lead_status and
+      // added a manual_return_to_ai event ~280 times per lead per day.
+      if (isAiOwned) {
+        await triggerAiReplay(lead.id, correlationId);
+      }
     }
   }
 
@@ -140,13 +152,14 @@ Deno.serve(async (req) => {
   if (total > 0) {
     // This runs every 5 minutes. Keyed only on "total > 0", one lead stuck
     // overnight produced 288 identical `critical` alerts — which is how a
-    // channel stops being read. The dedupe key is the SHAPE of the problem,
-    // so the counts changing re-alerts and a steady state stays quiet, and
-    // the module's throttle caps even a flapping shape at one an hour.
+    // channel stops being read. Putting the live counts in the key did not
+    // help either: a backlog that changes by one re-alerted every tick, and
+    // a steady one still re-alerted every hour. One key, three-hour
+    // throttle; the hourly digest and the inbox carry the detail.
     await notifyOperator(supabase, {
       kind: 'ai_watchdog',
-      dedupeKey: `ai_watchdog:${counters.ai_no_response}:${counters.handoff_no_response}:${counters.model_disabled}`,
-      throttleMinutes: 60,
+      dedupeKey: 'ai_watchdog',
+      throttleMinutes: 180,
       severity: counters.ai_no_response > 0 || counters.model_disabled > 0 ? 'critical' : 'error',
       title: 'שומר ה-AI — לידים ללא מענה',
       lines: [

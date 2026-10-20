@@ -15,6 +15,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import { describeLeadOrigin, formatRelative, PRODUCT_LABELS, whatsappHref } from '@/lib/format';
 import { useDocumentTitle } from '@/lib/useDocumentTitle';
+import { ATTENTION_COUNT_KEY, ATTENTION_INBOX_KEY, invalidateAttention } from '@/lib/useAttentionCount';
 import type { AttentionRow, IntakeSegment, LeadHeat } from '@/lib/types';
 
 type WorkLane = 'all' | 'reply' | 'call' | 'risk' | 'ops';
@@ -91,13 +92,19 @@ export function InboxPage() {
   const auth = useAuth();
   // Mirrors the server-side gate on update_lead_meta (admin-actions).
   const canClassify = auth.role === 'owner' || auth.role === 'admin' || auth.role === 'mia';
+  // Mirrors admin-actions ACTION_ROLES: snooze / outcome / no-followup are
+  // the manager tier, "טופל" is open to every handling role, and a viewer
+  // only reads. Showing a button the server then rejects made the card
+  // vanish optimistically and come back with an English 403.
+  const canManagePipeline = canClassify;
+  const canHandle = canClassify || auth.role === 'sales_rep';
   const navigate = useNavigate();
   // Keyboard triage: index into the rendered order (immediate then later).
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
 
   const q = useQuery({
-    queryKey: ['attention-inbox'],
+    queryKey: ATTENTION_INBOX_KEY,
     queryFn: () => fetchAttentionInbox(),
     // Paused while a composer is open: a refetch can drop or reorder the
     // card mid-typing and take the draft with it. The safety-net refetch
@@ -193,7 +200,13 @@ export function InboxPage() {
         (el.matches('button, a') ? el : el.querySelector<HTMLElement>('button'))?.click();
       };
 
-      if (e.code === 'Enter') { e.preventDefault(); navigate(`/leads/${row.lead_id}`); return; }
+      // Enter on a focused button or link must stay theirs: after J/K the
+      // operator tabs into "טופל" and presses Enter — that is a click on the
+      // button, not "open the card".
+      if (e.code === 'Enter') {
+        if (target?.closest('button, a, [role="button"], [role="menuitem"]')) return;
+        e.preventDefault(); navigate(`/leads/${row.lead_id}`); return;
+      }
       if (e.code === 'KeyD') { e.preventDefault(); clickHotkey('done'); return; }
       if (e.code === 'KeyR') { e.preventDefault(); clickHotkey('reply'); return; }
       if (e.code === 'KeyS') { e.preventDefault(); clickHotkey('snooze'); return; }
@@ -213,7 +226,7 @@ export function InboxPage() {
     mutationFn: (input: { queueItemId: string; note?: string | null }) =>
       postQueueResolve({ queueItemId: input.queueItemId, resolutionNote: input.note ?? null }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['attention-inbox'] });
+      void invalidateAttention(qc);
       qc.invalidateQueries({ queryKey: ['queue'] });
       toast.success('המשימה נסגרה');
     },
@@ -230,7 +243,7 @@ export function InboxPage() {
         note: 'סומן אין מענה מתוך מסך היום',
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['attention-inbox'] });
+      void invalidateAttention(qc);
       toast.success('נרשם ניסיון שיחה ללא מענה');
     },
     onError: (err) => toast.error((err as Error).message),
@@ -242,7 +255,7 @@ export function InboxPage() {
     mutationFn: (input: { leadId: string; metaUpdates: { lead_heat?: LeadHeat; intake_segment?: IntakeSegment } }) =>
       postAdminAction({ action: 'update_lead_meta', leadId: input.leadId, metaUpdates: input.metaUpdates }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['attention-inbox'] });
+      void invalidateAttention(qc);
       toast.success('הסיווג עודכן');
     },
     onError: (err) => toast.error((err as Error).message),
@@ -254,10 +267,13 @@ export function InboxPage() {
   // fades and collapses on its way out and the ones below flow up —
   // without it the list snaps and you lose track of where you were.
   const removeLeadRows = (leadId: string) => {
-    const drop = () => qc.setQueryData<AttentionRow[]>(
-      ['attention-inbox'],
-      (old) => (old ?? []).filter((r) => r.lead_id !== leadId),
-    );
+    const without = (old?: AttentionRow[]) => (old ?? []).filter((r) => r.lead_id !== leadId);
+    const drop = () => {
+      qc.setQueryData<AttentionRow[]>(ATTENTION_INBOX_KEY, without);
+      // The nav badge reads its own copy of the rows: drop the lead there
+      // too so the count falls with the card, not on the next poll.
+      qc.setQueryData<AttentionRow[]>(ATTENTION_COUNT_KEY, (old) => (old ? without(old) : undefined));
+    };
     if (prefersReducedMotion()) { drop(); return; }
     setLeavingLeadIds((prev) => (prev.includes(leadId) ? prev : [...prev, leadId]));
     window.setTimeout(() => {
@@ -265,7 +281,8 @@ export function InboxPage() {
       setLeavingLeadIds((prev) => prev.filter((id) => id !== leadId));
     }, CARD_EXIT_MS);
   };
-  const refetchInbox = () => qc.invalidateQueries({ queryKey: ['attention-inbox'] });
+  // Both the list and the nav badge: see invalidateAttention.
+  const refetchInbox = () => invalidateAttention(qc);
 
   // Inline reply — the whole reason the reply lane exists. Unlike the
   // triage mutations below, the card is removed only on SUCCESS: a failed
@@ -679,24 +696,28 @@ export function InboxPage() {
                         פתיחת WhatsApp
                       </a>
                     ) : null}
-                    <button
-                      type="button"
-                      data-hotkey="done"
-                      className="kf-btn justify-center bg-emerald-600 text-white hover:bg-emerald-700"
-                      disabled={markReviewed.isPending}
-                      onClick={() => markReviewed.mutate(row)}
-                    >
-                      טופל ✓
-                    </button>
+                    {canHandle ? (
+                      <button
+                        type="button"
+                        data-hotkey="done"
+                        className="kf-btn justify-center bg-emerald-600 text-white hover:bg-emerald-700"
+                        disabled={markReviewed.isPending}
+                        onClick={() => markReviewed.mutate(row)}
+                      >
+                        טופל ✓
+                      </button>
+                    ) : null}
                     {/* The wrapper carries the hotkey target; the popover
                         owns its own button. */}
-                    <span data-hotkey="snooze" className="contents">
-                      <SnoozePopover
-                        buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
-                        busy={snoozeLead.isPending}
-                        onSnooze={(until, note) => snoozeLead.mutate({ row, until, note })}
-                      />
-                    </span>
+                    {canManagePipeline ? (
+                      <span data-hotkey="snooze" className="contents">
+                        <SnoozePopover
+                          buttonClassName="kf-btn kf-btn-ghost w-full justify-center"
+                          busy={snoozeLead.isPending}
+                          onSnooze={(until, note) => snoozeLead.mutate({ row, until, note })}
+                        />
+                      </span>
+                    ) : null}
                     <button
                       type="button"
                       className="kf-btn kf-btn-ghost justify-center text-slate-600"
@@ -731,18 +752,20 @@ export function InboxPage() {
                             onSetSegment={(segment) => classify.mutate({ leadId: row.lead_id, metaUpdates: { intake_segment: segment } })}
                           />
                         ) : null}
-                        <button
-                          type="button"
-                          className="kf-btn kf-btn-ghost justify-center"
-                          onClick={() => {
-                            setPendingOutcome(row);
-                            setOutcomeChoice('investor_mentorship');
-                            setOutcomeNote('');
-                          }}
-                        >
-                          נסגר לתהליך 🏷
-                        </button>
-                        {QUEUE_BACKED_KINDS.has(row.kind) ? (
+                        {canManagePipeline ? (
+                          <button
+                            type="button"
+                            className="kf-btn kf-btn-ghost justify-center"
+                            onClick={() => {
+                              setPendingOutcome(row);
+                              setOutcomeChoice('investor_mentorship');
+                              setOutcomeNote('');
+                            }}
+                          >
+                            נסגר לתהליך 🏷
+                          </button>
+                        ) : null}
+                        {QUEUE_BACKED_KINDS.has(row.kind) && canHandle ? (
                           <button
                             type="button"
                             className="kf-btn kf-btn-ghost justify-center"
@@ -755,14 +778,16 @@ export function InboxPage() {
                             סגירת המשימה בלבד
                           </button>
                         ) : null}
-                        <button
-                          type="button"
-                          className="kf-btn kf-btn-ghost justify-center text-slate-500"
-                          disabled={noFollowup.isPending}
-                          onClick={() => noFollowup.mutate(row)}
-                        >
-                          ללא פנייה יזומה
-                        </button>
+                        {canManagePipeline ? (
+                          <button
+                            type="button"
+                            className="kf-btn kf-btn-ghost justify-center text-slate-500"
+                            disabled={noFollowup.isPending}
+                            onClick={() => noFollowup.mutate(row)}
+                          >
+                            ללא פנייה יזומה
+                          </button>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>

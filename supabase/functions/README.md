@@ -1,5 +1,13 @@
 # supabase/functions
 
+> **Registry: `supabase/config.toml`.** Every function directory must have a
+> `[functions.<name>]` entry there (`verify_jwt` true/false) — CI fails
+> otherwise. The list below is the original design note and covers only the
+> first wave; `ls supabase/functions` + `config.toml` are the current truth.
+> Auth styles: Meta HMAC webhooks and bearer-secret cron workers run with
+> `verify_jwt = false` and verify inside; operator endpoints use
+> `requireStaff` (JWT + profile role).
+
 Public, signature-verified webhooks (no JWT required):
 - `whatsapp-webhook` — Meta / WATI inbound message webhook. Verifies `X-Hub-Signature-256` against `WHATSAPP_APP_SECRET`.
 - `payment-webhook` — payment completion / pending / failure ingestion. HMAC verified against `PAYMENT_WEBHOOK_SECRET`.

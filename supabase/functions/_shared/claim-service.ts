@@ -3,7 +3,7 @@
 // active set for a product, ranked by weight, and shapes them into a
 // compact prompt-ready string.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 
 export interface ProductClaim {
   claim_type: string;

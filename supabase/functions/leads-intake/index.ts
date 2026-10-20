@@ -2,6 +2,7 @@ import { jsonResponse, preflight } from '../_shared/cors.ts';
 import { getServiceSupabase } from '../_shared/supabase.ts';
 import { ensurePendingQueueItem } from '../_shared/queue-service.ts';
 import { logLeadEvent, upsertLead } from '../_shared/lead-service.ts';
+import { isNewLeadRow } from '../_shared/lead-created.ts';
 import { normalizeIsraeliPhone } from '../_shared/phone.ts';
 import { verifyHmacHeader } from '../_shared/webhook-signature.ts';
 import {
@@ -441,25 +442,30 @@ Deno.serve(async (req) => {
   // via the unified context builder so the lead.* shape matches every
   // other emitter. Classification + source come from the intake
   // pipeline (more accurate than re-querying), so override after.
-  const leadCtx = await buildLeadContextFromRow(supabase, {
-    id: lead.id,
-    full_name: lead.full_name as string | null,
-    phone: lead.phone as string | null,
-    email: lead.email as string | null,
-    city: lead.city as string | null,
-    do_not_contact: lead.do_not_contact as boolean,
-    primary_track: prdTrack,
-    source,
-    source_campaign: sourceCampaign,
-  });
-  leadCtx.product_interest = classification.productInterest;
-  leadCtx.intake_segment = classification.intakeSegment;
-  await runMatchingRules(supabase, {
-    triggerEvent: 'lead.created',
-    context: { lead: leadCtx },
-    contactId: lead.id,
-    correlationId,
-  });
+  // Only for a lead that IS new (same test as fb-leadgen / website
+  // intake): a known lead re-submitting a form used to get the welcome
+  // rules — and their template — all over again.
+  if (isNewLeadRow(lead)) {
+    const leadCtx = await buildLeadContextFromRow(supabase, {
+      id: lead.id,
+      full_name: lead.full_name as string | null,
+      phone: lead.phone as string | null,
+      email: lead.email as string | null,
+      city: lead.city as string | null,
+      do_not_contact: lead.do_not_contact as boolean,
+      primary_track: prdTrack,
+      source,
+      source_campaign: sourceCampaign,
+    });
+    leadCtx.product_interest = classification.productInterest;
+    leadCtx.intake_segment = classification.intakeSegment;
+    await runMatchingRules(supabase, {
+      triggerEvent: 'lead.created',
+      context: { lead: leadCtx },
+      contactId: lead.id,
+      correlationId,
+    });
+  }
 
   log.info('lead_intake_accepted', { fn: 'leads-intake', correlationId, leadId: lead.id, source });
   const response = { ok: true as const, leadId: lead.id, correlationId };

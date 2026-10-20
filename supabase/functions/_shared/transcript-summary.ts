@@ -9,7 +9,7 @@
 //
 // Pure helpers are mirrored in lib/runtime/transcript-summary.ts for tests.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import { env } from './env.ts';
 import { log } from './logger.ts';
 

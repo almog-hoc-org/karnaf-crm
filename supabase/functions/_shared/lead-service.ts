@@ -1,4 +1,4 @@
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 
 export interface UpsertLeadInput {
   phone: string;
@@ -78,11 +78,18 @@ export async function ensureConversation(
   channel: string,
   providerName: string,
 ): Promise<{ id: string; ownership_mode: string }> {
+  // One conversation per (lead, channel) is the invariant, but merges before
+  // migration 140 could leave two. maybeSingle() throws on two rows, which
+  // made every inbound message and every send for that customer fail; take
+  // the most recently active one instead.
   const { data: existing, error: existingErr } = await supabase
     .from('conversations')
     .select('id, ownership_mode')
     .eq('lead_id', leadId)
     .eq('channel', channel)
+    .order('last_activity_at', { ascending: false, nullsFirst: false })
+    .order('started_at', { ascending: true })
+    .limit(1)
     .maybeSingle();
   if (existingErr) throw existingErr;
   if (existing) return existing as { id: string; ownership_mode: string };

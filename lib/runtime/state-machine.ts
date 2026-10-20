@@ -51,3 +51,9 @@ export function assertTransition(from: LeadStatus, to: LeadStatus): void {
     throw new Error(`Invalid lead status transition: ${from} -> ${to}`);
   }
 }
+
+/** What production uses: an illegal or missing target leaves the status where it is. */
+export function safeTransition(from: string, to: string | null | undefined): string {
+  if (!to || to === from) return from;
+  return canTransition(from, to) ? to : from;
+}

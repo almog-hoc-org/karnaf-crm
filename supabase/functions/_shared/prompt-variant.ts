@@ -6,7 +6,7 @@
 // Future fields are forwarded verbatim into the prompt builder so we can
 // extend the schema without a code release.
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 
 export interface PromptVariant {
   version: string;
