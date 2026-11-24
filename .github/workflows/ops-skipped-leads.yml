@@ -140,6 +140,10 @@ jobs:
                       return e.code, json.loads(raw)
                   except Exception:
                       return e.code, raw[:300]
+              except Exception as e:
+                  # A timeout or a dropped connection is an answer too (the
+                  # 24.11 outage crashed the report here instead of printing it).
+                  return 0, f'no answer: {str(e)[:200]}'
 
           # The platform's own view of the project, before any query of our
           # own: a database that does not answer makes every section above
