@@ -482,6 +482,21 @@ jobs:
                   except Exception:
                       return e.code, raw[:300]
 
+          # The platform's own view of the project, before any query of our
+          # own: a database that does not answer makes every section above
+          # fail with a timeout, and this is the one place that says why.
+          print('== project status and service health (Management API) ==')
+          print('-- proves: status ACTIVE_HEALTHY and every service healthy; anything else is the outage itself')
+          st, proj = http_json(f'https://api.supabase.com/v1/projects/{ref}', headers={'Authorization': f'Bearer {token}'})
+          if isinstance(proj, dict):
+              print(st, json.dumps({k: proj.get(k) for k in ('name', 'region', 'status', 'created_at')}, ensure_ascii=False))
+          else:
+              print(st, str(proj)[:300])
+          st, health = http_json(f'https://api.supabase.com/v1/projects/{ref}/health?services=db,auth,rest,realtime,storage,pooler',
+                                 headers={'Authorization': f'Bearer {token}'})
+          print(st, json.dumps(health, ensure_ascii=False, default=str)[:1500])
+          print()
+
           print('== email channel status (from Resend) ==')
           print('-- proves: readyToSend=true = a campaign can be scheduled; domains = what Resend itself reports')
           st, keys = http_json(f'https://api.supabase.com/v1/projects/{ref}/api-keys?reveal=true',
