@@ -149,16 +149,48 @@ begin
     raise exception 'tables without RLS: %', v_bad;
   end if;
 
-  -- No staff-wide write policy survives: writes go through Edge Functions.
+  -- 142's closer, exercised on the policy shapes the migrations never
+  -- contain but the dashboard produces: no TO clause ({public}), several
+  -- roles, and a FOR ALL with only WITH CHECK (reads nothing; must not be
+  -- widened into using (true)).
+  create table public.smoke_pol (id int primary key, note text);
+  insert into public.smoke_pol values (1, 'a'), (2, 'b'), (3, 'c');
+  alter table public.smoke_pol enable row level security;
+  grant select, insert, update on public.smoke_pol to anon, authenticated;
+  create policy smoke_pol_checkonly on public.smoke_pol for all to authenticated with check (false);
+  create policy smoke_pol_pub_insert on public.smoke_pol for insert with check (true);
+  create policy smoke_pol_multi_update on public.smoke_pol for update to anon, authenticated using (true);
+  create policy smoke_pol_all_using on public.smoke_pol for all to public using (id < 3);
+  if public.close_stray_write_policies() <> 4 then raise exception 'close_stray_write_policies did not see all four shapes'; end if;
+  if exists (select 1 from pg_policies where tablename = 'smoke_pol' and cmd <> 'SELECT') then
+    raise exception 'a write policy survived close_stray_write_policies';
+  end if;
+  if exists (select 1 from pg_policies where tablename = 'smoke_pol' and policyname = 'smoke_pol_checkonly') then
+    raise exception 'a FOR ALL policy without USING was kept (would read as using (true))';
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'smoke_pol' and policyname = 'smoke_pol_all_using'
+                   and cmd = 'SELECT' and roles = '{authenticated}'::name[] and qual = '(id < 3)') then
+    raise exception 'the read half of a FOR ALL policy was not kept for authenticated';
+  end if;
+  execute 'set local role authenticated';
+  if (select count(*) from public.smoke_pol) <> 2 then
+    raise exception 'authenticated sees % rows of smoke_pol, expected 2 (id < 3)', (select count(*) from public.smoke_pol);
+  end if;
+  execute 'reset role';
+  drop table public.smoke_pol;
+
+  -- No user-facing write policy survives: writes go through Edge Functions.
   -- (005's `*_staff_no_write` policies are RESTRICTIVE deny-alls — those
-  -- are the opposite of a grant and stay.)
+  -- are the opposite of a grant and stay.) Any role list that touches
+  -- anon / authenticated / public counts — {public} is what a policy made
+  -- without a TO clause gets.
   select array_agg(tablename || '.' || policyname) into v_bad
     from pg_policies
     where schemaname = 'public' and cmd in ('ALL', 'INSERT', 'UPDATE', 'DELETE')
-      and roles = '{authenticated}'::name[]
+      and roles && '{anon,authenticated,public}'::name[]
       and permissive = 'PERMISSIVE';
   if v_bad is not null then
-    raise exception 'authenticated write policies remain: %', v_bad;
+    raise exception 'user-facing write policies remain: %', v_bad;
   end if;
 
   -- The public landing-page renderer still works with the anon key.

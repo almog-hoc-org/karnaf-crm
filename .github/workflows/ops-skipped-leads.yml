@@ -39,6 +39,10 @@ on:
         description: 'Create a test lead in production INSIDE a rolled-back transaction (proves new leads save; leaves nothing behind)'
         type: boolean
         default: false
+      restart_project:
+        description: 'WRITE: restart the Supabase project (Management API) — only when the platform reports the database unhealthy; ~1-2 min downtime'
+        type: boolean
+        default: false
       switch_reply_to_inbound:
         description: 'WRITE: set email_channel.replyTo = inboundAddress (only after an inbound test was received)'
         type: boolean
@@ -68,6 +72,7 @@ jobs:
           EMAIL_TEST_TARGET: ${{ inputs.email_test_target }}
           REVOKE_EMAIL_CONSENT: ${{ inputs.revoke_email_consent }}
           RUN_REPLIES_POLL: ${{ inputs.run_replies_poll }}
+          RESTART_PROJECT: ${{ inputs.restart_project }}
           SWITCH_REPLY_TO_INBOUND: ${{ inputs.switch_reply_to_inbound }}
           SET_INBOUND_ADDRESS: ${{ inputs.set_inbound_address }}
           SMOKE_LEAD_INSERT: ${{ inputs.smoke_lead_insert }}
@@ -81,10 +86,18 @@ jobs:
           email = os.environ['OWNER_EMAIL'].lower()
           finish_drain = os.environ.get('FINISH_DRAIN', 'false') == 'true'
 
+          # Once one query has exhausted its retries the database is down for
+          # everyone: every later section gets a single short attempt instead
+          # of six long ones (a run used to take hours to say "no database").
+          DB_DOWN = False
+
           def q(label, sql, proves='', attempts=6):
+              global DB_DOWN
               print(f'== {label} ==')
               if proves:
                   print(f'-- proves: {proves}')
+              if DB_DOWN:
+                  attempts = 1
               for i in range(attempts):
                   req = urllib.request.Request(
                       f'https://api.supabase.com/v1/projects/{ref}/database/query',
@@ -93,7 +106,7 @@ jobs:
                                'Content-Type': 'application/json',
                                'User-Agent': 'karnaf-ops/1.0'}, method='POST')
                   try:
-                      with urllib.request.urlopen(req, timeout=60) as r:
+                      with urllib.request.urlopen(req, timeout=20 if DB_DOWN else 60) as r:
                           rows = json.loads(r.read().decode())
                       print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
                       print()
@@ -107,12 +120,117 @@ jobs:
                       print(f'-- attempt {i + 1}/{attempts}: {e} {body}')
                       if i < attempts - 1:
                           time.sleep(6 * (i + 1))
+              if attempts > 1:
+                  DB_DOWN = True
+                  print('-- the database did not answer any attempt; the rest of this report runs with one short attempt per query')
               print('GAVE UP\n')
               return None
+
+          def http_json(url, method='GET', payload=None, headers=None):
+              req = urllib.request.Request(
+                  url, method=method,
+                  data=json.dumps(payload).encode() if payload is not None else None,
+                  headers={'Content-Type': 'application/json', 'User-Agent': 'karnaf-ops/1.0', **(headers or {})})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      return r.status, json.loads(r.read().decode() or 'null')
+              except urllib.error.HTTPError as e:
+                  raw = e.read().decode(errors='replace')
+                  try:
+                      return e.code, json.loads(raw)
+                  except Exception:
+                      return e.code, raw[:300]
+              except Exception as e:
+                  # A timeout or a dropped connection is an answer too (the
+                  # 24.11 outage crashed the report here instead of printing it).
+                  return 0, f'no answer: {str(e)[:200]}'
+
+          # The platform's own view of the project, before any query of our
+          # own: a database that does not answer makes every section above
+          # fail with a timeout, and this is the one place that says why.
+          print('== project status and service health (Management API) ==')
+          print('-- proves: status ACTIVE_HEALTHY and every service healthy; anything else is the outage itself')
+          st, proj = http_json(f'https://api.supabase.com/v1/projects/{ref}', headers={'Authorization': f'Bearer {token}'})
+          if isinstance(proj, dict):
+              print(st, json.dumps({k: proj.get(k) for k in ('name', 'region', 'status', 'created_at')}, ensure_ascii=False))
+          else:
+              print(st, str(proj)[:300])
+          st, health = http_json(f'https://api.supabase.com/v1/projects/{ref}/health?services=db,auth,rest,realtime,storage,pooler',
+                                 headers={'Authorization': f'Bearer {token}'})
+          print(st, json.dumps(health, ensure_ascii=False, default=str)[:1500])
+          db_status = next((h.get('status') for h in health if h.get('name') == 'db'), None) if isinstance(health, list) else None
+          # Disk: the September outage was a full disk (owner guide, problem 1).
+          st, disk = http_json(f'https://api.supabase.com/v1/projects/{ref}/config/disk/util', headers={'Authorization': f'Bearer {token}'})
+          if isinstance(disk, dict) and isinstance(disk.get('metrics'), dict):
+              m = disk['metrics']
+              size, used = float(m.get('fs_size_bytes') or 0), float(m.get('fs_used_bytes') or 0)
+              pct = round(100 * used / size, 1) if size else None
+              print('disk', st, json.dumps({'size_gb': round(size / 1e9, 2), 'used_gb': round(used / 1e9, 2), 'used_pct': pct, 'at': disk.get('timestamp')}))
+          else:
+              print('disk', st, str(disk)[:300])
+          st, addons = http_json(f'https://api.supabase.com/v1/projects/{ref}/billing/addons', headers={'Authorization': f'Bearer {token}'})
+          if isinstance(addons, dict):
+              print('compute/addons', st, json.dumps([{'type': a.get('type'), 'variant': (a.get('variant') or {}).get('identifier') or a.get('variant')}
+                                                     for a in addons.get('selected_addons', [])], ensure_ascii=False, default=str)[:400])
+          else:
+              print('compute/addons', st, str(addons)[:200])
+          print()
+
+          # ── Opt-in write: restart the project (POST /v1/projects/{ref}/restart) ──
+          # The remedy that brought the database back on 9.9. Only on explicit
+          # request, and never while the platform reports the database healthy
+          # — a restart drops every connection for a minute or two.
+          if os.environ.get('RESTART_PROJECT', 'false') == 'true':
+              print('== restart project (requested) ==')
+              if db_status == 'ACTIVE_HEALTHY':
+                  print('-- refused: the platform reports the database ACTIVE_HEALTHY; a restart would only add downtime')
+              else:
+                  st, res = http_json(f'https://api.supabase.com/v1/projects/{ref}/restart', method='POST', payload={},
+                                      headers={'Authorization': f'Bearer {token}'})
+                  print(st, json.dumps(res, ensure_ascii=False, default=str)[:300])
+                  print('-- the project comes back within a few minutes; run this report again (read-only) to confirm heartbeats')
+              print()
 
           # ── 1. Alive? ────────────────────────────────────────────────
           q('database liveness', 'select now() as db_time, version() as pg',
             'if this fails nothing below matters')
+
+          # What is the database busy with? Asked right after liveness so a
+          # choked database (24.11: every connection timing out) names the
+          # culprit — a pile of idle-in-transaction sessions, one runaway
+          # query, a saturated pg_net queue or a table that outgrew the disk.
+          q('database load — sessions by state', """
+              select coalesce(state, 'none') as state, count(*) as sessions,
+                     max(now() - coalesce(query_start, backend_start)) as oldest,
+                     count(*) filter (where wait_event_type = 'Lock') as waiting_on_locks
+              from pg_stat_activity
+              where backend_type = 'client backend'
+              group by 1 order by 2 desc""",
+            'dozens of idle in transaction / active sessions with an oldest of minutes = connection pile-up', attempts=2)
+          q('database load — longest running statements (masked)', """
+              select now() - query_start as running, state, wait_event_type, wait_event,
+                     usename, application_name,
+                     left(regexp_replace(query, '[0-9a-f]{8}-[0-9a-f-]{27}|\\d{6,}', '…', 'g'), 160) as query
+              from pg_stat_activity
+              where backend_type = 'client backend' and state <> 'idle' and pid <> pg_backend_pid()
+              order by query_start nulls last limit 8""",
+            'a statement running for minutes is the one to cancel; cron jobs appear with application_name pg_cron', attempts=2)
+          q('database load — size and biggest relations', """
+              select 'database' as what, pg_size_pretty(pg_database_size(current_database())) as size
+              union all
+              (select n.nspname || '.' || c.relname, pg_size_pretty(pg_total_relation_size(c.oid))
+                 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                where c.relkind in ('r', 'm') and n.nspname not in ('pg_catalog', 'information_schema')
+                order by pg_total_relation_size(c.oid) desc limit 10)""",
+            'the September outage was cron.job_run_details at tens of millions of rows; anything in GB here is the suspect', attempts=2)
+          q('database load — pg_net and cron backlog', """
+              select (select count(*) from net.http_request_queue) as net_queue,
+                     (select count(*) from net._http_response) as net_responses_kept,
+                     (select count(*) from cron.job_run_details) as cron_history_rows,
+                     (select count(*) from cron.job_run_details where status = 'running') as cron_running,
+                     (select max(end_time) from cron.job_run_details where status = 'succeeded') as last_cron_success""",
+            'net_queue in the thousands = pg_net cannot deliver (every cron tick queues another call)', attempts=2)
+
 
           q('heartbeats', """
               select name, last_ok_at, now() - last_ok_at as age,
@@ -402,11 +520,11 @@ jobs:
                  and not exists (select 1 from pg_options_to_table(c.reloptions) o
                                   where o.option_name = 'security_invoker' and lower(o.option_value) in ('true','on','1'))
               union all
-              select 'permissive write policies for authenticated',
-                     coalesce(string_agg(tablename || '.' || policyname, ', '), '')
+              select 'permissive write policies for anon/authenticated/public',
+                     coalesce(string_agg(tablename || '.' || policyname || ' (' || array_to_string(roles, ',') || ')', ', '), '')
                 from pg_policies
                where schemaname = 'public' and cmd in ('ALL','INSERT','UPDATE','DELETE')
-                 and roles = '{authenticated}'::name[] and permissive = 'PERMISSIVE'
+                 and roles && '{anon,authenticated,public}'::name[] and permissive = 'PERMISSIVE'
               union all
               select 'tables without RLS',
                      coalesce(string_agg(tablename, ', '), '')
@@ -423,12 +541,36 @@ jobs:
               where created_at > now() - interval '7 days'""",
             'zero here means Supabase is not writing audit rows at all (then the empty owner lookup is explained)')
 
-          q('auth audit newest 3', """
+          q('auth audit newest 10 (masked)', """
               select created_at, payload->>'action' as action,
-                     payload->>'actor_username' as who
+                     regexp_replace(coalesce(payload->>'actor_username', ''), '^(..)[^@]*(@.*)$', '\\1***\\2') as who
               from auth.audit_log_entries
-              order by created_at desc limit 3""",
-            'what an audit row looks like on this instance', attempts=2)
+              order by created_at desc limit 10""",
+            'login / logout / token_refreshed per staff account; a missing login for someone who tried = the request never reached Auth', attempts=2)
+
+          # Staff accounts as the login screen sees them: no profile row or
+          # is_active=false → "profile not active" after a successful sign-in;
+          # banned_until / unconfirmed email / no password + no OAuth identity
+          # → Auth itself refuses. Emails masked to 2 chars + domain.
+          q('staff accounts (masked)', """
+              select p.role, p.is_active,
+                     regexp_replace(coalesce(u.email, p.email::text, ''), '^(..)[^@]*(@.*)$', '\\1***\\2') as email,
+                     u.last_sign_in_at, u.created_at,
+                     (u.email_confirmed_at is not null) as confirmed,
+                     u.banned_until,
+                     (coalesce(u.encrypted_password, '') <> '') as has_password,
+                     (select string_agg(i.provider, ',') from auth.identities i where i.user_id = u.id) as providers
+              from public.profiles p
+              left join auth.users u on u.id = p.id
+              order by p.role, u.last_sign_in_at desc nulls last""",
+            'every staff row should be is_active=true, confirmed, not banned, with a password or a provider', attempts=2)
+
+          q('auth users without a profile', """
+              select count(*) as users_without_profile, max(u.created_at) as newest_signup,
+                     max(u.last_sign_in_at) as newest_sign_in
+              from auth.users u left join public.profiles p on p.id = u.id
+              where p.id is null""",
+            'a sign-up that never got a profile row cannot log in to the CRM ("profile not active")', attempts=2)
 
           q('event tables after the flood cleanup', """
               select schemaname, relname, n_live_tup, n_dead_tup
@@ -443,30 +585,40 @@ jobs:
           # database. email-channel-status asks Resend with the key stored
           # in the Edge Function secrets; this job authenticates with the
           # service-role key fetched from the Management API (masked).
-          def http_json(url, method='GET', payload=None, headers=None):
-              req = urllib.request.Request(
-                  url, method=method,
-                  data=json.dumps(payload).encode() if payload is not None else None,
-                  headers={'Content-Type': 'application/json', 'User-Agent': 'karnaf-ops/1.0', **(headers or {})})
-              try:
-                  with urllib.request.urlopen(req, timeout=60) as r:
-                      return r.status, json.loads(r.read().decode() or 'null')
-              except urllib.error.HTTPError as e:
-                  raw = e.read().decode(errors='replace')
-                  try:
-                      return e.code, json.loads(raw)
-                  except Exception:
-                      return e.code, raw[:300]
-
           print('== email channel status (from Resend) ==')
           print('-- proves: readyToSend=true = a campaign can be scheduled; domains = what Resend itself reports')
           st, keys = http_json(f'https://api.supabase.com/v1/projects/{ref}/api-keys?reveal=true',
                                headers={'Authorization': f'Bearer {token}'})
           service_key = None
+          anon_key = None
           if st == 200 and isinstance(keys, list):
               for k in keys:
                   if k.get('name') == 'service_role' and k.get('api_key'):
                       service_key = k['api_key']
+                  if k.get('name') == 'anon' and k.get('api_key'):
+                      anon_key = k['api_key']
+          # Does Supabase Auth answer a password sign-in at all? Bogus
+          # credentials, so no real account is touched: the healthy answer
+          # is a fast 400 invalid_credentials. A timeout / 5xx / 429 here is
+          # what the login screen shows as an endless "מתחבר...".
+          print('== auth password sign-in probe (bogus credentials, from this runner) ==')
+          print('-- proves: 400 invalid credentials within ~1s = Auth up; anything else = sign-in broken for everyone')
+          if anon_key:
+              print(f'::add-mask::{anon_key}')
+              t0 = time.time()
+              try:
+                  st, body = http_json(f'https://{ref}.supabase.co/auth/v1/token?grant_type=password', method='POST',
+                                       payload={'email': 'nobody-login-probe@example.com', 'password': 'wrong-password-123'},
+                                       headers={'apikey': anon_key})
+                  print(st, json.dumps(body, ensure_ascii=False)[:300], f'({time.time() - t0:.1f}s)')
+              except Exception as e:
+                  print(f'auth probe failed after {time.time() - t0:.1f}s: {str(e)[:200]}')
+              st, body = http_json(f'https://{ref}.supabase.co/auth/v1/settings', headers={'apikey': anon_key})
+              ext = body.get('external', {}) if isinstance(body, dict) else {}
+              print('settings', st, json.dumps({k: body.get(k) for k in ('disable_signup', 'mailer_autoconfirm')} | {'providers_on': [k for k, v in ext.items() if v]}, ensure_ascii=False) if isinstance(body, dict) else body)
+          else:
+              print(f'-- could not read the anon key ({st})')
+          print()
           if not service_key:
               print(f'-- could not read the service-role key ({st})\n')
           else:
