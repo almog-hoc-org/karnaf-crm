@@ -39,6 +39,10 @@ on:
         description: 'Create a test lead in production INSIDE a rolled-back transaction (proves new leads save; leaves nothing behind)'
         type: boolean
         default: false
+      restart_project:
+        description: 'WRITE: restart the Supabase project (Management API) — only when the platform reports the database unhealthy; ~1-2 min downtime'
+        type: boolean
+        default: false
       switch_reply_to_inbound:
         description: 'WRITE: set email_channel.replyTo = inboundAddress (only after an inbound test was received)'
         type: boolean
@@ -68,6 +72,7 @@ jobs:
           EMAIL_TEST_TARGET: ${{ inputs.email_test_target }}
           REVOKE_EMAIL_CONSENT: ${{ inputs.revoke_email_consent }}
           RUN_REPLIES_POLL: ${{ inputs.run_replies_poll }}
+          RESTART_PROJECT: ${{ inputs.restart_project }}
           SWITCH_REPLY_TO_INBOUND: ${{ inputs.switch_reply_to_inbound }}
           SET_INBOUND_ADDRESS: ${{ inputs.set_inbound_address }}
           SMOKE_LEAD_INSERT: ${{ inputs.smoke_lead_insert }}
@@ -495,7 +500,38 @@ jobs:
           st, health = http_json(f'https://api.supabase.com/v1/projects/{ref}/health?services=db,auth,rest,realtime,storage,pooler',
                                  headers={'Authorization': f'Bearer {token}'})
           print(st, json.dumps(health, ensure_ascii=False, default=str)[:1500])
+          db_status = next((h.get('status') for h in health if h.get('name') == 'db'), None) if isinstance(health, list) else None
+          # Disk: the September outage was a full disk (owner guide, problem 1).
+          st, disk = http_json(f'https://api.supabase.com/v1/projects/{ref}/config/disk/util', headers={'Authorization': f'Bearer {token}'})
+          if isinstance(disk, dict) and isinstance(disk.get('metrics'), dict):
+              m = disk['metrics']
+              size, used = float(m.get('fs_size_bytes') or 0), float(m.get('fs_used_bytes') or 0)
+              pct = round(100 * used / size, 1) if size else None
+              print('disk', st, json.dumps({'size_gb': round(size / 1e9, 2), 'used_gb': round(used / 1e9, 2), 'used_pct': pct, 'at': disk.get('timestamp')}))
+          else:
+              print('disk', st, str(disk)[:300])
+          st, addons = http_json(f'https://api.supabase.com/v1/projects/{ref}/billing/addons', headers={'Authorization': f'Bearer {token}'})
+          if isinstance(addons, dict):
+              print('compute/addons', st, json.dumps([{'type': a.get('type'), 'variant': (a.get('variant') or {}).get('identifier') or a.get('variant')}
+                                                     for a in addons.get('selected_addons', [])], ensure_ascii=False, default=str)[:400])
+          else:
+              print('compute/addons', st, str(addons)[:200])
           print()
+
+          # ── Opt-in write: restart the project (POST /v1/projects/{ref}/restart) ──
+          # The remedy that brought the database back on 9.9. Only on explicit
+          # request, and never while the platform reports the database healthy
+          # — a restart drops every connection for a minute or two.
+          if os.environ.get('RESTART_PROJECT', 'false') == 'true':
+              print('== restart project (requested) ==')
+              if db_status == 'ACTIVE_HEALTHY':
+                  print('-- refused: the platform reports the database ACTIVE_HEALTHY; a restart would only add downtime')
+              else:
+                  st, res = http_json(f'https://api.supabase.com/v1/projects/{ref}/restart', method='POST', payload={},
+                                      headers={'Authorization': f'Bearer {token}'})
+                  print(st, json.dumps(res, ensure_ascii=False, default=str)[:300])
+                  print('-- the project comes back within a few minutes; run this report again (read-only) to confirm heartbeats')
+              print()
 
           print('== email channel status (from Resend) ==')
           print('-- proves: readyToSend=true = a campaign can be scheduled; domains = what Resend itself reports')
