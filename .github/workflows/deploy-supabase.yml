@@ -198,7 +198,11 @@ jobs:
       - name: Deploy all edge functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_TOKEN }}
-        run: supabase functions deploy --project-ref "$PROJECT_REF"
+        # --yes: the CLI (3.x, resolved as "latest") asks for confirmation
+        # before deploying and cannot ask in CI — the 24.11 deploy applied
+        # migration 142 and then exited 1 with "Confirmation required",
+        # leaving the functions untouched.
+        run: supabase functions deploy --project-ref "$PROJECT_REF" --yes
 
       # `functions deploy` only adds and updates — a function deleted from
       # the repo stays deployed (and callable) in the project. Removals are
@@ -214,7 +218,7 @@ jobs:
             if [ -d "supabase/functions/$fn" ]; then
               echo "::error::$fn is listed as retired but still exists in the repo"; exit 1
             fi
-            if supabase functions delete "$fn" --project-ref "$PROJECT_REF" 2>/tmp/del.err; then
+            if supabase functions delete "$fn" --project-ref "$PROJECT_REF" --yes 2>/tmp/del.err; then
               echo "deleted $fn"
             else
               grep -qiE "not found|does not exist|404" /tmp/del.err && echo "$fn already absent" || { cat /tmp/del.err; exit 1; }
