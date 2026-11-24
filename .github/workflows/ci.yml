@@ -36,20 +36,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
-      # supabase/setup-cli doesn't install deno; we need it for the
-      # Edge Function syntax check below. Pin a recent stable version.
+      # No Supabase CLI here: nothing in this job calls it (`supabase lint`
+      # was dropped long ago — it became `supabase db lint`, which needs a
+      # linked project and a running DB). setup-cli resolved "latest"
+      # through the unauthenticated GitHub API and failed the job with
+      # "rate limit exceeded" on 20.10 while installing a tool never used.
+      # The SQL gate is db-smoke (every migration on a real Postgres); the
+      # Edge Function type check below is this job's gate. The deploy
+      # workflow installs the CLI where it is actually needed.
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      # `supabase lint` was dropped — the top-level `lint` command isn't
-      # available in the supabase CLI version installed by setup-cli@v1
-      # (it became `supabase db lint`, which requires a linked project +
-      # running DB). The meaningful SQL gate runs at deploy time via
-      # `supabase db push` (which rejects malformed migrations). The Edge
-      # Function syntax check below is the real CI gate.
       #
       # `deno check` must fail the build. A syntax error in any Edge
       # Function used to silently slip through because of `|| true`.

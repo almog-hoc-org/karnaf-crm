@@ -423,12 +423,36 @@ jobs:
               where created_at > now() - interval '7 days'""",
             'zero here means Supabase is not writing audit rows at all (then the empty owner lookup is explained)')
 
-          q('auth audit newest 3', """
+          q('auth audit newest 10 (masked)', """
               select created_at, payload->>'action' as action,
-                     payload->>'actor_username' as who
+                     regexp_replace(coalesce(payload->>'actor_username', ''), '^(..)[^@]*(@.*)$', '\\1***\\2') as who
               from auth.audit_log_entries
-              order by created_at desc limit 3""",
-            'what an audit row looks like on this instance', attempts=2)
+              order by created_at desc limit 10""",
+            'login / logout / token_refreshed per staff account; a missing login for someone who tried = the request never reached Auth', attempts=2)
+
+          # Staff accounts as the login screen sees them: no profile row or
+          # is_active=false → "profile not active" after a successful sign-in;
+          # banned_until / unconfirmed email / no password + no OAuth identity
+          # → Auth itself refuses. Emails masked to 2 chars + domain.
+          q('staff accounts (masked)', """
+              select p.role, p.is_active,
+                     regexp_replace(coalesce(u.email, p.email::text, ''), '^(..)[^@]*(@.*)$', '\\1***\\2') as email,
+                     u.last_sign_in_at, u.created_at,
+                     (u.email_confirmed_at is not null) as confirmed,
+                     u.banned_until,
+                     (coalesce(u.encrypted_password, '') <> '') as has_password,
+                     (select string_agg(i.provider, ',') from auth.identities i where i.user_id = u.id) as providers
+              from public.profiles p
+              left join auth.users u on u.id = p.id
+              order by p.role, u.last_sign_in_at desc nulls last""",
+            'every staff row should be is_active=true, confirmed, not banned, with a password or a provider', attempts=2)
+
+          q('auth users without a profile', """
+              select count(*) as users_without_profile, max(u.created_at) as newest_signup,
+                     max(u.last_sign_in_at) as newest_sign_in
+              from auth.users u left join public.profiles p on p.id = u.id
+              where p.id is null""",
+            'a sign-up that never got a profile row cannot log in to the CRM ("profile not active")', attempts=2)
 
           q('event tables after the flood cleanup', """
               select schemaname, relname, n_live_tup, n_dead_tup
