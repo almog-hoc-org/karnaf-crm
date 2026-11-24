@@ -86,10 +86,18 @@ jobs:
           email = os.environ['OWNER_EMAIL'].lower()
           finish_drain = os.environ.get('FINISH_DRAIN', 'false') == 'true'
 
+          # Once one query has exhausted its retries the database is down for
+          # everyone: every later section gets a single short attempt instead
+          # of six long ones (a run used to take hours to say "no database").
+          DB_DOWN = False
+
           def q(label, sql, proves='', attempts=6):
+              global DB_DOWN
               print(f'== {label} ==')
               if proves:
                   print(f'-- proves: {proves}')
+              if DB_DOWN:
+                  attempts = 1
               for i in range(attempts):
                   req = urllib.request.Request(
                       f'https://api.supabase.com/v1/projects/{ref}/database/query',
@@ -98,7 +106,7 @@ jobs:
                                'Content-Type': 'application/json',
                                'User-Agent': 'karnaf-ops/1.0'}, method='POST')
                   try:
-                      with urllib.request.urlopen(req, timeout=60) as r:
+                      with urllib.request.urlopen(req, timeout=20 if DB_DOWN else 60) as r:
                           rows = json.loads(r.read().decode())
                       print(json.dumps(rows, ensure_ascii=False, indent=1, default=str))
                       print()
@@ -112,8 +120,72 @@ jobs:
                       print(f'-- attempt {i + 1}/{attempts}: {e} {body}')
                       if i < attempts - 1:
                           time.sleep(6 * (i + 1))
+              if attempts > 1:
+                  DB_DOWN = True
+                  print('-- the database did not answer any attempt; the rest of this report runs with one short attempt per query')
               print('GAVE UP\n')
               return None
+
+          def http_json(url, method='GET', payload=None, headers=None):
+              req = urllib.request.Request(
+                  url, method=method,
+                  data=json.dumps(payload).encode() if payload is not None else None,
+                  headers={'Content-Type': 'application/json', 'User-Agent': 'karnaf-ops/1.0', **(headers or {})})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      return r.status, json.loads(r.read().decode() or 'null')
+              except urllib.error.HTTPError as e:
+                  raw = e.read().decode(errors='replace')
+                  try:
+                      return e.code, json.loads(raw)
+                  except Exception:
+                      return e.code, raw[:300]
+
+          # The platform's own view of the project, before any query of our
+          # own: a database that does not answer makes every section above
+          # fail with a timeout, and this is the one place that says why.
+          print('== project status and service health (Management API) ==')
+          print('-- proves: status ACTIVE_HEALTHY and every service healthy; anything else is the outage itself')
+          st, proj = http_json(f'https://api.supabase.com/v1/projects/{ref}', headers={'Authorization': f'Bearer {token}'})
+          if isinstance(proj, dict):
+              print(st, json.dumps({k: proj.get(k) for k in ('name', 'region', 'status', 'created_at')}, ensure_ascii=False))
+          else:
+              print(st, str(proj)[:300])
+          st, health = http_json(f'https://api.supabase.com/v1/projects/{ref}/health?services=db,auth,rest,realtime,storage,pooler',
+                                 headers={'Authorization': f'Bearer {token}'})
+          print(st, json.dumps(health, ensure_ascii=False, default=str)[:1500])
+          db_status = next((h.get('status') for h in health if h.get('name') == 'db'), None) if isinstance(health, list) else None
+          # Disk: the September outage was a full disk (owner guide, problem 1).
+          st, disk = http_json(f'https://api.supabase.com/v1/projects/{ref}/config/disk/util', headers={'Authorization': f'Bearer {token}'})
+          if isinstance(disk, dict) and isinstance(disk.get('metrics'), dict):
+              m = disk['metrics']
+              size, used = float(m.get('fs_size_bytes') or 0), float(m.get('fs_used_bytes') or 0)
+              pct = round(100 * used / size, 1) if size else None
+              print('disk', st, json.dumps({'size_gb': round(size / 1e9, 2), 'used_gb': round(used / 1e9, 2), 'used_pct': pct, 'at': disk.get('timestamp')}))
+          else:
+              print('disk', st, str(disk)[:300])
+          st, addons = http_json(f'https://api.supabase.com/v1/projects/{ref}/billing/addons', headers={'Authorization': f'Bearer {token}'})
+          if isinstance(addons, dict):
+              print('compute/addons', st, json.dumps([{'type': a.get('type'), 'variant': (a.get('variant') or {}).get('identifier') or a.get('variant')}
+                                                     for a in addons.get('selected_addons', [])], ensure_ascii=False, default=str)[:400])
+          else:
+              print('compute/addons', st, str(addons)[:200])
+          print()
+
+          # ── Opt-in write: restart the project (POST /v1/projects/{ref}/restart) ──
+          # The remedy that brought the database back on 9.9. Only on explicit
+          # request, and never while the platform reports the database healthy
+          # — a restart drops every connection for a minute or two.
+          if os.environ.get('RESTART_PROJECT', 'false') == 'true':
+              print('== restart project (requested) ==')
+              if db_status == 'ACTIVE_HEALTHY':
+                  print('-- refused: the platform reports the database ACTIVE_HEALTHY; a restart would only add downtime')
+              else:
+                  st, res = http_json(f'https://api.supabase.com/v1/projects/{ref}/restart', method='POST', payload={},
+                                      headers={'Authorization': f'Bearer {token}'})
+                  print(st, json.dumps(res, ensure_ascii=False, default=str)[:300])
+                  print('-- the project comes back within a few minutes; run this report again (read-only) to confirm heartbeats')
+              print()
 
           # ── 1. Alive? ────────────────────────────────────────────────
           q('database liveness', 'select now() as db_time, version() as pg',
@@ -407,11 +479,11 @@ jobs:
                  and not exists (select 1 from pg_options_to_table(c.reloptions) o
                                   where o.option_name = 'security_invoker' and lower(o.option_value) in ('true','on','1'))
               union all
-              select 'permissive write policies for authenticated',
-                     coalesce(string_agg(tablename || '.' || policyname, ', '), '')
+              select 'permissive write policies for anon/authenticated/public',
+                     coalesce(string_agg(tablename || '.' || policyname || ' (' || array_to_string(roles, ',') || ')', ', '), '')
                 from pg_policies
                where schemaname = 'public' and cmd in ('ALL','INSERT','UPDATE','DELETE')
-                 and roles = '{authenticated}'::name[] and permissive = 'PERMISSIVE'
+                 and roles && '{anon,authenticated,public}'::name[] and permissive = 'PERMISSIVE'
               union all
               select 'tables without RLS',
                      coalesce(string_agg(tablename, ', '), '')
@@ -472,67 +544,6 @@ jobs:
           # database. email-channel-status asks Resend with the key stored
           # in the Edge Function secrets; this job authenticates with the
           # service-role key fetched from the Management API (masked).
-          def http_json(url, method='GET', payload=None, headers=None):
-              req = urllib.request.Request(
-                  url, method=method,
-                  data=json.dumps(payload).encode() if payload is not None else None,
-                  headers={'Content-Type': 'application/json', 'User-Agent': 'karnaf-ops/1.0', **(headers or {})})
-              try:
-                  with urllib.request.urlopen(req, timeout=60) as r:
-                      return r.status, json.loads(r.read().decode() or 'null')
-              except urllib.error.HTTPError as e:
-                  raw = e.read().decode(errors='replace')
-                  try:
-                      return e.code, json.loads(raw)
-                  except Exception:
-                      return e.code, raw[:300]
-
-          # The platform's own view of the project, before any query of our
-          # own: a database that does not answer makes every section above
-          # fail with a timeout, and this is the one place that says why.
-          print('== project status and service health (Management API) ==')
-          print('-- proves: status ACTIVE_HEALTHY and every service healthy; anything else is the outage itself')
-          st, proj = http_json(f'https://api.supabase.com/v1/projects/{ref}', headers={'Authorization': f'Bearer {token}'})
-          if isinstance(proj, dict):
-              print(st, json.dumps({k: proj.get(k) for k in ('name', 'region', 'status', 'created_at')}, ensure_ascii=False))
-          else:
-              print(st, str(proj)[:300])
-          st, health = http_json(f'https://api.supabase.com/v1/projects/{ref}/health?services=db,auth,rest,realtime,storage,pooler',
-                                 headers={'Authorization': f'Bearer {token}'})
-          print(st, json.dumps(health, ensure_ascii=False, default=str)[:1500])
-          db_status = next((h.get('status') for h in health if h.get('name') == 'db'), None) if isinstance(health, list) else None
-          # Disk: the September outage was a full disk (owner guide, problem 1).
-          st, disk = http_json(f'https://api.supabase.com/v1/projects/{ref}/config/disk/util', headers={'Authorization': f'Bearer {token}'})
-          if isinstance(disk, dict) and isinstance(disk.get('metrics'), dict):
-              m = disk['metrics']
-              size, used = float(m.get('fs_size_bytes') or 0), float(m.get('fs_used_bytes') or 0)
-              pct = round(100 * used / size, 1) if size else None
-              print('disk', st, json.dumps({'size_gb': round(size / 1e9, 2), 'used_gb': round(used / 1e9, 2), 'used_pct': pct, 'at': disk.get('timestamp')}))
-          else:
-              print('disk', st, str(disk)[:300])
-          st, addons = http_json(f'https://api.supabase.com/v1/projects/{ref}/billing/addons', headers={'Authorization': f'Bearer {token}'})
-          if isinstance(addons, dict):
-              print('compute/addons', st, json.dumps([{'type': a.get('type'), 'variant': (a.get('variant') or {}).get('identifier') or a.get('variant')}
-                                                     for a in addons.get('selected_addons', [])], ensure_ascii=False, default=str)[:400])
-          else:
-              print('compute/addons', st, str(addons)[:200])
-          print()
-
-          # ── Opt-in write: restart the project (POST /v1/projects/{ref}/restart) ──
-          # The remedy that brought the database back on 9.9. Only on explicit
-          # request, and never while the platform reports the database healthy
-          # — a restart drops every connection for a minute or two.
-          if os.environ.get('RESTART_PROJECT', 'false') == 'true':
-              print('== restart project (requested) ==')
-              if db_status == 'ACTIVE_HEALTHY':
-                  print('-- refused: the platform reports the database ACTIVE_HEALTHY; a restart would only add downtime')
-              else:
-                  st, res = http_json(f'https://api.supabase.com/v1/projects/{ref}/restart', method='POST', payload={},
-                                      headers={'Authorization': f'Bearer {token}'})
-                  print(st, json.dumps(res, ensure_ascii=False, default=str)[:300])
-                  print('-- the project comes back within a few minutes; run this report again (read-only) to confirm heartbeats')
-              print()
-
           print('== email channel status (from Resend) ==')
           print('-- proves: readyToSend=true = a campaign can be scheduled; domains = what Resend itself reports')
           st, keys = http_json(f'https://api.supabase.com/v1/projects/{ref}/api-keys?reveal=true',
