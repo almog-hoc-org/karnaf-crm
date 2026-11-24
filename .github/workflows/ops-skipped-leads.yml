@@ -195,6 +195,43 @@ jobs:
           q('database liveness', 'select now() as db_time, version() as pg',
             'if this fails nothing below matters')
 
+          # What is the database busy with? Asked right after liveness so a
+          # choked database (24.11: every connection timing out) names the
+          # culprit — a pile of idle-in-transaction sessions, one runaway
+          # query, a saturated pg_net queue or a table that outgrew the disk.
+          q('database load — sessions by state', """
+              select coalesce(state, 'none') as state, count(*) as sessions,
+                     max(now() - coalesce(query_start, backend_start)) as oldest,
+                     count(*) filter (where wait_event_type = 'Lock') as waiting_on_locks
+              from pg_stat_activity
+              where backend_type = 'client backend'
+              group by 1 order by 2 desc""",
+            'dozens of idle in transaction / active sessions with an oldest of minutes = connection pile-up', attempts=2)
+          q('database load — longest running statements (masked)', """
+              select now() - query_start as running, state, wait_event_type, wait_event,
+                     usename, application_name,
+                     left(regexp_replace(query, '[0-9a-f]{8}-[0-9a-f-]{27}|\\d{6,}', '…', 'g'), 160) as query
+              from pg_stat_activity
+              where backend_type = 'client backend' and state <> 'idle' and pid <> pg_backend_pid()
+              order by query_start nulls last limit 8""",
+            'a statement running for minutes is the one to cancel; cron jobs appear with application_name pg_cron', attempts=2)
+          q('database load — size and biggest relations', """
+              select 'database' as what, pg_size_pretty(pg_database_size(current_database())) as size
+              union all
+              (select n.nspname || '.' || c.relname, pg_size_pretty(pg_total_relation_size(c.oid))
+                 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                where c.relkind in ('r', 'm') and n.nspname not in ('pg_catalog', 'information_schema')
+                order by pg_total_relation_size(c.oid) desc limit 10)""",
+            'the September outage was cron.job_run_details at tens of millions of rows; anything in GB here is the suspect', attempts=2)
+          q('database load — pg_net and cron backlog', """
+              select (select count(*) from net.http_request_queue) as net_queue,
+                     (select count(*) from net._http_response) as net_responses_kept,
+                     (select count(*) from cron.job_run_details) as cron_history_rows,
+                     (select count(*) from cron.job_run_details where status = 'running') as cron_running,
+                     (select max(end_time) from cron.job_run_details where status = 'succeeded') as last_cron_success""",
+            'net_queue in the thousands = pg_net cannot deliver (every cron tick queues another call)', attempts=2)
+
+
           q('heartbeats', """
               select name, last_ok_at, now() - last_ok_at as age,
                      (metadata->>'degraded') as degraded
