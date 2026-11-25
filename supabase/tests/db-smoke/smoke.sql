@@ -342,6 +342,18 @@ begin
     raise exception 'duplicate external identity accepted';
   exception when unique_violation then null;
   end;
+
+  -- 143: every scheduled worker is active. Production had five jobs
+  -- switched off by hand for 19 days before anyone noticed; a migration
+  -- that leaves one inactive must fail here. (cron.job is readable by the
+  -- migration role only, so the check steps out of service_role.)
+  execute 'reset role';
+  select string_agg(jobname, ', ') into v from cron.job where jobname like 'karnaf_%' and not active;
+  if v is not null then raise exception 'inactive cron jobs after migrations: %', v; end if;
+  if (select enabled from public.automation_rules where code = 'b6_hot_lead_no_reply_48h') is not true then
+    raise exception 'rule b6_hot_lead_no_reply_48h is not enabled after 143';
+  end if;
+  execute 'set local role service_role';
 end $$;
 select 'reliability ok' as result;
 rollback;

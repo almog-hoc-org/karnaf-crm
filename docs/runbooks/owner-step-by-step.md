@@ -338,6 +338,9 @@ https://svkzkpgccahwmyflobvn.supabase.co/functions/v1/leads-intake?token=<INTAKE
 
 כדי שזה יעבוד צריך פעם אחת להגדיר ב-Resend "קבלת מיילים" על תת-דומיין, ולהוסיף רשומת DNS אחת — בדיוק כמו שעשית כשאימתת את הדומיין.
 
+> **סטטוס 24.11:** נבחרה הדרך הקצרה. מייל הבדיקה שנשלח ב-20.10 לכתובת `reply@reply.karnafnadlan.com` לא נקלט (אין רשומת MX), ולכן replyTo לא הוחלף.
+> הצעד היחיד שנשאר: להעתיק לצ'אט את כתובת ה-`.resend.app` כמתואר מטה.
+
 ### הדרך הקצרה (בלי DNS, חצי דקה) — מומלץ
 ל-Resend יש כתובת קליטה מוכנה לכל חשבון, שלא צריכה שום הגדרת DNS.
 👉 <https://resend.com/emails> → לשונית **Receiving** → שלוש הנקודות (⋯) → תראה כתובת שנגמרת ב-`.resend.app` (למשל `abc123.resend.app`).
