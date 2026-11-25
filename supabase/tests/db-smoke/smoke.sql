@@ -354,6 +354,22 @@ begin
     raise exception 'rule b6_hot_lead_no_reply_48h is not enabled after 143';
   end if;
   execute 'set local role service_role';
+
+  -- 144: purging more than one stale rate-limit bucket must work. The
+  -- original function used `returning 1 into` and failed every hour in
+  -- production as soon as two webhook keys had aged out.
+  insert into public.webhook_rate_limit (bucket_key, request_count, window_started_at) values
+    ('smoke:stale-1', 3, now() - interval '2 hours'),
+    ('smoke:stale-2', 7, now() - interval '3 hours'),
+    ('smoke:fresh', 1, now());
+  n := public.purge_rate_limit_buckets();
+  if n < 2 then raise exception 'purge_rate_limit_buckets deleted % rows, expected at least 2', n; end if;
+  if exists (select 1 from public.webhook_rate_limit where bucket_key like 'smoke:stale-%') then
+    raise exception 'stale rate-limit buckets survived the purge';
+  end if;
+  if not exists (select 1 from public.webhook_rate_limit where bucket_key = 'smoke:fresh') then
+    raise exception 'fresh rate-limit bucket was purged';
+  end if;
 end $$;
 select 'reliability ok' as result;
 rollback;
