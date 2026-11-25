@@ -238,6 +238,26 @@ jobs:
               from system_heartbeats order by name""",
             'ages in minutes = scheduler + pg_net + edge functions all working')
 
+          # A stale heartbeat has two very different causes: the job is not
+          # scheduled to run (someone switched it off — five jobs sat inactive
+          # for 19 days in November), or it runs and fails. Both in one glance.
+          q('inactive cron jobs', """
+              select coalesce(string_agg(jobname, ', ' order by jobname), '(none)') as inactive
+              from cron.job where jobname like 'karnaf_%' and not active""",
+            'anything but (none) = a worker nobody is running; migration 143 re-enabled the five found on 24.11')
+          q('cron last run per job', """
+              select j.jobname, j.schedule, j.active,
+                     r.status, r.start_time, left(r.return_message, 120) as return_message
+              from cron.job j
+              left join lateral (
+                select status, start_time, return_message
+                from cron.job_run_details d where d.jobid = j.jobid
+                order by start_time desc limit 1
+              ) r on true
+              where j.jobname like 'karnaf_%'
+              order by r.start_time desc nulls last""",
+            'a status other than succeeded, or a start_time older than the schedule allows, names the broken job', attempts=2)
+
           # ── 2. The dry-run report the restored time engine produces ──
           q('dry-run report (automation_tick heartbeat)', """
               select last_ok_at,
